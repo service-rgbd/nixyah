@@ -37,7 +37,7 @@ export const mockProfiles: Profile[] = [
     services: ["Massage", "Accompagnement"],
     lieu: "Hôtel",
     tarif: "200€",
-    description: "Femme élégante et raffinée, disponible pour des rencontres de qualité.",
+    description: "Femme élégante et raffinée, disponible pour des rencontres de qualité dans un cadre discret et luxueux.",
   },
   {
     id: "2",
@@ -57,7 +57,7 @@ export const mockProfiles: Profile[] = [
     services: ["Dating", "Accompagnement"],
     lieu: "Résidence",
     tarif: "250€",
-    description: "Douce et attentionnée, je sais créer une atmosphère unique.",
+    description: "Douce et attentionnée, je crée une atmosphère unique pour des moments inoubliables.",
   },
   {
     id: "3",
@@ -75,6 +75,7 @@ export const mockProfiles: Profile[] = [
     services: ["Massage", "Dating"],
     lieu: "À définir",
     tarif: "180€",
+    description: "Mystérieuse et captivante, prête pour des aventures exceptionnelles.",
   },
   {
     id: "4",
@@ -92,7 +93,7 @@ export const mockProfiles: Profile[] = [
     services: ["Accompagnement"],
     lieu: "Hôtel",
     tarif: "220€",
-    description: "Compagnie agréable pour soirées et événements.",
+    description: "Compagnie raffinée pour soirées et événements exclusifs.",
   },
 ];
 
