@@ -1,0 +1,16 @@
+{
+  "name": "Djantrah",
+  "short_name": "Djantrah",
+  "description": "Plateforme de mise en relation anonyme",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a0f1e",
+  "theme_color": "#1a0f1e",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
