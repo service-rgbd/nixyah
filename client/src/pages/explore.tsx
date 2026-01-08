@@ -1,187 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence, PanInfo } from "framer-motion";
 import { useLocation } from "wouter";
-import { BadgeCheck, MapPin, Clock, Heart, X, MessageCircle, ChevronDown, Sparkles, Shield, AlertTriangle } from "lucide-react";
+import { BadgeCheck, MapPin, Clock, Heart, X, MessageCircle, ChevronDown, Sparkles } from "lucide-react";
 import { mockProfiles, type Profile } from "@/lib/mockData";
 import { Button } from "@/components/ui/button";
-import img1 from "@assets/c57a31df-9f73-42e9-bfe8-8181654b6932_1767904353125.png";
-import img2 from "@assets/1e504b33-1c82-480a-b5ee-310fc690a3e2_1767904894440.png";
-
-function AgeVerificationModal({ onAccept, onRefuse }: { onAccept: () => void; onRefuse: () => void }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-6"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.9, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="w-full max-w-md bg-card rounded-3xl p-8 border border-border shadow-2xl"
-      >
-        <div className="text-center space-y-6">
-          <div className="w-20 h-20 mx-auto rounded-full bg-primary/20 flex items-center justify-center">
-            <AlertTriangle className="w-10 h-10 text-primary" />
-          </div>
-          
-          <div className="space-y-3">
-            <h2 className="text-2xl font-bold text-foreground">
-              Vérification d'âge requise
-            </h2>
-            <p className="text-muted-foreground leading-relaxed">
-              Ce site contient du contenu réservé aux <span className="text-primary font-semibold">personnes majeures (+18 ans)</span>. 
-              L'accès aux mineurs est strictement interdit.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20">
-            <p className="text-sm text-destructive font-medium">
-              ⚠️ Avertissement légal
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              En cliquant sur "J'ai 18 ans ou plus", vous certifiez sur l'honneur être majeur(e) 
-              selon la législation de votre pays. Tout accès frauduleux engage votre responsabilité.
-            </p>
-          </div>
-
-          <div className="space-y-3 pt-4">
-            <Button
-              onClick={onAccept}
-              className="w-full h-14 text-base font-semibold"
-              data-testid="button-age-accept"
-            >
-              <Shield className="w-5 h-5 mr-2" />
-              J'ai 18 ans ou plus
-            </Button>
-            
-            <Button
-              onClick={onRefuse}
-              variant="outline"
-              className="w-full h-12 text-base"
-              data-testid="button-age-refuse"
-            >
-              Je suis mineur(e) - Quitter
-            </Button>
-          </div>
-
-          <p className="text-xs text-muted-foreground pt-2">
-            En continuant, vous acceptez nos conditions d'utilisation
-          </p>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-function SplashScreen({ onEnter }: { onEnter: () => void }) {
-  const [, setLocation] = useLocation();
-  const [currentImage, setCurrentImage] = useState(0);
-  const [showAgeModal, setShowAgeModal] = useState(true);
-  const images = [img1, img2];
-
-  useEffect(() => {
-    if (!showAgeModal) {
-      const interval = setInterval(() => {
-        setCurrentImage((prev) => (prev + 1) % images.length);
-      }, 4000);
-      return () => clearInterval(interval);
-    }
-  }, [showAgeModal]);
-
-  const handleAgeRefuse = () => {
-    window.location.href = "https://www.google.com";
-  };
-
-  const handleEnter = () => {
-    setLocation("/conditions");
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-background">
-      {showAgeModal && (
-        <AgeVerificationModal 
-          onAccept={() => setShowAgeModal(false)} 
-          onRefuse={handleAgeRefuse} 
-        />
-      )}
-
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentImage}
-          initial={{ opacity: 0, scale: 1.1 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.95 }}
-          transition={{ duration: 1.2, ease: "easeOut" }}
-          className="absolute inset-0"
-        >
-          <img
-            src={images[currentImage]}
-            alt="Djantrah"
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent" />
-        </motion.div>
-      </AnimatePresence>
-
-      {!showAgeModal && (
-        <div className="absolute inset-0 flex flex-col justify-end p-8 pb-16">
-          <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5, duration: 0.8 }}
-            className="space-y-6"
-          >
-            <div className="space-y-3">
-              <h1 className="text-5xl font-bold text-white tracking-tight">
-                Djantrah
-              </h1>
-              <p className="text-xl text-white/80 font-light leading-relaxed max-w-xs">
-                L'art de la rencontre réinventé. Connexions exclusives, anonymat absolu.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-4 text-white/60 text-sm">
-              <div className="flex items-center gap-2">
-                <BadgeCheck className="w-4 h-4 text-primary" />
-                <span>Profils vérifiés</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-primary" />
-                <span>100% anonyme</span>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-4">
-              <Button
-                onClick={handleEnter}
-                className="w-full h-14 text-lg font-semibold gap-2 glow-red"
-                data-testid="button-enter"
-              >
-                Découvrir les profils
-              </Button>
-              
-              <p className="text-center text-xs text-white/40">
-                Réservé aux +18 ans uniquement
-              </p>
-            </div>
-
-            <div className="flex justify-center gap-2 pt-4">
-              {images.map((_, idx) => (
-                <div
-                  key={idx}
-                  className={`h-1 rounded-full transition-all duration-500 ${
-                    idx === currentImage ? "w-8 bg-primary" : "w-2 bg-white/30"
-                  }`}
-                />
-              ))}
-            </div>
-          </motion.div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function ProfileCard({ 
   profile, 
@@ -342,8 +164,7 @@ function ProfileCard({
   );
 }
 
-export default function Home() {
-  const [showSplash, setShowSplash] = useState(true);
+export default function Explore() {
   const [profiles, setProfiles] = useState(mockProfiles);
   const [, setLocation] = useLocation();
 
@@ -360,10 +181,6 @@ export default function Home() {
       handleSwipe(action === "like" ? "right" : "left");
     }
   };
-
-  if (showSplash) {
-    return <SplashScreen onEnter={() => setShowSplash(false)} />;
-  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
