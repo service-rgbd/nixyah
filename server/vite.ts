@@ -22,7 +22,11 @@ export async function setupVite(server: Server, app: Express) {
       ...viteLogger,
       error: (msg, options) => {
         viteLogger.error(msg, options);
-        process.exit(1);
+        // Do not kill the entire dev server on client/runtime errors.
+        // The overlay already shows errors in the browser.
+        if (process.env.NODE_ENV === "production") {
+          process.exit(1);
+        }
       },
     },
     server: serverOptions,

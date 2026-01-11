@@ -1,11 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
-import { ArrowLeft, ArrowRight, User, Calendar, MapPin, Lock, Camera, Check, Shield } from "lucide-react";
+import { ArrowLeft, ArrowRight, User, Calendar, MapPin, Lock, Check, Shield, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { apiRequest } from "@/lib/queryClient";
+import { setSessionIds } from "@/lib/session";
+import { getProfileId } from "@/lib/session";
+import { cityOptions } from "@/lib/cities";
 
 type Gender = "homme" | "femme" | null;
 
@@ -13,16 +19,19 @@ interface FormData {
   gender: Gender;
   age: string;
   ville: string;
+  villePreset: string;
+  quartier: string;
+  accountType: "profile" | "residence" | "salon" | "adult_shop";
+  username: string;
   pseudo: string;
   password: string;
-  photo: string | null;
+  email: string;
 }
 
 const steps = [
   { id: 1, title: "Genre", icon: User },
   { id: 2, title: "Profil", icon: Calendar },
   { id: 3, title: "Compte", icon: Lock },
-  { id: 4, title: "Photo", icon: Camera },
 ];
 
 export default function Signup() {
@@ -32,11 +41,18 @@ export default function Signup() {
     gender: null,
     age: "",
     ville: "",
+    villePreset: "",
+    quartier: "",
+    accountType: "profile",
+    username: "",
     pseudo: "",
     password: "",
-    photo: null,
+    email: "",
   });
   const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [geoLoading, setGeoLoading] = useState(false);
 
   const progress = (currentStep / steps.length) * 100;
 
@@ -47,19 +63,22 @@ export default function Signup() {
       case 2:
         return formData.age && formData.ville;
       case 3:
-        return formData.pseudo && formData.password.length >= 6;
-      case 4:
-        return formData.photo !== null;
+        return (
+          formData.username.trim().length >= 4 &&
+          formData.pseudo.trim().length >= 2 &&
+          formData.username.trim() !== formData.pseudo.trim() &&
+          formData.password.length >= 6
+        );
       default:
         return false;
     }
   };
 
   const handleNext = () => {
-    if (currentStep < 4) {
+    if (currentStep < 3) {
       setCurrentStep(currentStep + 1);
     } else {
-      setLocation("/");
+      void handleSubmit();
     }
   };
 
@@ -67,12 +86,38 @@ export default function Signup() {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
     } else {
-      setLocation("/");
+      setLocation("/start");
     }
   };
 
-  const handlePhotoUpload = () => {
-    setFormData({ ...formData, photo: "https://via.placeholder.com/400" });
+  useEffect(() => {
+    if (getProfileId()) setLocation("/dashboard");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSubmit = async () => {
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const res = await apiRequest("POST", "/api/signup", {
+        gender: formData.gender,
+        age: formData.age,
+        ville: formData.ville,
+        lieu: formData.quartier || undefined,
+        accountType: formData.accountType,
+        username: formData.username.trim(),
+        pseudo: formData.pseudo.trim(),
+        password: formData.password,
+        email: formData.email || undefined,
+      });
+      const json = await res.json();
+      setSessionIds({ userId: json.userId, profileId: json.profile.id });
+      setLocation("/post-intent");
+    } catch (e: any) {
+      setSubmitError(e?.message ?? "Erreur lors de l'inscription");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const slideVariants = {
@@ -92,7 +137,7 @@ export default function Signup() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4">
+      <header className="flex items-center justify-between px-6 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
         <button 
           onClick={handleBack}
           className="w-10 h-10 rounded-full bg-card flex items-center justify-center"
@@ -100,7 +145,7 @@ export default function Signup() {
         >
           <ArrowLeft className="w-5 h-5 text-foreground" />
         </button>
-        <h1 className="font-display text-xl font-semibold text-gradient">Djantrah</h1>
+        <h1 className="font-display text-2xl font-semibold text-gradient tracking-tight">NIXYAH</h1>
         <div className="w-10" />
       </header>
 
@@ -121,7 +166,8 @@ export default function Signup() {
         </div>
       </div>
 
-      <main className="flex-1 px-6 py-8 overflow-hidden">
+      <main className="flex-1 px-4 py-6 overflow-hidden">
+        <div className="max-w-md mx-auto rounded-3xl border border-border bg-card/70 backdrop-blur p-5 shadow-lg">
         <AnimatePresence mode="wait" custom={1}>
           {currentStep === 1 && (
             <motion.div
@@ -198,6 +244,94 @@ export default function Signup() {
                 </div>
                 <Shield className="w-5 h-5 text-primary" />
               </motion.button>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Type de compte
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Tu peux créer un profil personnel pour poster des annonces, ou déclarer un
+                  établissement (résidence meublée, SPA, boutique produits adultes).
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() =>
+                      setFormData((prev) => ({ ...prev, accountType: "profile" }))
+                    }
+                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
+                      formData.accountType === "profile"
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-card hover:border-primary/40"
+                    }`}
+                  >
+                    <span className="text-[11px] font-semibold text-foreground">
+                      Profil personnel
+                    </span>
+                    <p className="text-[11px] text-muted-foreground">
+                      Annonces, rencontres et espace privé.
+                    </p>
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() =>
+                      setFormData((prev) => ({ ...prev, accountType: "residence" }))
+                    }
+                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
+                      formData.accountType === "residence"
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-card hover:border-primary/40"
+                    }`}
+                  >
+                    <span className="text-[11px] font-semibold text-foreground">
+                      Résidence meublée
+                    </span>
+                    <p className="text-[11px] text-muted-foreground">
+                      Appartements / chambres pour accueillir les rendez-vous.
+                    </p>
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() =>
+                      setFormData((prev) => ({ ...prev, accountType: "salon" }))
+                    }
+                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
+                      formData.accountType === "salon"
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-card hover:border-primary/40"
+                    }`}
+                  >
+                    <span className="text-[11px] font-semibold text-foreground">
+                      Salon / SPA / massages
+                    </span>
+                    <p className="text-[11px] text-muted-foreground">
+                      Établissement de massages privés ou SPA.
+                    </p>
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() =>
+                      setFormData((prev) => ({ ...prev, accountType: "adult_shop" }))
+                    }
+                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
+                      formData.accountType === "adult_shop"
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-card hover:border-primary/40"
+                    }`}
+                  >
+                    <span className="text-[11px] font-semibold text-foreground">
+                      Vente produits adultes
+                    </span>
+                    <p className="text-[11px] text-muted-foreground">
+                      Boutique pour préservatifs, lubrifiants, sextoys, etc.
+                    </p>
+                  </motion.button>
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -245,15 +379,132 @@ export default function Signup() {
                     <MapPin className="w-4 h-4 text-muted-foreground" />
                     Ville
                   </Label>
+                  <Select
+                    value={formData.villePreset}
+                    onValueChange={(v) => {
+                      if (v === "__other__") {
+                        setFormData({ ...formData, villePreset: v, ville: "" });
+                      } else {
+                        setFormData({ ...formData, villePreset: v, ville: v });
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-14 text-lg" data-testid="select-ville">
+                      <SelectValue placeholder="Sélectionner une ville" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cityOptions.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="__other__">Autre…</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {formData.villePreset === "__other__" && (
+                    <Input
+                      id="ville"
+                      type="text"
+                      placeholder="Votre ville"
+                      value={formData.ville}
+                      onChange={(e) => setFormData({ ...formData, ville: e.target.value })}
+                      className="h-14 text-lg"
+                      data-testid="input-ville"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="quartier" className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-muted-foreground" />
+                    Quartier / commune
+                  </Label>
                   <Input
-                    id="ville"
+                    id="quartier"
                     type="text"
-                    placeholder="Votre ville"
-                    value={formData.ville}
-                    onChange={(e) => setFormData({ ...formData, ville: e.target.value })}
+                    placeholder="Votre quartier (ex: Bonapriso, Angré, etc.)"
+                    value={formData.quartier}
+                    onChange={(e) => setFormData({ ...formData, quartier: e.target.value })}
                     className="h-14 text-lg"
-                    data-testid="input-ville"
+                    data-testid="input-quartier"
                   />
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      Utiliser ma localisation précise (GPS)
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-3 text-[11px]"
+                      disabled={geoLoading}
+                      onClick={() => {
+                        if (!navigator.geolocation) {
+                          setSubmitError(
+                            "La géolocalisation n'est pas disponible sur ce navigateur.",
+                          );
+                          return;
+                        }
+                        setGeoLoading(true);
+                        navigator.geolocation.getCurrentPosition(
+                          async (pos) => {
+                            try {
+                              const lat = pos.coords.latitude;
+                              const lng = pos.coords.longitude;
+                              const r = await fetch(
+                                `/api/geo/reverse?lat=${encodeURIComponent(
+                                  lat,
+                                )}&lng=${encodeURIComponent(lng)}`,
+                              );
+                              if (!r.ok) {
+                                throw new Error();
+                              }
+                              const data = (await r.json()) as {
+                                country?: string | null;
+                                city?: string | null;
+                                district?: string | null;
+                                road?: string | null;
+                              };
+                              const city = data.city ?? "";
+                              const district = data.district ?? "";
+                              const road = data.road ?? "";
+
+                              setFormData((prev) => ({
+                                ...prev,
+                                villePreset:
+                                  city &&
+                                  cityOptions.includes(
+                                    city as (typeof cityOptions)[number],
+                                  )
+                                    ? city
+                                    : "__other__",
+                                ville: city || prev.ville,
+                                quartier:
+                                  [district, road].filter(Boolean).join(" • ") ||
+                                  prev.quartier,
+                              }));
+                            } catch {
+                              setSubmitError(
+                                "Impossible de déterminer automatiquement ta ville. Tu peux remplir la ville et le quartier manuellement.",
+                              );
+                            } finally {
+                              setGeoLoading(false);
+                            }
+                          },
+                          () => {
+                            setGeoLoading(false);
+                            setSubmitError(
+                              "Permission de localisation refusée. Tu peux remplir la ville et le quartier manuellement.",
+                            );
+                          },
+                          { enableHighAccuracy: false, timeout: 8000 },
+                        );
+                      }}
+                    >
+                      {geoLoading ? "Localisation..." : "Autoriser"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -281,6 +532,24 @@ export default function Signup() {
 
               <div className="space-y-6">
                 <div className="space-y-2">
+                  <Label htmlFor="username" className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-muted-foreground" />
+                    Identifiant de connexion
+                  </Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    placeholder="Identifiant (non visible publiquement)"
+                    value={formData.username}
+                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                    className="h-14 text-lg"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Utilisé uniquement pour te connecter. Doit être différent de ton pseudo public.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="pseudo" className="flex items-center gap-2">
                     <User className="w-4 h-4 text-muted-foreground" />
                     Pseudo
@@ -296,6 +565,24 @@ export default function Signup() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Ce nom sera visible publiquement
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="email" className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-muted-foreground" />
+                    Email (optionnel)
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="Ton email pour récupérer ton mot de passe"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    className="h-14 text-lg"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Non affiché sur ton profil. Utilisé uniquement si tu perds ton mot de passe.
                   </p>
                 </div>
 
@@ -318,78 +605,23 @@ export default function Signup() {
             </motion.div>
           )}
 
-          {currentStep === 4 && (
-            <motion.div
-              key="step4"
-              custom={1}
-              variants={slideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="space-y-8"
-            >
-              <div className="text-center space-y-2">
-                <h2 className="font-display text-3xl font-semibold text-foreground">
-                  Votre photo
-                </h2>
-                <p className="text-muted-foreground">
-                  Ajoutez votre photo principale
-                </p>
-              </div>
-
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handlePhotoUpload}
-                className={`w-full aspect-[3/4] rounded-3xl border-2 border-dashed flex flex-col items-center justify-center transition-all ${
-                  formData.photo
-                    ? "border-primary bg-primary/5"
-                    : "border-border bg-card hover:border-primary/50"
-                }`}
-                data-testid="button-upload-photo"
-              >
-                {formData.photo ? (
-                  <div className="relative w-full h-full">
-                    <img
-                      src={formData.photo}
-                      alt="Preview"
-                      className="w-full h-full object-cover rounded-3xl"
-                    />
-                    <div className="absolute inset-0 bg-black/40 rounded-3xl flex items-center justify-center">
-                      <div className="text-center">
-                        <Check className="w-12 h-12 text-primary mx-auto mb-2" />
-                        <span className="text-white font-medium">Photo ajoutée</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <Camera className="w-16 h-16 text-muted-foreground mb-4" />
-                    <span className="text-foreground font-medium">Ajouter une photo</span>
-                    <span className="text-sm text-muted-foreground mt-1">
-                      Cliquez pour sélectionner
-                    </span>
-                  </>
-                )}
-              </motion.button>
-
-              <p className="text-xs text-center text-muted-foreground">
-                Votre photo sera vérifiée avant publication
-              </p>
-            </motion.div>
+          {submitError && (
+            <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+              {submitError}
+            </div>
           )}
         </AnimatePresence>
+        </div>
       </main>
 
       <div className="px-6 pb-8 pt-4">
         <Button
           onClick={handleNext}
-          disabled={!canProceed()}
+          disabled={!canProceed() || submitting}
           className="w-full h-14 text-base font-medium gap-2"
           data-testid="button-next"
         >
-          {currentStep === 4 ? "Créer mon profil" : "Continuer"}
+          {currentStep === 3 ? (submitting ? "Création..." : "Créer mon profil") : "Continuer"}
           <ArrowRight className="w-5 h-5" />
         </Button>
       </div>

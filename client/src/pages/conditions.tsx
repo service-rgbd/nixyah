@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
+import { getConsent, useConsent } from "@/lib/consent";
 import { 
   Shield, 
   Eye, 
@@ -20,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useI18n } from "@/lib/i18n";
 
 const features = [
   {
@@ -64,13 +66,13 @@ const conditions = [
   {
     id: "responsibility",
     title: "Responsabilité individuelle",
-    content: "Je comprends que Djantrah.com est une plateforme de mise en relation uniquement. La plateforme n'est pas responsable des interactions entre utilisateurs. Je m'engage à faire preuve de discernement et de prudence dans mes échanges et rencontres.",
+    content: "Je comprends que NIXYAH.com est une plateforme de mise en relation uniquement. La plateforme n'est pas responsable des interactions entre utilisateurs. Je m'engage à faire preuve de discernement et de prudence dans mes échanges et rencontres.",
     required: true
   },
   {
     id: "identity",
     title: "Identité des membres",
-    content: "Je reconnais que Djantrah.com ne peut garantir l'identité réelle des membres. Les profils sont anonymes et utilisent des pseudonymes. Je m'engage à vérifier par moi-même l'authenticité de mes interlocuteurs avant toute rencontre.",
+    content: "Je reconnais que NIXYAH.com ne peut garantir l'identité réelle des membres. Les profils sont anonymes et utilisent des pseudonymes. Je m'engage à vérifier par moi-même l'authenticité de mes interlocuteurs avant toute rencontre.",
     required: true
   },
   {
@@ -82,27 +84,39 @@ const conditions = [
   {
     id: "safety",
     title: "Sécurité personnelle",
-    content: "Je m'engage à prendre toutes les précautions nécessaires lors de mes rencontres : informer un proche, choisir des lieux publics ou sécurisés, et faire preuve de vigilance. Djantrah.com recommande la prudence en toutes circonstances.",
+    content: "Je m'engage à prendre toutes les précautions nécessaires lors de mes rencontres : informer un proche, choisir des lieux publics ou sécurisés, et faire preuve de vigilance. NIXYAH.com recommande la prudence en toutes circonstances.",
     required: true
   },
   {
     id: "data",
     title: "Protection des données",
-    content: "J'accepte que mes données personnelles soient traitées conformément à la politique de confidentialité de Djantrah.com. Je peux exercer mes droits d'accès, de rectification et de suppression à tout moment.",
+    content:
+      "J'accepte que mes données (pseudo, photos, vidéos, annonces, préférences, ville, quartier approximatif, logs de connexion) soient stockées sur des serveurs sécurisés et utilisées uniquement pour le fonctionnement de la plateforme : affichage des profils, annonces, salons et produits adultes. NIXYAH.com ne revend pas mes données à des tiers. Je peux demander l'accès, la rectification ou la suppression de mes informations en contactant l'administrateur par email (Ra.fils27@hotmail.com) ou via le canal Telegram officiel de support.",
     required: true
   },
   {
     id: "terms",
     title: "Conditions générales",
-    content: "J'accepte les conditions générales d'utilisation de Djantrah.com dans leur intégralité. Je reconnais avoir lu et compris l'ensemble des règles régissant l'utilisation de la plateforme.",
+    content:
+      "J'accepte les conditions générales d'utilisation de NIXYAH.com dans leur intégralité. Je comprends que la plateforme propose : (1) des profils et annonces pour rencontres adultes consenties, (2) la mise en avant de salons privés / SPA, (3) la présentation de produits adultes. NIXYAH.com n'organise pas de prostitution et ne garantit ni les services, ni les paiements réalisés entre utilisateurs ou partenaires externes. Toute utilisation doit rester légale dans mon pays de résidence et conforme aux lois locales en vigueur.",
     required: true
   }
 ];
 
 export default function Conditions() {
   const [, setLocation] = useLocation();
+  const [consent, setConsent] = useConsent();
+  const { lang } = useI18n();
   const [acceptedConditions, setAcceptedConditions] = useState<Set<string>>(new Set());
   const [showConditions, setShowConditions] = useState(false);
+
+  useEffect(() => {
+    // Si l'utilisateur a déjà accepté les conditions (par ex. depuis son profil),
+    // on affiche directement le détail sans passer par l'écran "Continuer".
+    if (consent.conditionsOk) {
+      setShowConditions(true);
+    }
+  }, [consent.conditionsOk]);
 
   const allAccepted = conditions.filter(c => c.required).every(c => acceptedConditions.has(c.id));
 
@@ -116,10 +130,33 @@ export default function Conditions() {
     setAcceptedConditions(newSet);
   };
 
+  const handleCheckAll = () => {
+    const requiredIds = conditions.filter((c) => c.required).map((c) => c.id);
+    setAcceptedConditions(new Set(requiredIds));
+  };
+
   const handleAccept = () => {
-    if (allAccepted) {
-      setLocation("/explore");
+    if (!allAccepted) return;
+
+    // On enregistre l'acceptation dans le consentement global
+    setConsent((prev) => ({ ...prev, conditionsOk: true }));
+
+    // On tente de récupérer une éventuelle page de redirection
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const next = params.get("next");
+      if (next) {
+        setLocation(next);
+        return;
+      }
+    } catch {
+      // ignore parsing errors, we'll fallback below
     }
+
+    // Fallback : si un profil existe déjà, on envoie vers l'application,
+    // sinon vers l'inscription pour les nouveaux utilisateurs.
+    const hasProfile = Boolean(window.localStorage.getItem("djantrah.profileId"));
+    setLocation(hasProfile ? "/start" : "/signup");
   };
 
   const handleRefuse = () => {
@@ -130,7 +167,7 @@ export default function Conditions() {
     return (
       <div className="min-h-screen bg-background">
         <header className="flex items-center justify-between px-6 py-4">
-          <h1 className="text-2xl font-bold text-gradient">Djantrah</h1>
+          <h1 className="text-2xl font-bold text-gradient">NIXYAH</h1>
         </header>
 
         <main className="px-6 pb-32">
@@ -227,7 +264,7 @@ export default function Conditions() {
   return (
     <div className="min-h-screen bg-background">
       <header className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <h1 className="text-2xl font-bold text-gradient">Djantrah</h1>
+        <h1 className="text-2xl font-bold text-gradient">NIXYAH</h1>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Lock className="w-4 h-4" />
           <span>Conditions d'utilisation</span>
@@ -262,6 +299,15 @@ export default function Conditions() {
               </div>
             </div>
           </div>
+
+          <Button
+            variant="secondary"
+            className="w-full"
+            onClick={handleCheckAll}
+            data-testid="button-check-all"
+          >
+            {lang === "en" ? "Check all" : "Cocher tout"}
+          </Button>
         </div>
 
         <ScrollArea className="h-[calc(100vh-380px)]">

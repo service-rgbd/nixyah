@@ -1,288 +1,863 @@
-import { useState } from "react";
-import { motion, AnimatePresence, PanInfo } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { BadgeCheck, MapPin, Clock, Heart, X, MessageCircle, ChevronDown, Sparkles } from "lucide-react";
-import { mockProfiles, type Profile } from "@/lib/mockData";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowLeft,
+  BadgeCheck,
+  ChevronLeft,
+  ChevronRight,
+  Crown,
+  MapPin,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { useAppSettings } from "@/lib/appSettings";
+import { useI18n } from "@/lib/i18n";
+import { annonceServiceOptions } from "@/lib/serviceOptions";
+import avatarUrl from "@assets/avatar.png";
 
-function ProfileCard({ 
-  profile, 
-  index,
-  total,
-  onSwipe, 
-  isTop 
-}: { 
-  profile: Profile; 
-  index: number;
-  total: number;
-  onSwipe: (direction: "left" | "right") => void;
-  isTop: boolean;
+type ApiProfile = {
+  id: string;
+  pseudo: string;
+  age: number;
+  ville: string;
+  lieu: string | null; // utilisé comme "quartier" / lieu approx
+  verified: boolean;
+  isVip?: boolean;
+  photoUrl: string | null;
+  description: string | null;
+  services?: string[] | null;
+  tarif?: string | null;
+  disponibilite?: { date: string; heureDebut: string; duree: string } | null;
+  distanceKm?: number | null;
+  accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
+  latestAnnonce?: { id: string; title: string; createdAt: string } | null;
+};
+
+function ProfileRow({
+  p,
+  onClick,
+}: {
+  p: ApiProfile;
+  onClick: () => void;
 }) {
-  const [, setLocation] = useLocation();
-  const [exitX, setExitX] = useState(0);
-
-  const handleDragEnd = (_: any, info: PanInfo) => {
-    if (Math.abs(info.offset.x) > 120) {
-      setExitX(info.offset.x > 0 ? 400 : -400);
-      onSwipe(info.offset.x > 0 ? "right" : "left");
-    }
-  };
-
-  const handleViewProfile = () => {
-    setLocation(`/profile/${profile.id}`);
-  };
-
-  const stackOffset = Math.min(index, 2);
-  const scale = 1 - stackOffset * 0.05;
-  const yOffset = stackOffset * 12;
-  const opacity = 1 - stackOffset * 0.2;
-
   return (
-    <motion.div
-      className="absolute inset-0 swipe-card"
-      style={{ 
-        zIndex: total - index,
-        transformOrigin: "center bottom"
-      }}
-      drag={isTop ? "x" : false}
-      dragConstraints={{ left: 0, right: 0 }}
-      dragElastic={0.9}
-      onDragEnd={handleDragEnd}
-      initial={{ 
-        scale: scale, 
-        y: yOffset,
-        opacity: opacity,
-      }}
-      animate={{ 
-        scale: isTop ? 1 : scale, 
-        y: isTop ? 0 : yOffset,
-        opacity: isTop ? 1 : opacity,
-        rotateZ: 0,
-      }}
-      exit={{ 
-        x: exitX, 
-        opacity: 0, 
-        rotateZ: exitX > 0 ? 20 : -20,
-        transition: { duration: 0.4, ease: "easeOut" }
-      }}
-      transition={{ type: "spring", stiffness: 260, damping: 26 }}
-      whileDrag={{ 
-        cursor: "grabbing",
-        scale: 1.02,
-      }}
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full text-left rounded-2xl border border-border bg-card/80 hover:bg-card transition-colors overflow-hidden"
     >
-      <div 
-        className="relative w-full h-full rounded-3xl overflow-hidden card-shadow cursor-pointer"
-        onClick={isTop ? handleViewProfile : undefined}
-        data-testid={`card-profile-${profile.id}`}
-      >
+      <div className="flex items-center gap-3 p-3">
         <img
-          src={profile.photoUrl}
-          alt={profile.pseudo}
-          className="absolute inset-0 w-full h-full object-cover"
-          draggable={false}
+          src={p.photoUrl || avatarUrl}
+          alt={p.pseudo}
+          className="w-14 h-14 rounded-2xl object-cover border border-border"
+          onError={(e) => {
+            const img = e.currentTarget;
+            img.onerror = null;
+            img.src = avatarUrl;
+          }}
         />
-        
-        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/30 to-transparent" />
-        
-        <div className="absolute top-5 left-5 right-5 flex items-center justify-between">
-          {profile.verified && (
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 }}
-              className="flex items-center gap-2 px-4 py-2 rounded-full glass-light border border-white/10"
-            >
-              <BadgeCheck className="w-4 h-4 text-primary" />
-              <span className="text-xs font-medium text-white">Profil Vérifié</span>
-            </motion.div>
-          )}
-          <motion.div 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.4 }}
-            className="flex items-center gap-2 px-4 py-2 rounded-full glass-light border border-white/10 ml-auto"
-          >
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs font-medium text-white">En ligne</span>
-          </motion.div>
-        </div>
-
-        <div className="absolute bottom-0 left-0 right-0 p-6">
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="space-y-4"
-          >
-            <div className="flex items-end gap-3">
-              <h2 className="text-4xl font-bold text-white tracking-tight" data-testid={`text-pseudo-${profile.id}`}>
-                {profile.pseudo}
-              </h2>
-              <span className="text-2xl text-white/70 font-light pb-0.5">{profile.age}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-foreground truncate">
+              {p.pseudo} • {p.age}
             </div>
-
-            <div className="flex items-center gap-5 text-white/70">
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                <span className="text-sm font-medium" data-testid={`text-ville-${profile.id}`}>{profile.ville}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4" />
-                <span className="text-sm font-medium">{profile.disponibilite.date}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {profile.services.map((service) => (
-                <span 
-                  key={service}
-                  className="px-4 py-1.5 rounded-full text-xs font-medium bg-white/10 text-white/90 border border-white/10"
-                >
-                  {service}
-                </span>
-              ))}
-              <span className="px-4 py-1.5 rounded-full text-xs font-bold bg-primary text-white">
-                {profile.tarif}
+            {p.verified && <BadgeCheck className="w-4 h-4 text-primary shrink-0" />}
+            {p.isVip && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-400/20 text-amber-200 border border-amber-400/30 flex items-center gap-1">
+                <Crown className="w-3.5 h-3.5" />
+                VIP
               </span>
-            </div>
-
-            {isTop && (
-              <motion.div 
-                className="flex items-center justify-center gap-2 text-white/40 pt-2"
-                animate={{ y: [0, 8, 0] }}
-                transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
-              >
-                <ChevronDown className="w-5 h-5" />
-                <span className="text-xs font-medium">Glissez pour voir plus</span>
-              </motion.div>
             )}
-          </motion.div>
+          </div>
+          <div className="text-xs text-muted-foreground truncate">
+            {p.ville}
+            {p.lieu ? ` • ${p.lieu}` : ""}
+            {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
+          </div>
+          <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
+            {p.description ?? "—"}
+          </div>
         </div>
+        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
       </div>
-    </motion.div>
+    </button>
   );
 }
 
 export default function Explore() {
-  const [profiles, setProfiles] = useState(mockProfiles);
   const [, setLocation] = useLocation();
+  const [settings, setSettings] = useAppSettings();
+  const { lang } = useI18n();
 
-  const handleSwipe = (direction: "left" | "right") => {
-    setTimeout(() => {
-      setProfiles((prev) => prev.slice(1));
-    }, 300);
+  // Structured filters (presentation + client-side filtering)
+  const [viewMode, setViewMode] = useState<"list" | "immersive">("list");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [scope, setScope] = useState<"nearby" | "anywhere">("nearby");
+  const [ageRange, setAgeRange] = useState<[number, number]>([18, 40]);
+  const [zone, setZone] = useState<string>("__all__");
+  const [quartier, setQuartier] = useState("");
+  const [accountType, setAccountType] = useState<
+    "__all__" | "profile" | "residence" | "salon" | "adult_shop"
+  >("__all__");
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [page, setPage] = useState(0);
+  const requestLocation = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: false, timeout: 8000 },
+    );
   };
 
-  const handleAction = (action: "pass" | "like" | "message") => {
-    if (action === "message" && profiles[0]) {
-      setLocation(`/profile/${profiles[0].id}`);
-    } else {
-      handleSwipe(action === "like" ? "right" : "left");
-    }
+  const baseParams = useMemo(() => {
+    return new URLSearchParams({
+      proOnly: settings.proOnly ? "1" : "0",
+      verifiedOnly: settings.verifiedOnly ? "1" : "0",
+      vipOnly: settings.vipOnly ? "1" : "0",
+      includeLatestAnnonce: "1",
+      ...(settings.selectedServices?.length ? { services: settings.selectedServices.join(",") } : {}),
+      ...(scope === "nearby" && coords
+        ? {
+            lat: String(coords.lat),
+            lng: String(coords.lng),
+            maxDistanceKm: String(settings.maxDistanceKm),
+          }
+        : {}),
+      limit: "120",
+    });
+  }, [
+    settings.proOnly,
+    settings.verifiedOnly,
+    settings.vipOnly,
+    settings.selectedServices,
+    settings.maxDistanceKm,
+    scope,
+    coords,
+  ]);
+
+  const query = `/api/profiles?${baseParams.toString()}`;
+  const vipQuery = `/api/profiles?${new URLSearchParams({
+    ...Object.fromEntries(baseParams.entries()),
+    vipOnly: "1",
+    verifiedOnly: "0",
+    limit: "40",
+  }).toString()}`;
+
+  const { data, isLoading } = useQuery<ApiProfile[]>({ queryKey: [query] });
+  const { data: vipData, isLoading: vipLoading } = useQuery<ApiProfile[]>({
+    queryKey: [vipQuery],
+    retry: false,
+  });
+
+  const cityOptions = useMemo(() => {
+    const villes = Array.from(new Set((data ?? []).map((p) => p.ville).filter(Boolean))).sort();
+    return villes;
+  }, [data]);
+
+  const normalize = (s: string) => s.trim().toLowerCase();
+
+  const applyClientFilters = (arr: ApiProfile[]) => {
+    const qQuartier = normalize(quartier);
+    return arr.filter((p) => {
+      if (p.age < ageRange[0] || p.age > ageRange[1]) return false;
+      if (zone !== "__all__" && p.ville !== zone) return false;
+      if (accountType !== "__all__" && (p.accountType ?? "profile") !== accountType) return false;
+      if (qQuartier) {
+        const lieu = normalize(p.lieu ?? "");
+        if (!lieu.includes(qQuartier)) return false;
+      }
+      return true;
+    });
   };
+
+  const filtered = useMemo(
+    () => applyClientFilters(data ?? []),
+    [data, ageRange, zone, quartier, accountType],
+  );
+  const vipFiltered = useMemo(
+    () => applyClientFilters(vipData ?? []),
+    [vipData, ageRange, zone, quartier, accountType],
+  );
+
+  const openProfile = (id: string) => setLocation(`/profile/${id}`);
+
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageSafe = Math.min(Math.max(0, page), pageCount - 1);
+  const paged = useMemo(() => {
+    const start = pageSafe * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, pageSafe]);
+
+  // Reset/clamp pagination when filters change
+  useEffect(() => {
+    setPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, ageRange, zone, quartier, accountType, settings.proOnly, settings.verifiedOnly, settings.vipOnly, settings.selectedServices, settings.maxDistanceKm]);
+  useEffect(() => {
+    if (page !== pageSafe) setPage(pageSafe);
+  }, [page, pageSafe]);
+
+  if (viewMode === "immersive") {
+    return (
+      <div className="h-[100svh] bg-background">
+        <div className="fixed top-0 left-0 right-0 z-30 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none">
+          <div className="mx-auto max-w-md flex items-center justify-between gap-2 pointer-events-auto">
+            <Button
+              variant="secondary"
+              size="icon"
+              className="rounded-full"
+              onClick={() => setLocation("/start")}
+              aria-label={lang === "en" ? "Back" : "Retour"}
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <div className="inline-flex items-center rounded-full border border-border bg-card/70 p-1">
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className="px-3 py-1 rounded-full text-xs text-muted-foreground"
+              >
+                {lang === "en" ? "List" : "Liste"}
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1 rounded-full text-xs bg-primary text-primary-foreground"
+              >
+                {lang === "en" ? "Immersive" : "Immersif"}
+              </button>
+            </div>
+
+            <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+              <SheetTrigger asChild>
+                <Button variant="secondary" className="rounded-full" size="icon" aria-label="Filters">
+                  <SlidersHorizontal className="w-4 h-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="h-[100svh] rounded-none overflow-y-auto">
+                <SheetHeader>
+                  <SheetTitle>{lang === "en" ? "Search filters" : "Filtres de recherche"}</SheetTitle>
+                </SheetHeader>
+                <div className="mt-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setScope("nearby")}
+                      className={`rounded-2xl border px-3 py-2 text-xs ${
+                        scope === "nearby"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-muted/30 text-muted-foreground"
+                      }`}
+                    >
+                      {lang === "en" ? "Nearby search" : "Recherche autour de moi"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScope("anywhere")}
+                      className={`rounded-2xl border px-3 py-2 text-xs ${
+                        scope === "anywhere"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-muted/30 text-muted-foreground"
+                      }`}
+                    >
+                      {lang === "en" ? "Anywhere search" : "Recherche partout"}
+                    </button>
+                  </div>
+
+                  <div className="rounded-2xl border border-border bg-background/50 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">{lang === "en" ? "Age" : "Âge"}</span>
+                      <span className="font-semibold text-foreground">
+                        {ageRange[0]}–{ageRange[1]}
+                      </span>
+                    </div>
+                    <div className="mt-3">
+                      <Slider
+                        value={ageRange}
+                        min={18}
+                        max={60}
+                        step={1}
+                        onValueChange={(v) => setAgeRange(v as [number, number])}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border bg-background/50 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">{lang === "en" ? "Max distance" : "Distance max"}</span>
+                      <span className="font-semibold text-foreground">{settings.maxDistanceKm} km</span>
+                    </div>
+                    <div className="mt-3">
+                      <Slider
+                        value={[settings.maxDistanceKm]}
+                        min={1}
+                        max={50}
+                        step={1}
+                        onValueChange={(v) => setSettings({ ...settings, maxDistanceKm: Number(v?.[0] ?? settings.maxDistanceKm) })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-2xl border border-border bg-background/50 p-3">
+                      <div className="text-xs text-muted-foreground">{lang === "en" ? "Zone" : "Zone"}</div>
+                      <select
+                        className="mt-2 w-full bg-transparent text-sm outline-none"
+                        value={zone}
+                        onChange={(e) => setZone(e.target.value)}
+                      >
+                        <option value="__all__">{lang === "en" ? "All" : "Toutes"}</option>
+                        {cityOptions.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="rounded-2xl border border-border bg-background/50 p-3">
+                      <div className="text-xs text-muted-foreground">{lang === "en" ? "District" : "Quartier"}</div>
+                      <Input
+                        value={quartier}
+                        onChange={(e) => setQuartier(e.target.value)}
+                        placeholder={lang === "en" ? "e.g. Bonapriso" : "ex: Bonapriso"}
+                        className="mt-2 h-9 rounded-xl"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border bg-background/50 p-3">
+                    <div className="text-xs text-muted-foreground">{lang === "en" ? "Profile type" : "Type de profil"}</div>
+                    <select
+                      className="mt-2 w-full bg-transparent text-sm outline-none"
+                      value={accountType}
+                      onChange={(e) => setAccountType(e.target.value as any)}
+                    >
+                      <option value="__all__">{lang === "en" ? "All types" : "Tous types"}</option>
+                      <option value="profile">{lang === "en" ? "Escort / profile" : "Escort / profil"}</option>
+                      <option value="residence">{lang === "en" ? "Residence" : "Résidence"}</option>
+                      <option value="salon">{lang === "en" ? "Salon / SPA" : "Salon / SPA"}</option>
+                      <option value="adult_shop">{lang === "en" ? "Adult shop" : "Boutique adulte"}</option>
+                    </select>
+                  </div>
+
+                  <Separator />
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSettings({ ...settings, proOnly: !settings.proOnly })}
+                      className={`rounded-2xl border px-3 py-2 text-xs ${
+                        settings.proOnly
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-muted/30 text-muted-foreground"
+                      }`}
+                    >
+                      {lang === "en" ? "Pros" : "Pros"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettings({ ...settings, verifiedOnly: !settings.verifiedOnly })}
+                      className={`rounded-2xl border px-3 py-2 text-xs ${
+                        settings.verifiedOnly
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-muted/30 text-muted-foreground"
+                      }`}
+                    >
+                      {lang === "en" ? "Verified" : "Vérifiés"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettings({ ...settings, vipOnly: !settings.vipOnly })}
+                      className={`rounded-2xl border px-3 py-2 text-xs ${
+                        settings.vipOnly
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-muted/30 text-muted-foreground"
+                      }`}
+                    >
+                      VIP
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced((v) => !v)}
+                    className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showAdvanced ? (lang === "en" ? "Reduce" : "Réduire") : (lang === "en" ? "Advanced practices" : "Pratiques avancées")}
+                  </button>
+
+                  {showAdvanced && (
+                    <div className="rounded-2xl border border-border bg-background/50 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-muted-foreground">{lang === "en" ? "Practices" : "Pratiques"}</div>
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => setSettings({ ...settings, selectedServices: [] })}
+                        >
+                          {lang === "en" ? "Clear" : "Effacer"}
+                        </button>
+                      </div>
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {(settings.selectedServices ?? []).length
+                          ? lang === "en"
+                            ? `${(settings.selectedServices ?? []).length} selected`
+                            : `${(settings.selectedServices ?? []).length} sélectionnées`
+                          : lang === "en"
+                            ? "All practices"
+                            : "Toutes les pratiques"}
+                      </div>
+                      <ScrollArea className="mt-3 h-56 rounded-2xl border border-border bg-muted/20">
+                        <div className="p-3 space-y-2">
+                          {annonceServiceOptions.map((s) => {
+                            const checked = (settings.selectedServices ?? []).includes(s);
+                            return (
+                              <label key={s} className="flex items-center gap-3 py-2">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    const on = Boolean(v);
+                                    const prev = settings.selectedServices ?? [];
+                                    const next = on ? Array.from(new Set([...prev, s])) : prev.filter((x) => x !== s);
+                                    setSettings({ ...settings, selectedServices: next });
+                                  }}
+                                />
+                                <span className="text-sm text-foreground">{s}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  )}
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        </div>
+
+        <main className="h-[100svh] overflow-y-auto snap-y snap-mandatory overscroll-contain">
+          {isLoading ? (
+            <div className="h-[100svh] flex items-center justify-center text-sm text-muted-foreground">
+              {lang === "en" ? "Loading…" : "Chargement…"}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="h-[100svh] flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
+              {lang === "en"
+                ? "No profiles for current filters."
+                : "Aucun profil avec les filtres actuels."}
+            </div>
+          ) : (
+            filtered.map((p) => (
+              <section key={p.id} className="snap-start snap-stop-always h-[100svh] relative">
+                <img
+                  src={p.photoUrl || avatarUrl}
+                  alt={p.pseudo}
+                  className="absolute inset-0 w-full h-full object-cover bg-muted"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    img.onerror = null;
+                    img.src = avatarUrl;
+                  }}
+                />
+                <div className="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/92 via-black/40 to-transparent pointer-events-none" />
+                <div className="absolute bottom-0 left-0 right-0 p-4">
+                  <div className="rounded-3xl bg-black/70 border border-white/12 backdrop-blur-xl px-5 py-5 space-y-3">
+                    <div className="text-white text-lg font-semibold tracking-tight line-clamp-1">
+                      {p.latestAnnonce?.title ?? (lang === "en" ? "Private listing" : "Annonce privée")}
+                    </div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-white text-2xl font-semibold tracking-tight truncate">
+                          {p.pseudo} <span className="text-white/70 font-light">{p.age}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-white/75 text-sm">
+                          <MapPin className="w-4 h-4" />
+                          <span className="truncate">
+                            {p.ville}
+                            {p.lieu ? ` • ${p.lieu}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="shrink-0 flex flex-col items-end gap-2">
+                        {p.tarif ? (
+                          <span className="px-3 py-1 rounded-full text-[11px] bg-primary/90 text-white border border-white/10">
+                            {p.tarif}
+                          </span>
+                        ) : null}
+                        {p.isVip && (
+                          <span className="px-3 py-1 rounded-full text-[11px] bg-amber-400/20 text-amber-200 border border-amber-400/30 flex items-center gap-2">
+                            <Crown className="w-4 h-4" />
+                            VIP
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-white/70 text-sm line-clamp-2">{p.description ?? "—"}</div>
+                    <div className="flex items-center justify-end">
+                      <Button className="rounded-2xl" onClick={() => openProfile(p.id)}>
+                        {lang === "en" ? "Open" : "Voir"}
+                        <ChevronRight className="w-4 h-4 ml-1" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ))
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="flex items-center justify-between px-6 py-4 relative z-20">
-        <h1 className="text-2xl font-bold text-gradient" data-testid="text-logo">
-          Djantrah
-        </h1>
-        <Button 
-          variant="ghost" 
-          size="sm"
-          className="text-muted-foreground hover:text-foreground font-medium"
-          onClick={() => setLocation("/signup")}
-          data-testid="button-signup"
-        >
-          S'inscrire
-        </Button>
+    <div className="min-h-[100svh] bg-background">
+      <header className="sticky top-0 z-30 bg-background/90 backdrop-blur border-b border-border">
+        <div className="mx-auto max-w-md px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 flex items-center justify-between gap-2">
+          <Button
+            variant="secondary"
+            size="icon"
+            className="rounded-full"
+            onClick={() => setLocation("/start")}
+            aria-label={lang === "en" ? "Back" : "Retour"}
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div className="text-sm font-semibold text-foreground">
+            {lang === "en" ? "Explore" : "Explorer"}
+          </div>
+          <div className="w-9" />
+        </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden px-4 pb-4">
-        <div className="relative h-full">
-          <AnimatePresence mode="popLayout">
-            {profiles.length > 0 ? (
-              profiles.slice(0, 3).map((profile, index) => (
-                <ProfileCard
-                  key={profile.id}
-                  profile={profile}
-                  index={index}
-                  total={Math.min(profiles.length, 3)}
-                  onSwipe={handleSwipe}
-                  isTop={index === 0}
-                />
-              ))
-            ) : (
-              <motion.div 
-                className="absolute inset-0 flex items-center justify-center"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-              >
-                <div className="text-center space-y-5">
-                  <div className="w-24 h-24 mx-auto rounded-full bg-muted/50 flex items-center justify-center">
-                    <Heart className="w-12 h-12 text-primary/50" />
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="text-2xl font-semibold text-foreground">Plus de profils</h3>
-                    <p className="text-muted-foreground text-sm max-w-xs mx-auto">
-                      Revenez plus tard pour découvrir de nouveaux profils exclusifs
-                    </p>
-                  </div>
-                  <Button 
-                    onClick={() => setProfiles(mockProfiles)}
-                    className="mt-4"
-                    data-testid="button-reload"
+      <main className="mx-auto max-w-md px-4 pb-10 pt-4 space-y-6">
+        {/* View mode */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-xs text-muted-foreground">
+            {lang === "en" ? "View" : "Affichage"}
+          </div>
+          <div className="inline-flex items-center rounded-full border border-border bg-card/60 p-1">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className="px-3 py-1 rounded-full text-xs bg-primary text-primary-foreground"
+            >
+              {lang === "en" ? "List" : "Liste"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("immersive")}
+              className="px-3 py-1 rounded-full text-xs text-muted-foreground"
+            >
+              {lang === "en" ? "Immersive" : "Immersif"}
+            </button>
+          </div>
+        </div>
+
+        {/* Filters (collapsed bar + full-screen sheet) */}
+        <div className="rounded-3xl border border-border bg-card/60 p-4 flex items-center justify-between gap-3">
+          <div className="text-xs text-muted-foreground truncate">
+            {lang === "en"
+              ? `Age ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "All zones" : zone}`
+              : `Âge ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "Toutes zones" : zone}`}
+            {accountType !== "__all__" ? (lang === "en" ? ` • Type ${accountType}` : ` • Type ${accountType}`) : ""}
+          </div>
+          <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm" className="rounded-2xl">
+                <SlidersHorizontal className="w-4 h-4 mr-2" />
+                {lang === "en" ? "Filters" : "Filtres"}
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="h-[100svh] rounded-none overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>{lang === "en" ? "Search filters" : "Filtres de recherche"}</SheetTitle>
+              </SheetHeader>
+
+              <div className="mt-6 space-y-4">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setScope("nearby")}
+                    className={`rounded-2xl border px-3 py-2 text-xs ${
+                      scope === "nearby"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
                   >
-                    Recharger
-                  </Button>
+                    {lang === "en" ? "Nearby search" : "Recherche autour de moi"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScope("anywhere")}
+                    className={`rounded-2xl border px-3 py-2 text-xs ${
+                      scope === "anywhere"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    {lang === "en" ? "Anywhere search" : "Recherche partout"}
+                  </button>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+
+                {scope === "nearby" && !coords && (
+                  <Button variant="outline" className="w-full rounded-2xl" onClick={requestLocation}>
+                    {lang === "en" ? "Use my location" : "Utiliser ma position"}
+                  </Button>
+                )}
+
+                {scope === "nearby" && !coords && (
+                  <Button variant="outline" className="w-full rounded-2xl" onClick={requestLocation}>
+                    {lang === "en" ? "Use my location" : "Utiliser ma position"}
+                  </Button>
+                )}
+
+                <div className="rounded-2xl border border-border bg-background/50 p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{lang === "en" ? "Age" : "Âge"}</span>
+                    <span className="font-semibold text-foreground">
+                      {ageRange[0]}–{ageRange[1]}
+                    </span>
+                  </div>
+                  <div className="mt-3">
+                    <Slider value={ageRange} min={18} max={60} step={1} onValueChange={(v) => setAgeRange(v as [number, number])} />
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-background/50 p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{lang === "en" ? "Max distance" : "Distance max"}</span>
+                    <span className="font-semibold text-foreground">{settings.maxDistanceKm} km</span>
+                  </div>
+                  <div className="mt-3">
+                    <Slider
+                      value={[settings.maxDistanceKm]}
+                      min={1}
+                      max={50}
+                      step={1}
+                      onValueChange={(v) => setSettings({ ...settings, maxDistanceKm: Number(v?.[0] ?? settings.maxDistanceKm) })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-2xl border border-border bg-background/50 p-3">
+                    <div className="text-xs text-muted-foreground">{lang === "en" ? "Zone" : "Zone"}</div>
+                    <select className="mt-2 w-full bg-transparent text-sm outline-none" value={zone} onChange={(e) => setZone(e.target.value)}>
+                      <option value="__all__">{lang === "en" ? "All" : "Toutes"}</option>
+                      {cityOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="rounded-2xl border border-border bg-background/50 p-3">
+                    <div className="text-xs text-muted-foreground">{lang === "en" ? "District" : "Quartier"}</div>
+                    <Input value={quartier} onChange={(e) => setQuartier(e.target.value)} placeholder={lang === "en" ? "e.g. Bonapriso" : "ex: Bonapriso"} className="mt-2 h-9 rounded-xl" />
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-background/50 p-3">
+                  <div className="text-xs text-muted-foreground">{lang === "en" ? "Profile type" : "Type de profil"}</div>
+                  <select className="mt-2 w-full bg-transparent text-sm outline-none" value={accountType} onChange={(e) => setAccountType(e.target.value as any)}>
+                    <option value="__all__">{lang === "en" ? "All types" : "Tous types"}</option>
+                    <option value="profile">{lang === "en" ? "Escort / profile" : "Escort / profil"}</option>
+                    <option value="residence">{lang === "en" ? "Residence" : "Résidence"}</option>
+                    <option value="salon">{lang === "en" ? "Salon / SPA" : "Salon / SPA"}</option>
+                    <option value="adult_shop">{lang === "en" ? "Adult shop" : "Boutique adulte"}</option>
+                  </select>
+                </div>
+
+                <Separator />
+
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ ...settings, proOnly: !settings.proOnly })}
+                    className={`rounded-2xl border px-3 py-2 text-xs ${
+                      settings.proOnly
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    {lang === "en" ? "Pros" : "Pros"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ ...settings, verifiedOnly: !settings.verifiedOnly })}
+                    className={`rounded-2xl border px-3 py-2 text-xs ${
+                      settings.verifiedOnly
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    {lang === "en" ? "Verified" : "Vérifiés"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ ...settings, vipOnly: !settings.vipOnly })}
+                    className={`rounded-2xl border px-3 py-2 text-xs ${
+                      settings.vipOnly
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground"
+                    }`}
+                  >
+                    VIP
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {showAdvanced ? (lang === "en" ? "Reduce" : "Réduire") : (lang === "en" ? "Advanced practices" : "Pratiques avancées")}
+                </button>
+
+                {showAdvanced && (
+                  <div className="rounded-2xl border border-border bg-background/50 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">{lang === "en" ? "Practices" : "Pratiques"}</div>
+                      <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setSettings({ ...settings, selectedServices: [] })}>
+                        {lang === "en" ? "Clear" : "Effacer"}
+                      </button>
+                    </div>
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      {settings.selectedServices?.length
+                        ? lang === "en"
+                          ? `${settings.selectedServices.length} selected`
+                          : `${settings.selectedServices.length} sélectionnées`
+                        : lang === "en"
+                          ? "All practices"
+                          : "Toutes les pratiques"}
+                    </div>
+                    <ScrollArea className="mt-3 h-56 rounded-2xl border border-border bg-muted/20">
+                      <div className="p-3 space-y-2">
+                        {annonceServiceOptions.map((s) => {
+                          const checked = (settings.selectedServices ?? []).includes(s);
+                          return (
+                            <label key={s} className="flex items-center gap-3 py-2">
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={(v) => {
+                                  const on = Boolean(v);
+                                  const prev = settings.selectedServices ?? [];
+                                  const next = on ? Array.from(new Set([...prev, s])) : prev.filter((x) => x !== s);
+                                  setSettings({ ...settings, selectedServices: next });
+                                }}
+                              />
+                              <span className="text-sm text-foreground">{s}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                )}
+
+                <Separator />
+                <Button
+                  variant="outline"
+                  className="rounded-2xl justify-between"
+                  onClick={() => {
+                    setAgeRange([18, 40]);
+                    setZone("__all__");
+                    setQuartier("");
+                    setAccountType("__all__");
+                    setScope("nearby");
+                    setShowAdvanced(false);
+                  }}
+                >
+                  {lang === "en" ? "Reset filters" : "Réinitialiser les filtres"}
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {/* Results list */}
+        <div className="space-y-2">
+          <div className="flex items-end justify-between">
+            <div>
+              <div className="text-sm font-semibold text-foreground">
+                {lang === "en" ? "Results" : "Résultats"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {lang === "en" ? "List view (no swipe)." : "Affichage en liste (sans swipe)."}
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {isLoading ? "…" : `${filtered.length}`}
+            </div>
+          </div>
+          {viewMode === "list" ? (
+            <div className="grid gap-2">
+              {isLoading ? (
+                <>
+                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
+                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
+                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
+                </>
+              ) : filtered.length === 0 ? (
+                <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  {lang === "en"
+                    ? "No profiles found. Try widening filters."
+                    : "Aucun profil trouvé. Essaie d’élargir les filtres."}
+                </div>
+              ) : (
+                paged.map((p) => (
+                  <ProfileRow key={p.id} p={p} onClick={() => openProfile(p.id)} />
+                ))
+              )}
+            </div>
+          ) : null}
+
+          {/* Pagination (10 per page) */}
+          {!isLoading && filtered.length > pageSize && viewMode === "list" && (
+            <div className="flex items-center justify-between pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-2xl"
+                disabled={pageSafe === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                {lang === "en" ? "Prev" : "Préc."}
+              </Button>
+              <div className="text-xs text-muted-foreground">
+                {lang === "en"
+                  ? `Page ${pageSafe + 1} / ${pageCount}`
+                  : `Page ${pageSafe + 1} / ${pageCount}`}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-2xl"
+                disabled={pageSafe >= pageCount - 1}
+                onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              >
+                {lang === "en" ? "Next" : "Suiv."}
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          )}
         </div>
       </main>
-
-      {profiles.length > 0 && (
-        <motion.div 
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-          className="relative z-20 px-6 pb-8 pt-4"
-        >
-          <div className="flex items-center justify-center gap-8">
-            <motion.button
-              whileHover={{ scale: 1.15 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => handleAction("pass")}
-              className="w-16 h-16 rounded-full bg-card border border-border flex items-center justify-center shadow-xl"
-              data-testid="button-pass"
-            >
-              <X className="w-7 h-7 text-muted-foreground" />
-            </motion.button>
-
-            <motion.button
-              whileHover={{ scale: 1.15 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => handleAction("like")}
-              className="w-20 h-20 rounded-full bg-primary flex items-center justify-center shadow-xl animate-pulse-glow"
-              data-testid="button-like"
-            >
-              <Heart className="w-9 h-9 text-white" fill="white" />
-            </motion.button>
-
-            <motion.button
-              whileHover={{ scale: 1.15 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => handleAction("message")}
-              className="w-16 h-16 rounded-full bg-card border border-border flex items-center justify-center shadow-xl"
-              data-testid="button-message"
-            >
-              <MessageCircle className="w-7 h-7 text-primary" />
-            </motion.button>
-          </div>
-        </motion.div>
-      )}
     </div>
   );
 }
+
+
