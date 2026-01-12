@@ -145,6 +145,11 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      // For OAuth/debugging: show redirect target for auth routes (helps avoid silent loops).
+      if (path.startsWith("/api/auth") && res.statusCode >= 300 && res.statusCode < 400) {
+        const loc = res.getHeader("location");
+        if (loc) logLine += ` -> ${String(loc)}`;
+      }
       if (capturedJsonResponse && !isProd) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }

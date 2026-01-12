@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
+import { Turnstile } from "@/components/turnstile";
 import logoTitle from "@assets/logo-titre.png";
 
 export default function Login() {
@@ -16,9 +17,11 @@ export default function Login() {
   const { lang, t } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetEmail, setResetEmail] = useState<string | null>(null);
+  const turnstileEnabled = Boolean((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,9 +69,13 @@ export default function Login() {
 
   const handleLogin = async () => {
     setError(null);
+    if (turnstileEnabled && !turnstileToken) {
+      setError(lang === "en" ? "Please complete the anti-bot check." : "Valide le contrôle anti-bot (Turnstile).");
+      return;
+    }
     setLoading(true);
     try {
-      const res = await apiRequest("POST", "/api/login", { username, password });
+      const res = await apiRequest("POST", "/api/login", { username, password, turnstileToken });
       const json = await res.json();
       setSessionIds({ userId: json.userId, profileId: json.profileId });
       setLocation("/dashboard");
@@ -186,6 +193,12 @@ export default function Login() {
                       </button>
                     </div>
                   </div>
+
+                  <Turnstile
+                    action="login"
+                    className="pt-1 flex justify-center"
+                    onToken={(tok) => setTurnstileToken(tok)}
+                  />
 
                   <Button
                     className="w-full h-12 rounded-full mt-2"

@@ -38,6 +38,8 @@ const envAliases: Record<string, string[]> = {
   GOOGLE_CLIENT_SECRET: ["GOOGLE_CLIENT_SECRET", "google_client_secret", "googleClientSecret"],
   GOOGLE_REDIRECT_URI: ["GOOGLE_REDIRECT_URI", "google_redirect_uri", "googleRedirectUri"],
 
+  TURNSTILE_SECRET_KEY: ["TURNSTILE_SECRET_KEY", "turnstile_secret_key", "turnstileSecretKey"],
+
   // CORS (comma-separated list of allowed origins for API when frontend is deployed separately)
   CORS_ORIGINS: ["CORS_ORIGINS", "cors_origins", "corsOrigins", "CORS_ORIGIN", "cors_origin"],
 
@@ -83,6 +85,8 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),
+
+  TURNSTILE_SECRET_KEY: z.string().optional(),
 
   CORS_ORIGINS: z.string().optional(),
   SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).optional(),

@@ -7,20 +7,27 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/lib/i18n";
 import { apiRequest } from "@/lib/queryClient";
+import { Turnstile } from "@/components/turnstile";
 
 export default function PasswordForgot() {
   const [, setLocation] = useLocation();
   const { lang } = useI18n();
   const [identifier, setIdentifier] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const turnstileEnabled = Boolean((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY);
 
   const handleSubmit = async () => {
     setError(null);
+    if (turnstileEnabled && !turnstileToken) {
+      setError(lang === "en" ? "Please complete the anti-bot check." : "Valide le contrôle anti-bot (Turnstile).");
+      return;
+    }
     setLoading(true);
     try {
-      await apiRequest("POST", "/api/password/forgot", { identifier });
+      await apiRequest("POST", "/api/password/forgot", { identifier, turnstileToken });
       setDone(true);
     } catch (e: any) {
       setError(
@@ -85,6 +92,12 @@ export default function PasswordForgot() {
                     className="h-11"
                   />
                 </div>
+
+                <Turnstile
+                  action="password_forgot"
+                  className="pt-1 flex justify-center"
+                  onToken={(tok) => setTurnstileToken(tok)}
+                />
 
                 <Button
                   className="w-full h-11 mt-1"

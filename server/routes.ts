@@ -253,6 +253,48 @@ export async function registerRoutes(
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
+  async function requireTurnstile(req: any, res: any, token: unknown): Promise<boolean> {
+    const secret = (env as any).TURNSTILE_SECRET_KEY as string | undefined;
+    if (!secret) return true; // disabled / not configured
+
+    const t = typeof token === "string" ? token.trim() : "";
+    if (!t) {
+      res.status(400).json({ message: "Validation anti-bot requise (Turnstile)." });
+      return false;
+    }
+
+    try {
+      const ip = getClientIp(req);
+      const body = new URLSearchParams({ secret, response: t });
+      if (ip) body.set("remoteip", ip);
+
+      const verifyRes = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+      });
+
+      const json = (await verifyRes.json().catch(() => null)) as
+        | { success?: boolean; "error-codes"?: string[] }
+        | null;
+
+      if (!json?.success) {
+        await logIpEvent({ req, kind: "turnstile_failed" });
+        res.status(400).json({
+          message: "Validation anti-bot échouée. Réessaie.",
+          codes: Array.isArray((json as any)?.["error-codes"]) ? (json as any)["error-codes"] : undefined,
+        });
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      console.error("Turnstile verify failed", e);
+      res.status(502).json({ message: "Validation anti-bot indisponible. Réessaie." });
+      return false;
+    }
+  }
+
   function sanitizeOAuthState(input: string | null | undefined): string {
     const raw = String(input ?? "").trim();
     if (!raw) return "/dashboard";
@@ -770,6 +812,9 @@ export async function registerRoutes(
   app.get(
     "/api/publishing/config",
     asyncHandler(async (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       const PROMO_FACTOR = 0.7; // -30% promotion on money prices
       res.json({
         publication: PUBLISHING_CONFIG.publication,
@@ -792,6 +837,9 @@ export async function registerRoutes(
   app.get(
     "/api/support",
     asyncHandler(async (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.json({
         resetEmail: env.ADMIN_EMAIL ?? "Ra.fils27@hotmail.com",
         telegramUrl: (env as any).SUPPORT_TELEGRAM_URL ?? "https://t.me/+cNj_edHZTyc2YWE0",
@@ -931,6 +979,8 @@ export async function registerRoutes(
       if (!hasUsersEmail) {
         return res.status(400).json({ message: "Password reset not available (missing email column)" });
       }
+
+      if (!(await requireTurnstile(req, res, (req.body as any)?.turnstileToken))) return;
 
       const payload = z
         .object({
@@ -1412,8 +1462,11 @@ export async function registerRoutes(
         .object({
           username: z.string().min(1),
           password: z.string().min(1),
+          turnstileToken: z.string().optional(),
         })
         .parse(req.body);
+
+      if (!(await requireTurnstile(req, res, (payload as any).turnstileToken))) return;
 
       const identifier = payload.username.trim();
       const identLower = identifier.toLowerCase();
@@ -1496,6 +1549,7 @@ export async function registerRoutes(
     "/api/signup",
     asyncHandler(async (req, res) => {
       await ensureIpNotBanned(req);
+      if (!(await requireTurnstile(req, res, (req.body as any)?.turnstileToken))) return;
       // User can only create one profile per session
       if (req.session?.profileId) {
         return res.status(409).json({ message: "Profil déjà créé" });

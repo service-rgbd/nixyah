@@ -13,6 +13,7 @@ import { setSessionIds } from "@/lib/session";
 import { getProfileId } from "@/lib/session";
 import { cityOptions } from "@/lib/cities";
 import { toast } from "@/hooks/use-toast";
+import { Turnstile } from "@/components/turnstile";
 import logoTitle from "@assets/logo-titre.png";
 
 type Gender = "homme" | "femme" | null;
@@ -40,6 +41,7 @@ export default function Signup() {
   const [, setLocation] = useLocation();
   const [currentStep, setCurrentStep] = useState(1);
   const [emailLocked, setEmailLocked] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData>({
     gender: null,
     age: "",
@@ -56,6 +58,7 @@ export default function Signup() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
+  const turnstileEnabled = Boolean((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY);
 
   const progress = (currentStep / steps.length) * 100;
 
@@ -153,6 +156,10 @@ export default function Signup() {
 
   const handleSubmit = async () => {
     setSubmitError(null);
+    if (turnstileEnabled && !turnstileToken) {
+      setSubmitError("Valide le contrôle anti-bot (Turnstile) avant de créer ton compte.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await apiRequest("POST", "/api/signup", {
@@ -165,6 +172,7 @@ export default function Signup() {
         pseudo: formData.pseudo.trim(),
         password: formData.password,
         email: formData.email || undefined,
+        turnstileToken,
       });
       const json = await res.json();
       if (!res.ok) {
@@ -710,6 +718,12 @@ export default function Signup() {
                     data-testid="input-password"
                   />
                 </div>
+
+                <Turnstile
+                  action="signup"
+                  className="pt-1 flex justify-center"
+                  onToken={(tok) => setTurnstileToken(tok)}
+                />
               </div>
             </motion.div>
           )}
