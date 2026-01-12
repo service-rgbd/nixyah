@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { getProfileId } from "@/lib/session";
-import { adultProducts as staticAdultProducts, type MaleProduct } from "@/lib/maleProducts";
+import { adultProducts as staticAdultProducts } from "@/lib/maleProducts";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 type PaymentMethod = "delivery" | "direct";
 
@@ -21,6 +23,9 @@ type DetailProduct = {
   size?: string | null;
   description?: string | null;
   imageUrl: string;
+  ownerProfileId?: string | null;
+  stockQty?: number | null;
+  placeType?: string | null;
 };
 
 export default function AdultProductDetailPage() {
@@ -37,6 +42,9 @@ export default function AdultProductDetailPage() {
   const [deliveryTime, setDeliveryTime] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("delivery");
   const [submitting, setSubmitting] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [otherProducts, setOtherProducts] = useState<DetailProduct[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,6 +82,9 @@ export default function AdultProductDetailPage() {
             size: data.size,
             description: data.description,
             imageUrl: data.imageUrl ?? "",
+            ownerProfileId: (data as any).ownerProfileId ?? null,
+            stockQty: (data as any).stockQty ?? null,
+            placeType: (data as any).placeType ?? null,
           });
         }
       } catch (e: any) {
@@ -87,6 +98,41 @@ export default function AdultProductDetailPage() {
       cancelled = true;
     };
   }, [params.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!product?.ownerProfileId) return;
+      try {
+        const res = await fetch(
+          `/api/adult-products?ownerProfileId=${encodeURIComponent(product.ownerProfileId)}&limit=8`,
+        );
+        if (!res.ok) return;
+        const rows = (await res.json()) as ApiAdultProduct[];
+        const mapped = rows
+          .filter((p) => p.id !== product.id)
+          .slice(0, 6)
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            subtitle: p.subtitle,
+            price: p.price,
+            size: p.size,
+            description: p.description,
+            imageUrl: p.imageUrl ?? "",
+            ownerProfileId: (p as any).ownerProfileId ?? null,
+            stockQty: (p as any).stockQty ?? null,
+            placeType: (p as any).placeType ?? null,
+          }));
+        if (!cancelled) setOtherProducts(mapped);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [product?.ownerProfileId, product?.id]);
 
   async function submitOrder() {
     if (!product) return;
@@ -121,6 +167,7 @@ export default function AdultProductDetailPage() {
           address,
           deliveryTime,
           paymentMethod,
+          note: note.trim() ? note.trim() : undefined,
         }),
       });
       if (!res.ok) {
@@ -131,6 +178,7 @@ export default function AdultProductDetailPage() {
         title: "Commande prise en compte",
         description: "Nous avons bien reçu ta demande. Un vendeur va préparer ta commande.",
       });
+      setOrderOpen(false);
     } catch (err: any) {
       toast({
         title: "Impossible d’envoyer la commande",
@@ -192,10 +240,77 @@ export default function AdultProductDetailPage() {
             <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
           )}
 
-          <div className="space-y-2 pt-2 border-t border-border/60">
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Coordonnées de livraison
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-2xl border border-border bg-muted/20 p-3">
+              <div className="text-xs text-muted-foreground">Stock</div>
+              <div className="text-sm font-semibold text-foreground">
+                {typeof product.stockQty === "number" ? product.stockQty : "—"}
+              </div>
             </div>
+            <div className="rounded-2xl border border-border bg-muted/20 p-3">
+              <div className="text-xs text-muted-foreground">Type de lieu</div>
+              <div className="text-sm font-semibold text-foreground">
+                {product.placeType ?? "—"}
+              </div>
+            </div>
+          </div>
+
+          <Button className="w-full h-11 gap-2" onClick={() => setOrderOpen(true)}>
+            <ShoppingCart className="w-4 h-4" />
+            Commander
+          </Button>
+
+          {product.ownerProfileId && (
+            <Button
+              variant="outline"
+              className="w-full h-11"
+              onClick={() => setLocation(`/profile/${product.ownerProfileId}`)}
+            >
+              Voir la boutique
+            </Button>
+          )}
+        </div>
+
+        {otherProducts.length > 0 && (
+          <div className="max-w-md mx-auto mt-4 space-y-2">
+            <div className="text-sm font-semibold text-foreground">Autres produits</div>
+            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+              {otherProducts.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setLocation(`/adult-products/${p.id}`)}
+                  className="min-w-[220px] max-w-[240px] rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
+                >
+                  <div className="relative h-36">
+                    <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
+                      <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">Boutique</span>
+                      <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">{p.price}</span>
+                    </div>
+                  </div>
+                  <div className="p-3 space-y-1">
+                    <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
+                    {p.size && <div className="text-[11px] text-muted-foreground">{p.size}</div>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
+
+      <Dialog open={orderOpen} onOpenChange={setOrderOpen}>
+        <DialogContent className="rounded-3xl">
+          <DialogHeader>
+            <DialogTitle>Commander</DialogTitle>
+            <DialogDescription>
+              {product.name} • {product.price}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="adult-phone-detail" className="text-xs">
                 Numéro de téléphone
@@ -230,6 +345,10 @@ export default function AdultProductDetailPage() {
                 onChange={(e) => setDeliveryTime(e.target.value)}
               />
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Note (optionnel)</Label>
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} className="rounded-2xl" />
+            </div>
             <div className="space-y-1.5 pt-1">
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Mode de paiement
@@ -245,6 +364,7 @@ export default function AdultProductDetailPage() {
                   onClick={() => setPaymentMethod("delivery")}
                 >
                   <span>Payer à la livraison</span>
+                  {paymentMethod === "delivery" && <span className="text-primary">✓</span>}
                 </button>
                 <button
                   type="button"
@@ -256,17 +376,18 @@ export default function AdultProductDetailPage() {
                   onClick={() => setPaymentMethod("direct")}
                 >
                   <span>Payer directement (compte requis)</span>
+                  {paymentMethod === "direct" && <span className="text-primary">✓</span>}
                 </button>
               </div>
             </div>
-          </div>
 
-          <Button className="w-full h-11 gap-2" disabled={submitting} onClick={submitOrder}>
-            <ShoppingCart className="w-4 h-4" />
-            {submitting ? "Envoi en cours..." : "Valider la commande"}
-          </Button>
-        </div>
-      </main>
+            <Button className="w-full h-11 gap-2" disabled={submitting} onClick={submitOrder}>
+              <ShoppingCart className="w-4 h-4" />
+              {submitting ? "Envoi en cours..." : "Confirmer"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -29,6 +29,12 @@ type AnnonceItem = {
   active: boolean;
   createdAt: string;
   distanceKm?: number | null;
+  promotion?: any;
+  promotionMeta?: {
+    badges?: string[];
+    expiresAt?: string | null;
+    remainingDays?: number | null;
+  };
   profile: {
     id: string;
     pseudo: string;
@@ -55,6 +61,19 @@ type AnnonceItem = {
     positions?: string[] | null;
     selfDescriptions?: string[] | null;
   };
+};
+
+const timeAgo = (iso: string) => {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `il y a ${s} secondes`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `il y a ${m} mins`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h} h`;
+  const d = Math.floor(h / 24);
+  return `il y a ${d} j`;
 };
 
 export default function AnnoncesPage() {
@@ -251,75 +270,71 @@ export default function AnnoncesPage() {
                 key={a.id}
                 type="button"
                 onClick={() => setLocation(`/profile/${a.profile.id}`)}
-                className="w-full text-left rounded-2xl border border-border bg-card/70 backdrop-blur overflow-hidden hover:bg-card/90 transition-colors"
+                className="w-full text-left rounded-2xl border border-border bg-card/70 overflow-hidden hover:bg-card/90 transition-colors"
               >
-                <div className="relative h-52">
-                  <img
-                    src={a.profile.photoUrl || avatarUrl}
-                    alt={a.profile.pseudo}
-                    className="absolute inset-0 w-full h-full object-cover"
-                    onError={(e) => {
-                      const img = e.currentTarget;
-                      img.onerror = null;
-                      img.src = avatarUrl;
-                    }}
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent" />
-                  <div className="absolute bottom-0 left-0 right-0 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-white font-semibold truncate">{a.title}</div>
-                        <div className="text-white/70 text-sm truncate mt-0.5">
-                          {a.profile.pseudo} • {a.profile.age}
-                        </div>
-                      </div>
-                      {a.profile.tarif ? (
-                        <div className="shrink-0 px-3 py-1.5 rounded-full text-xs bg-primary text-white font-semibold">
-                          {a.profile.tarif}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="text-white/70 text-sm flex items-center justify-between gap-3 mt-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <MapPin className="w-4 h-4" />
-                        <span className="truncate">{a.profile.ville}</span>
-                      </div>
-                      {typeof a.distanceKm === "number" ? (
-                        <span className="shrink-0 text-xs">{a.distanceKm.toFixed(1)} km</span>
-                      ) : null}
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      {(a.profile.services ?? []).slice(0, 4).map((s) => (
-                        <span
-                          key={s}
-                          className="px-3 py-1 rounded-full text-[11px] bg-white/10 text-white/90 border border-white/10"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                      {a.profile.attitude ? (
-                        <span className="px-3 py-1 rounded-full text-[11px] bg-white/10 text-white/90 border border-white/10">
-                          {a.profile.attitude}
-                        </span>
-                      ) : null}
-                      {a.profile.boireUnVerre === true ? (
-                        <span className="px-3 py-1 rounded-full text-[11px] bg-white/10 text-white/90 border border-white/10">
-                          🍷 OK
-                        </span>
-                      ) : null}
-                      {a.profile.fume === false ? (
-                        <span className="px-3 py-1 rounded-full text-[11px] bg-white/10 text-white/90 border border-white/10">
-                          🚭
-                        </span>
-                      ) : null}
+                <div className="flex">
+                  <div className="relative w-28 h-24 shrink-0 bg-muted overflow-hidden">
+                    <img
+                      src={a.profile.photoUrl || avatarUrl}
+                      alt={a.profile.pseudo}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        const img = e.currentTarget;
+                        img.onerror = null;
+                        img.src = avatarUrl;
+                      }}
+                    />
+                    <div className="absolute top-2 left-2 flex flex-col gap-1">
                       {a.profile.isVip ? (
-                        <span className="px-3 py-1 rounded-full text-[11px] bg-amber-400/20 text-amber-200 border border-amber-400/30 flex items-center gap-2">
-                          <Crown className="w-3.5 h-3.5" />
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/90 text-white font-semibold">
                           VIP
                         </span>
                       ) : null}
+                      {(a.promotionMeta?.badges ?? []).includes("URGENT") ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-500/90 text-white font-semibold">
+                          Urgent
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 p-3 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-foreground line-clamp-2">{a.title}</div>
+                        <div className="text-xs text-muted-foreground mt-1 truncate">
+                          Publié par{" "}
+                          <span className="text-foreground/90 font-medium">{a.profile.pseudo}</span>{" "}
+                          {a.profile.isPro ? <span className="text-muted-foreground">(pro)</span> : null}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                          <MapPin className="w-3.5 h-3.5" />
+                          <span className="truncate">{a.profile.ville}</span>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-[11px] text-muted-foreground">
+                        {timeAgo(a.createdAt)}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <div className="text-[11px] text-muted-foreground">
+                        {(a.profile.photos?.length ?? 0) > 0 ? `${a.profile.photos.length} photos` : "—"}
+                        {typeof a.distanceKm === "number" ? ` • ${a.distanceKm.toFixed(1)} km` : ""}
+                      </div>
+                      <div className="flex gap-1.5 flex-wrap justify-end">
+                        {(a.promotionMeta?.badges ?? []).filter((b) => b !== "URGENT").slice(0, 3).map((b) => (
+                          <span key={b} className="px-2 py-0.5 rounded-full text-[10px] bg-muted/40 border border-border text-foreground/80">
+                            {b === "PROLONGATION" ? "Prolong." : b}
+                          </span>
+                        ))}
+                        {a.profile.isVip ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-400/15 border border-amber-400/25 text-amber-200 flex items-center gap-1">
+                            <Crown className="w-3 h-3" />
+                            VIP
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>

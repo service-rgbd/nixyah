@@ -29,6 +29,7 @@ export const users = pgTable("users", {
   resetPasswordToken: text("reset_password_token"),
   resetPasswordExpiresAt: timestamp("reset_password_expires_at", { withTimezone: true }),
   passwordHash: text("password_hash").notNull(),
+  tokensBalance: integer("tokens_balance").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -90,6 +91,13 @@ export const profiles = pgTable("profiles", {
   showLocation: boolean("show_location").notNull().default(false),
 
   verified: boolean("verified").notNull().default(false),
+
+  // Establishments (adult shop / spa / residence) extra fields
+  businessName: varchar("business_name", { length: 160 }),
+  address: varchar("address", { length: 255 }),
+  openingHours: varchar("opening_hours", { length: 128 }),
+  roomsCount: integer("rooms_count"),
+
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -113,6 +121,7 @@ export const annonces = pgTable("annonces", {
     .references(() => profiles.id, { onDelete: "cascade" }),
   title: varchar("title", { length: 120 }).notNull(),
   body: text("body"),
+  promotion: jsonb("promotion"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -136,15 +145,21 @@ export const salons = pgTable("salons", {
 export const adultProductsTable = pgTable("adult_products", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   salonId: uuid("salon_id").references(() => salons.id, { onDelete: "set null" }),
+  ownerProfileId: uuid("owner_profile_id").references(() => profiles.id, { onDelete: "set null" }),
   name: varchar("name", { length: 160 }).notNull(),
   subtitle: varchar("subtitle", { length: 200 }),
   price: varchar("price", { length: 64 }).notNull(),
   size: varchar("size", { length: 64 }),
   description: text("description"),
   imageUrl: text("image_url"),
+  // Deprecated for UI (avoid categories display); keep for legacy/admin usage
   tag: varchar("tag", { length: 64 }),
+  // Stock + delivery/pickup metadata
+  stockQty: integer("stock_qty").notNull().default(0),
+  placeType: varchar("place_type", { length: 32 }), // ex: delivery | pickup | discreet_meetup
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const ipLogs = pgTable("ip_logs", {
@@ -245,6 +260,31 @@ export const annonceCreateSchema = z.object({
   lieu: z.string().min(1).max(64).optional(),
   services: z.array(z.string().min(1).max(40)).max(20).optional(),
   description: z.string().max(5000).optional(),
+  promote: z
+    .object({
+      extended: z
+        .object({
+          optionId: z.number().int().min(1).max(1000),
+          paymentMode: z.enum(["tokens", "money"]),
+        })
+        .optional(),
+      featured: z
+        .object({
+          optionId: z.number().int().min(1).max(1000),
+        })
+        .optional(),
+      autorenew: z
+        .object({
+          optionId: z.number().int().min(1).max(1000),
+        })
+        .optional(),
+      urgent: z
+        .object({
+          optionId: z.number().int().min(1).max(1000),
+        })
+        .optional(),
+    })
+    .optional(),
   corpulence: z.string().min(1).max(32).optional(),
   poids: z.coerce.number().int().min(30).max(300).optional(),
   attitude: z.string().min(1).max(32).optional(),
@@ -290,6 +330,7 @@ export const insertSalonSchema = createInsertSchema(salons).pick({
 
 export const insertAdultProductSchema = createInsertSchema(adultProductsTable).pick({
   salonId: true,
+  ownerProfileId: true,
   name: true,
   subtitle: true,
   price: true,
@@ -297,6 +338,8 @@ export const insertAdultProductSchema = createInsertSchema(adultProductsTable).p
   description: true,
   imageUrl: true,
   tag: true,
+  stockQty: true,
+  placeType: true,
   active: true,
 });
 

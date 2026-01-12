@@ -6,6 +6,7 @@ let hasProfilesVipPromise: Promise<boolean> | null = null;
 let hasUsersEmailPromise: Promise<boolean> | null = null;
 let hasProfilesAttributesPromise: Promise<boolean> | null = null;
 let hasUsersEmailVerificationPromise: Promise<boolean> | null = null;
+let hasProfilesBusinessPromise: Promise<boolean> | null = null;
 
 export async function hasProfilesContactPreferenceColumn(): Promise<boolean> {
   if (hasContactPreferencePromise) return hasContactPreferencePromise;
@@ -112,6 +113,28 @@ export async function hasUsersEmailVerificationColumns(): Promise<boolean> {
     }
   })();
   return hasUsersEmailVerificationPromise;
+}
+
+export async function hasProfilesBusinessColumns(): Promise<boolean> {
+  if (hasProfilesBusinessPromise) return hasProfilesBusinessPromise;
+  hasProfilesBusinessPromise = (async () => {
+    try {
+      // Checking for one column is enough to decide whether the migration ran.
+      const res = await db.execute(sql`
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'profiles'
+          and column_name = 'business_name'
+        limit 1
+      `);
+      const rows = ((res as any)?.rows ?? []) as any[];
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  return hasProfilesBusinessPromise;
 }
 
 

@@ -39,6 +39,7 @@ export class MemStorage implements IStorage {
       resetPasswordToken: null,
       resetPasswordExpiresAt: null,
       passwordHash: insertUser.passwordHash,
+      tokensBalance: 1,
       createdAt: new Date(),
     };
     this.users.set(id, user);

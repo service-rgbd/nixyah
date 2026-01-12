@@ -116,7 +116,7 @@ export default function AdultProductsPage() {
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
                 <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
                   <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
-                    {p.tag}
+                    Boutique
                   </span>
                   <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">
                     {p.price}

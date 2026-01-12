@@ -10,6 +10,7 @@ import { defaultAppSettings, useAppSettings } from "@/lib/appSettings";
 import { getProfileId } from "@/lib/session";
 import { useTheme } from "next-themes";
 import { useT } from "@/lib/i18n";
+import logoTitle from "@assets/logo-titre.png";
 
 function SettingsRow({
   label,
@@ -64,6 +65,7 @@ export default function Settings() {
           <ArrowLeft className="w-5 h-5 text-foreground" />
         </button>
         <h1 className="text-xl font-semibold text-foreground flex items-center gap-2">
+          <img src={logoTitle} alt="NIXYAH" className="h-6 w-auto object-contain" draggable={false} />
           <SlidersHorizontal className="w-5 h-5 text-muted-foreground" />
           {t("settings")}
         </h1>

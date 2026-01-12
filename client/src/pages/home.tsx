@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation } from "wouter";
 import {
@@ -118,6 +118,8 @@ function LandingPage() {
   const [loadingExplore, setLoadingExplore] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const trustScrollerRef = useRef<HTMLDivElement | null>(null);
+  const demoScrollerRef = useRef<HTMLDivElement | null>(null);
   const canPlayWebm = useMemo(() => {
     try {
       const v = document.createElement("video");
@@ -176,7 +178,11 @@ function LandingPage() {
       );
     }
     const c = getConsent();
-    setLocation(c.conditionsOk ? "/start" : "/conditions?next=/start");
+    setLocation(c.conditionsOk ? "/loader" : "/conditions?next=/loader");
+  };
+
+  const scrollNext = (ref: React.RefObject<HTMLDivElement | null>, amountPx = 320) => {
+    ref.current?.scrollBy({ left: amountPx, behavior: "smooth" });
   };
 
   const scrollToId = (id: string) => {
@@ -195,6 +201,14 @@ function LandingPage() {
     setSettings({
       ...settings,
       theme: settings.theme === "dark" ? "light" : "dark",
+    });
+  };
+
+  const setThemeChecked = (checked: boolean) => {
+    setSettings({
+      ...settings,
+      // UX requirement: ON = light, OFF = dark
+      theme: checked ? "light" : "dark",
     });
   };
 
@@ -361,7 +375,7 @@ function LandingPage() {
                 <img
                   src={logoTitle}
                   alt="NIXYAH"
-                  className="h-8 sm:h-9 w-auto object-contain"
+                  className="h-11 sm:h-14 w-auto object-contain"
                   draggable={false}
                 />
               </button>
@@ -455,9 +469,7 @@ function LandingPage() {
           </div>
 
                 {/* Dark/Light toggle (ON/OFF) */}
-                <button
-                  type="button"
-                  onClick={toggleTheme}
+                <div
                   className="h-10 px-3 rounded-2xl bg-black/20 border border-white/15 backdrop-blur-sm flex items-center gap-2"
                   aria-label={lang === "en" ? "Toggle theme" : "Changer le thème"}
                 >
@@ -466,9 +478,9 @@ function LandingPage() {
                   </span>
                   <Switch
                     checked={settings.theme === "light"}
-                    onCheckedChange={toggleTheme}
+                    onCheckedChange={(v) => setThemeChecked(Boolean(v))}
                   />
-                </button>
+                </div>
 
                 <Button
                   variant="ghost"
@@ -489,19 +501,27 @@ function LandingPage() {
                   transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
                   className="w-full max-w-2xl"
                 >
-                  <div className="rounded-3xl border border-white/12 bg-black/10 backdrop-blur-sm shadow-2xl p-5 sm:p-7">
-                    <div className="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/15 px-3 py-1.5 text-xs text-white">
+                  <div className="rounded-3xl border border-white/12 bg-black/6 sm:bg-black/10 backdrop-blur-0 sm:backdrop-blur-sm shadow-2xl p-4 sm:p-7">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white/10 border border-white/15 px-3 py-1.5 text-[11px] sm:text-xs text-white">
                       <AlertTriangle className="w-4 h-4 text-primary" />
-                      <span>{lang === "en" ? "18+ only • Responsible platform" : "+18 uniquement • Plateforme responsable"}</span>
+                      <span className="sm:hidden">{lang === "en" ? "18+ only" : "+18 uniquement"}</span>
+                      <span className="hidden sm:inline">
+                        {lang === "en" ? "18+ only • Responsible platform" : "+18 uniquement • Plateforme responsable"}
+                      </span>
             </div>
 
                     <h1 className="mt-4 text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white drop-shadow-[0_14px_45px_rgba(0,0,0,0.85)]">
-                      {lang === "en"
-                        ? "A clean, modern presentation — built for discretion."
-                        : "Une présentation clean & moderne — pensée pour la discrétion."}
+                      <span className="sm:hidden">
+                        {lang === "en" ? "Clean. Discreet. Modern." : "Clean. Discret. Moderne."}
+                      </span>
+                      <span className="hidden sm:inline">
+                        {lang === "en"
+                          ? "A clean, modern presentation — built for discretion."
+                          : "Une présentation clean & moderne — pensée pour la discrétion."}
+                      </span>
                     </h1>
 
-                    <p className="mt-3 text-sm sm:text-base text-white/85 leading-relaxed max-w-prose drop-shadow-[0_10px_30px_rgba(0,0,0,0.75)]">
+                    <p className="hidden sm:block mt-3 text-sm sm:text-base text-white/85 leading-relaxed max-w-prose drop-shadow-[0_10px_30px_rgba(0,0,0,0.75)]">
                       {lang === "en"
                         ? "Profiles, private spaces and selected products — in one interface."
                         : "Profils, espaces privés et produits sélectionnés — dans une seule interface."}
@@ -567,8 +587,25 @@ function LandingPage() {
                 </p>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-3">
-                <div className="rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm hover:shadow-lg transition-shadow">
+              <div className="mt-6 flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-foreground">
+                  {lang === "en" ? "Highlights" : "Points clés"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => scrollNext(trustScrollerRef, 340)}
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-card/70 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
+                >
+                  {lang === "en" ? "See more" : "Voir plus"}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div
+                ref={trustScrollerRef}
+                className="mt-3 flex gap-3 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-2"
+              >
+                <div className="min-w-[280px] sm:min-w-[340px] snap-start rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm hover:shadow-lg transition-shadow">
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                     <BadgeCheck className="w-4 h-4 text-primary" />
                     {lang === "en" ? "Verified profiles" : "Profils vérifiés"}
@@ -580,7 +617,7 @@ function LandingPage() {
                   </p>
                 </div>
 
-                <div className="rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm hover:shadow-lg transition-shadow">
+                <div className="min-w-[280px] sm:min-w-[340px] snap-start rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm hover:shadow-lg transition-shadow">
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                     <Lock className="w-4 h-4 text-primary" />
                     {lang === "en" ? "Confidentiality" : "Confidentialité"}
@@ -592,7 +629,7 @@ function LandingPage() {
                   </p>
                 </div>
 
-                <div className="rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm hover:shadow-lg transition-shadow">
+                <div className="min-w-[280px] sm:min-w-[340px] snap-start rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-sm hover:shadow-lg transition-shadow">
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                     <Sparkles className="w-4 h-4 text-primary" />
                     {lang === "en" ? "Modern UX" : "UX moderne"}
@@ -630,10 +667,27 @@ function LandingPage() {
                 </div>
               </FadeInSection>
 
-              <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="mt-6 flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-foreground">
+                  {lang === "en" ? "Preview" : "Aperçu"}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => scrollNext(demoScrollerRef, 360)}
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-card/70 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
+                >
+                  {lang === "en" ? "See more" : "Voir plus"}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div
+                ref={demoScrollerRef}
+                className="mt-3 flex gap-4 overflow-x-auto no-scrollbar snap-x snap-mandatory pb-2 md:grid md:grid-cols-3 md:overflow-visible md:snap-none"
+              >
                 {demoProfiles.map((p) => (
                   <FadeInSection key={p.id}>
-                    <div className="rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 overflow-hidden shadow-sm hover:shadow-lg transition-shadow">
+                    <div className="min-w-[280px] snap-start md:min-w-0 rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 overflow-hidden shadow-sm hover:shadow-lg transition-shadow">
                       <div className="relative aspect-[16/10] md:aspect-[4/5]">
                         <img src={p.photoUrl} alt={p.name} className="absolute inset-0 w-full h-full object-cover" />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
@@ -738,7 +792,7 @@ function LandingPage() {
                       ? "A clear panel: distance, verification, VIP, and service choices — all under control."
                       : "Un panneau clair : distance, vérification, VIP, et choix de services — tout sous contrôle."}
                   </p>
-                  <Button className="rounded-2xl" onClick={() => setLocation("/start")}>
+                  <Button className="rounded-2xl" onClick={() => setLocation("/loader")}>
                     {lang === "en" ? "Open search" : "Ouvrir la recherche"}
                     <ChevronRight className="w-4 h-4 ml-1" />
                   </Button>

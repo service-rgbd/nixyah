@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Calendar, MapPin, Tag, Wand2, Plus, Minus } from "lucide-react";
+import { ArrowLeft, Calendar, MapPin, Tag, Wand2, Plus, Minus, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -28,10 +28,22 @@ export default function AnnonceNew() {
   const [, setLocation] = useLocation();
   const profileId = getProfileId();
   const [prefilled, setPrefilled] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const { data: profileDetail, isLoading } = useQuery<any>({
     queryKey: profileId ? [`/api/profiles/${profileId}`] : ["__no_profile__"],
     enabled: Boolean(profileId),
+  });
+
+  const { data: account } = useQuery<{ tokensBalance?: number; email?: string | null; emailVerified?: boolean }>({
+    queryKey: ["/api/me/account"],
+    enabled: Boolean(profileId),
+    retry: false,
+  });
+
+  const { data: publishingConfig } = useQuery<any>({
+    queryKey: ["/api/publishing/config"],
+    retry: false,
   });
 
   const [title, setTitle] = useState("");
@@ -65,6 +77,13 @@ export default function AnnonceNew() {
   const [spaOffers, setSpaOffers] = useState<
     Array<{ name: string; price: string; masseuse: string }>
   >([]);
+
+  // Promote selections (keep the keys exactly: promote['extended'], promote['featured'], etc.)
+  const [extendedOptionId, setExtendedOptionId] = useState<string>("none");
+  const [extendedPaymentMode, setExtendedPaymentMode] = useState<"tokens" | "money">("tokens");
+  const [featuredOptionId, setFeaturedOptionId] = useState<string>("none");
+  const [autorenewOptionId, setAutorenewOptionId] = useState<string>("none");
+  const [urgentOptionId, setUrgentOptionId] = useState<string>("none");
 
   const accountType: "profile" | "residence" | "salon" | "adult_shop" =
     profileDetail?.accountType === "residence" ||
@@ -136,6 +155,106 @@ export default function AnnonceNew() {
     }
     return { date: "Aujourd'hui", heureDebut, duree };
   }, [status, activeInHours, heureDebut, duree]);
+
+  const tokenSummary = useMemo(() => {
+    const cfg = publishingConfig;
+    const balance = Number(account?.tokensBalance ?? 0);
+    const isVip = Boolean(profileDetail?.isVip);
+
+    const pubRequired = cfg?.publication?.enabled ? Number(cfg.publication.tokenRequired ?? 0) : 0;
+    const promote = cfg?.promote ?? {};
+    const find = (arr: any[], id: number) => (Array.isArray(arr) ? arr.find((o) => Number(o.id) === id) : undefined);
+
+    let total = Math.max(0, pubRequired);
+    if (extendedOptionId !== "none") {
+      const opt = find(promote?.extended?.options, Number(extendedOptionId));
+      if (opt && extendedPaymentMode === "tokens") total += Number(opt.tokens ?? 0);
+    }
+    if (featuredOptionId !== "none") {
+      const opt = find(promote?.featured?.options, Number(featuredOptionId));
+      if (opt) total += Number(opt.tokens ?? 0);
+    }
+    if (autorenewOptionId !== "none") {
+      const opt = find(promote?.autorenew?.options, Number(autorenewOptionId));
+      if (opt) total += Number(opt.tokens ?? 0);
+    }
+    if (urgentOptionId !== "none") {
+      const opt = find(promote?.urgent?.options, Number(urgentOptionId));
+      if (opt) total += Number(opt.tokens ?? 0);
+    }
+
+    // VIP discount (estimate; server remains source of truth)
+    if (isVip && featuredOptionId !== "none" && autorenewOptionId !== "none") {
+      total = Math.max(0, total - 1);
+    }
+
+    return {
+      publicationTokens: pubRequired,
+      totalTokens: total,
+      remainingTokens: Math.max(0, balance - total),
+      allowed: balance >= total,
+      balance,
+    };
+  }, [
+    publishingConfig,
+    account?.tokensBalance,
+    profileDetail?.isVip,
+    extendedOptionId,
+    extendedPaymentMode,
+    featuredOptionId,
+    autorenewOptionId,
+    urgentOptionId,
+  ]);
+
+  const canGoStep2 = useMemo(() => {
+    return title.trim().length >= 2 && services.length > 0;
+  }, [title, services.length]);
+
+  const recap = useMemo(() => {
+    const cfg = publishingConfig;
+    const promote = cfg?.promote ?? {};
+    const find = (arr: any[], id: number) =>
+      (Array.isArray(arr) ? arr.find((o) => Number(o.id) === id) : undefined);
+
+    const items: Array<{ label: string; tokens: number }> = [];
+    if (cfg?.publication?.enabled) {
+      items.push({
+        label: cfg.publication.label ?? "Publication",
+        tokens: Number(cfg.publication.tokenRequired ?? 0),
+      });
+    }
+
+    if (extendedOptionId !== "none") {
+      const opt = find(promote?.extended?.options, Number(extendedOptionId));
+      if (opt) {
+        items.push({
+          label: `Prolongation ${opt.days}j (${extendedPaymentMode === "tokens" ? "jetons" : "CFA"})`,
+          tokens: extendedPaymentMode === "tokens" ? Number(opt.tokens ?? 0) : 0,
+        });
+      }
+    }
+    if (featuredOptionId !== "none") {
+      const opt = find(promote?.featured?.options, Number(featuredOptionId));
+      if (opt) items.push({ label: `Premium ${opt.days}j`, tokens: Number(opt.tokens ?? 0) });
+    }
+    if (autorenewOptionId !== "none") {
+      const opt = find(promote?.autorenew?.options, Number(autorenewOptionId));
+      if (opt) items.push({ label: `TOP ${opt.days}j (chaque ${opt.everyHours}h)`, tokens: Number(opt.tokens ?? 0) });
+    }
+    if (urgentOptionId !== "none") {
+      const opt = find(promote?.urgent?.options, Number(urgentOptionId));
+      if (opt) items.push({ label: `Urgent ${opt.days}j`, tokens: Number(opt.tokens ?? 0) });
+    }
+
+    return items;
+  }, [
+    publishingConfig,
+    extendedOptionId,
+    extendedPaymentMode,
+    featuredOptionId,
+    autorenewOptionId,
+    urgentOptionId,
+  ]);
 
   useEffect(() => {
     if (!profileDetail || prefilled) return;
@@ -239,6 +358,30 @@ export default function AnnonceNew() {
       setError("Session introuvable. Merci de vous inscrire à nouveau.");
       return;
     }
+    if (!publishingConfig) {
+      setError("Chargement de la configuration…");
+      return;
+    }
+    if (!publishingConfig?.publication?.enabled) {
+      setError("Publication temporairement indisponible.");
+      return;
+    }
+    if (!account?.email) {
+      setError("Ajoute un email puis confirme-le avant de pouvoir publier une annonce.");
+      return;
+    }
+    if (account?.emailVerified === false) {
+      setError("Confirme ton email avant de pouvoir publier une annonce. (Dashboard → Email du compte → Renvoyer)");
+      return;
+    }
+    if (!tokenSummary.allowed) {
+      setError(
+        `Solde de jetons insuffisant. Requis: ${tokenSummary.totalTokens} — Solde: ${tokenSummary.balance}.`,
+      );
+      // No purchase page yet; redirect to dashboard (as per config intent).
+      setLocation("/dashboard");
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
@@ -280,6 +423,17 @@ export default function AnnonceNew() {
         }
       }
 
+      const promotePayload: any = {};
+      if (extendedOptionId !== "none") {
+        promotePayload.extended = {
+          optionId: Number(extendedOptionId),
+          paymentMode: extendedPaymentMode,
+        };
+      }
+      if (featuredOptionId !== "none") promotePayload.featured = { optionId: Number(featuredOptionId) };
+      if (autorenewOptionId !== "none") promotePayload.autorenew = { optionId: Number(autorenewOptionId) };
+      if (urgentOptionId !== "none") promotePayload.urgent = { optionId: Number(urgentOptionId) };
+
       await apiRequest("POST", "/api/annonces", {
         profileId,
         title,
@@ -287,6 +441,7 @@ export default function AnnonceNew() {
         lieu: lieu || undefined,
         services: services.slice(0, 25),
         description: finalDescription || undefined,
+        promote: Object.keys(promotePayload).length ? promotePayload : undefined,
         ...(accountType === "profile"
           ? {
               corpulence: corpulence || undefined,
@@ -345,24 +500,272 @@ export default function AnnonceNew() {
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Wand2 className="w-4 h-4 text-primary" />
-                {profileDetail?.annonce
-                  ? "Mise à jour"
-                  : accountType === "profile"
-                  ? "Fiche mise en avant"
-                  : accountType === "residence"
-                  ? "Fiche résidence meublée"
-                  : accountType === "salon"
-                  ? "Fiche salon / SPA"
-                  : "Fiche boutique produits adultes"}
+                <span className="text-xs text-muted-foreground">Étape {step}/3</span>
+                <span className="text-foreground">
+                  {step === 1 ? "Contenu" : step === 2 ? "Visibilité" : "Validation"}
+                </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
+              {account && (!account.email || account.emailVerified === false) && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-foreground">
+                  <div className="flex items-start gap-2">
+                    <Mail className="w-4 h-4 text-amber-400 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="font-semibold">
+                        {account.email
+                          ? "Email non confirmé"
+                          : "Email requis"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {account.email
+                          ? "Confirme ton email pour pouvoir publier une annonce."
+                          : "Ajoute un email puis confirme-le pour pouvoir publier une annonce."}
+                      </div>
+                      <div className="pt-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9"
+                          onClick={() => setLocation("/dashboard")}
+                        >
+                          Aller au dashboard
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {error && (
                 <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
                   {error}
                 </div>
               )}
 
+              {step === 2 && (
+                <div className="space-y-3 rounded-2xl border border-border bg-card p-4">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-foreground">Visibilité & jetons</div>
+                    <p className="text-xs text-muted-foreground">
+                      Solde: <span className="text-foreground font-medium">{tokenSummary.balance}</span> • Publication:{" "}
+                      <span className="text-foreground font-medium">{tokenSummary.publicationTokens}</span> • Total:{" "}
+                      <span className="text-foreground font-medium">{tokenSummary.totalTokens}</span> • Restant:{" "}
+                      <span className="text-foreground font-medium">{tokenSummary.remainingTokens}</span>
+                    </p>
+                    {!tokenSummary.allowed && (
+                      <p className="text-xs text-destructive">
+                        Solde insuffisant — la publication sera refusée.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Helper tile */}
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Prolongation
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setExtendedOptionId("none")}
+                          className={
+                            "min-w-[160px] text-left rounded-2xl border p-3 " +
+                            (extendedOptionId === "none"
+                              ? "border-primary/40 bg-primary/10"
+                              : "border-border bg-background/40 hover:bg-background/60")
+                          }
+                        >
+                          <div className="text-sm font-semibold text-foreground">Aucune</div>
+                          <div className="text-xs text-muted-foreground">0 jeton</div>
+                        </button>
+                        {(publishingConfig?.promote?.extended?.options ?? []).map((o: any) => {
+                          const selected = extendedOptionId === String(o.id);
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onClick={() => setExtendedOptionId(String(o.id))}
+                              className={
+                                "min-w-[200px] text-left rounded-2xl border p-3 " +
+                                (selected
+                                  ? "border-primary/40 bg-primary/10"
+                                  : "border-border bg-background/40 hover:bg-background/60")
+                              }
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-sm font-semibold text-foreground">{o.days} jours</div>
+                                <div className="text-xs text-muted-foreground">{o.tokens}🪙</div>
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {o.pricePromo ? `${o.pricePromo} CFA (promo)` : o.price ? `${o.price} CFA` : ""}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {extendedOptionId !== "none" && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            variant={extendedPaymentMode === "tokens" ? "default" : "outline"}
+                            onClick={() => setExtendedPaymentMode("tokens")}
+                            className="h-10"
+                          >
+                            Payer en jetons
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={extendedPaymentMode === "money" ? "default" : "outline"}
+                            onClick={() => setExtendedPaymentMode("money")}
+                            className="h-10"
+                          >
+                            Payer en CFA
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Premium
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setFeaturedOptionId("none")}
+                          className={
+                            "min-w-[160px] text-left rounded-2xl border p-3 " +
+                            (featuredOptionId === "none"
+                              ? "border-primary/40 bg-primary/10"
+                              : "border-border bg-background/40 hover:bg-background/60")
+                          }
+                        >
+                          <div className="text-sm font-semibold text-foreground">Aucun</div>
+                          <div className="text-xs text-muted-foreground">0 jeton</div>
+                        </button>
+                        {(publishingConfig?.promote?.featured?.options ?? []).map((o: any) => {
+                          const selected = featuredOptionId === String(o.id);
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onClick={() => setFeaturedOptionId(String(o.id))}
+                              className={
+                                "min-w-[180px] text-left rounded-2xl border p-3 " +
+                                (selected
+                                  ? "border-emerald-500/40 bg-emerald-500/10"
+                                  : "border-border bg-background/40 hover:bg-background/60")
+                              }
+                            >
+                              <div className="text-sm font-semibold text-foreground">PREMIUM</div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {o.days} jours • {o.tokens}🪙
+                              </div>
+                              <div className="text-[11px] text-muted-foreground mt-1">
+                                Visibilité maximale
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        TOP
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setAutorenewOptionId("none")}
+                          className={
+                            "min-w-[160px] text-left rounded-2xl border p-3 " +
+                            (autorenewOptionId === "none"
+                              ? "border-primary/40 bg-primary/10"
+                              : "border-border bg-background/40 hover:bg-background/60")
+                          }
+                        >
+                          <div className="text-sm font-semibold text-foreground">Aucun</div>
+                          <div className="text-xs text-muted-foreground">0 jeton</div>
+                        </button>
+                        {(publishingConfig?.promote?.autorenew?.options ?? []).map((o: any) => {
+                          const selected = autorenewOptionId === String(o.id);
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onClick={() => setAutorenewOptionId(String(o.id))}
+                              className={
+                                "min-w-[220px] text-left rounded-2xl border p-3 " +
+                                (selected
+                                  ? "border-sky-500/40 bg-sky-500/10"
+                                  : "border-border bg-background/40 hover:bg-background/60")
+                              }
+                            >
+                              <div className="text-sm font-semibold text-foreground">TOP</div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {o.days} jours • chaque {o.everyHours}h • {o.tokens}🪙
+                              </div>
+                              <div className="text-[11px] text-muted-foreground mt-1">
+                                Remonte automatiquement
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Urgent
+                      </div>
+                      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setUrgentOptionId("none")}
+                          className={
+                            "min-w-[160px] text-left rounded-2xl border p-3 " +
+                            (urgentOptionId === "none"
+                              ? "border-primary/40 bg-primary/10"
+                              : "border-border bg-background/40 hover:bg-background/60")
+                          }
+                        >
+                          <div className="text-sm font-semibold text-foreground">Aucun</div>
+                          <div className="text-xs text-muted-foreground">0 jeton</div>
+                        </button>
+                        {(publishingConfig?.promote?.urgent?.options ?? []).map((o: any) => {
+                          const selected = urgentOptionId === String(o.id);
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              onClick={() => setUrgentOptionId(String(o.id))}
+                              className={
+                                "min-w-[180px] text-left rounded-2xl border p-3 " +
+                                (selected
+                                  ? "border-red-500/40 bg-red-500/10"
+                                  : "border-border bg-background/40 hover:bg-background/60")
+                              }
+                            >
+                              <div className="text-sm font-semibold text-foreground">URGENT</div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {o.days} jours • {o.tokens}🪙
+                              </div>
+                              <div className="text-[11px] text-muted-foreground mt-1">
+                                Badge rouge
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {step === 1 && (
+                <>
               <div className="space-y-2">
                 <Label htmlFor="title" className="flex items-center gap-2">
                   <Tag className="w-4 h-4 text-muted-foreground" />
@@ -584,14 +987,19 @@ export default function AnnonceNew() {
               </div>
 
               {accountType === "profile" && (
-                <>
-                  <Separator />
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold text-foreground">Profil & préférences</div>
-                    <p className="text-xs text-muted-foreground">
-                      Ces informations s’affichent sur votre fiche (plus de confiance, plus de contacts).
-                    </p>
-                  </div>
+                <details className="rounded-2xl border border-border bg-card">
+                  <summary className="px-4 py-4 cursor-pointer select-none">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-foreground">
+                        Détails du profil (optionnel)
+                      </div>
+                      <span className="text-xs text-muted-foreground">Ouvrir</span>
+                    </div>
+                  </summary>
+                  <div className="px-4 pb-4 space-y-4">
+                  <p className="text-xs text-muted-foreground">
+                    Ces informations s’affichent sur votre fiche (plus de confiance, plus de contacts).
+                  </p>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -785,7 +1193,8 @@ export default function AnnonceNew() {
                       ))}
                     </div>
                   </div>
-                </>
+                  </div>
+                </details>
               )}
 
               <div className="grid grid-cols-3 gap-4">
@@ -922,17 +1331,77 @@ export default function AnnonceNew() {
                   </p>
                 )}
               </div>
+                </>
+              )}
 
-              <Button
-                className="w-full h-12"
-                onClick={handleSubmit}
-                disabled={loading || title.trim().length < 2}
-                data-testid="button-publish-annonce"
-              >
-                {loading ? "Publication..." : profileDetail?.annonce ? "Mettre à jour" : "Publier l'annonce"}
-              </Button>
+              {step === 3 && (
+                <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+                  <div className="text-sm font-semibold text-foreground">Récapitulatif</div>
+                  <div className="space-y-2">
+                    {recap.map((it, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{it.label}</span>
+                        <span className="text-foreground font-medium">{it.tokens}🪙</span>
+                      </div>
+                    ))}
+                    <div className="h-px bg-border my-2" />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-foreground font-semibold">Total</span>
+                      <span className="text-foreground font-semibold">{tokenSummary.totalTokens}🪙</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Solde restant</span>
+                      <span className="text-muted-foreground">{tokenSummary.remainingTokens}🪙</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-              {profileDetail?.annonce?.id && (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12"
+                  onClick={() => {
+                    if (step === 1) setLocation("/dashboard");
+                    else setStep((s) => (s === 1 ? 1 : ((s - 1) as any)));
+                  }}
+                >
+                  {step === 1 ? "Annuler" : "Retour"}
+                </Button>
+
+                {step < 3 ? (
+                  <Button
+                    type="button"
+                    className="h-12"
+                    onClick={() => setStep((s) => ((s + 1) as any))}
+                    disabled={
+                      (step === 1 && (!canGoStep2 || !publishingConfig)) ||
+                      (step === 2 && !publishingConfig)
+                    }
+                    data-testid="button-next-step"
+                  >
+                    Continuer
+                  </Button>
+                ) : (
+                  <Button
+                    className="h-12"
+                    onClick={handleSubmit}
+                    disabled={
+                      loading ||
+                      !publishingConfig ||
+                      !tokenSummary.allowed ||
+                      !account?.email ||
+                      account?.emailVerified === false
+                    }
+                    data-testid="button-publish-annonce"
+                  >
+                    {loading ? "Publication..." : "Publier maintenant"}
+                  </Button>
+                )}
+              </div>
+
+              {profileDetail?.annonce?.id && step === 3 && (
                 <Button
                   variant="outline"
                   className="w-full h-12"

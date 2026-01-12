@@ -83,7 +83,7 @@ export default function Login() {
             </div>
           </div>
 
-          <div className="mt-[-32px] px-4 pb-8 flex-1">
+          <div className="mt-4 px-4 pb-8 flex-1">
             <div className="mx-auto max-w-md">
               <Card className="rounded-3xl shadow-xl border-border bg-background">
                 <CardHeader className="pb-2 text-center">
@@ -108,7 +108,7 @@ export default function Login() {
 
                   <div className="space-y-1">
                     <Label htmlFor="username" className="text-xs text-muted-foreground">
-                      {lang === "en" ? "Username or email" : "Pseudo ou email"}
+                      {lang === "en" ? "Login identifier or email" : "Identifiant de connexion ou email"}
                     </Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
@@ -120,7 +120,7 @@ export default function Login() {
                         onChange={(e) => setUsername(e.target.value)}
                         className="h-12 pl-10 rounded-full"
                         autoComplete="username"
-                        placeholder={lang === "en" ? "Your username or email" : "Ton pseudo ou email"}
+                        placeholder={lang === "en" ? "Your login identifier or email" : "Ton identifiant de connexion ou email"}
                       />
                     </div>
                   </div>

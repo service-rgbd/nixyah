@@ -12,6 +12,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { getProfileId } from "@/lib/session";
 import { cityOptions } from "@/lib/cities";
+import { toast } from "@/hooks/use-toast";
+import logoTitle from "@assets/logo-titre.png";
 
 type Gender = "homme" | "femme" | null;
 
@@ -55,6 +57,29 @@ export default function Signup() {
   const [geoLoading, setGeoLoading] = useState(false);
 
   const progress = (currentStep / steps.length) * 100;
+
+  const publicNameLabel =
+    formData.accountType === "residence"
+      ? "Nom de Résidence"
+      : formData.accountType === "salon"
+      ? "Nom du SPA / salon"
+      : formData.accountType === "adult_shop"
+      ? "Nom de la boutique"
+      : "Pseudo";
+
+  const publicNamePlaceholder =
+    formData.accountType === "residence"
+      ? "Ex: Résidence Eden"
+      : formData.accountType === "salon"
+      ? "Ex: Spa Lumière"
+      : formData.accountType === "adult_shop"
+      ? "Ex: Boutique Intime"
+      : "Choisissez un pseudo";
+
+  const publicNameHelper =
+    formData.accountType === "profile"
+      ? "Ce nom est visible publiquement. Ne mettez pas votre identifiant de connexion ici."
+      : "Ce nom est visible publiquement (il remplace le pseudo).";
 
   const canProceed = () => {
     switch (currentStep) {
@@ -111,7 +136,27 @@ export default function Signup() {
         email: formData.email || undefined,
       });
       const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.message ?? "Erreur lors de l'inscription");
+      }
       setSessionIds({ userId: json.userId, profileId: json.profile.id });
+
+      const providedEmail = formData.email.trim().length > 0;
+      if (providedEmail) {
+        if (json?.verificationEmailSent === true) {
+          toast({
+            title: "Email de confirmation envoyé",
+            description: "Vérifie ta boîte mail (et les spams) puis clique sur le lien.",
+          });
+        } else if (json?.verificationEmailSent === false) {
+          toast({
+            title: "Email de confirmation non envoyé",
+            description:
+              json?.verificationEmailError ??
+              "Impossible d’envoyer l’email pour le moment. Tu pourras réessayer depuis ton dashboard.",
+          });
+        }
+      }
       setLocation("/post-intent");
     } catch (e: any) {
       setSubmitError(e?.message ?? "Erreur lors de l'inscription");
@@ -145,7 +190,12 @@ export default function Signup() {
         >
           <ArrowLeft className="w-5 h-5 text-foreground" />
         </button>
-        <h1 className="font-display text-2xl font-semibold text-gradient tracking-tight">NIXYAH</h1>
+        <img
+          src={logoTitle}
+          alt="NIXYAH"
+          className="h-10 sm:h-12 w-auto object-contain"
+          draggable={false}
+        />
         <div className="w-10" />
       </header>
 
@@ -545,26 +595,26 @@ export default function Signup() {
                     className="h-14 text-lg"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Utilisé uniquement pour te connecter. Doit être différent de ton pseudo public.
+                    Utilisé uniquement pour te connecter. Ne sera jamais affiché publiquement.
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="pseudo" className="flex items-center gap-2">
                     <User className="w-4 h-4 text-muted-foreground" />
-                    Pseudo
+                    {publicNameLabel}
                   </Label>
                   <Input
                     id="pseudo"
                     type="text"
-                    placeholder="Choisissez un pseudo"
+                    placeholder={publicNamePlaceholder}
                     value={formData.pseudo}
                     onChange={(e) => setFormData({ ...formData, pseudo: e.target.value })}
                     className="h-14 text-lg"
                     data-testid="input-pseudo"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Ce nom sera visible publiquement
+                    {publicNameHelper}
                   </p>
                 </div>
 

@@ -17,12 +17,14 @@ import {
   ipLogs,
   ipBans,
 } from "@shared/schema";
+import { PUBLISHING_CONFIG } from "@shared/publishing-config";
 import { and, desc, eq, inArray, or, sql, gt, isNull } from "drizzle-orm";
 import { createPresignedRead, createPresignedUpload } from "./uploads";
 import { uploadBufferToR2 } from "./uploads";
 import multer from "multer";
 import {
   hasProfilesAttributesColumns,
+  hasProfilesBusinessColumns,
   hasProfilesContactPreferenceColumn,
   hasProfilesVipColumn,
   hasUsersEmailColumn,
@@ -94,6 +96,116 @@ function sqlTextArray(values: string[]) {
   return sql`ARRAY[${sql.join(values.map((v) => sql`${v}`), sql`, `)}]::text[]`;
 }
 
+function hoursToMs(h: number): number {
+  return h * 60 * 60 * 1000;
+}
+function daysToMs(d: number): number {
+  return d * 24 * 60 * 60 * 1000;
+}
+
+function computePromotionMeta(opts: {
+  annonceCreatedAt: Date;
+  promotion: any | null | undefined;
+}): {
+  badges: Array<"VIP" | "PREMIUM" | "TOP" | "URGENT" | "PROLONGATION">;
+  expiresAt: string | null;
+  remainingDays: number | null;
+  topLastBumpAt: string | null;
+  topEveryHours: number | null;
+  featuredActive: boolean;
+  urgentActive: boolean;
+  topActive: boolean;
+} {
+  const createdAtMs = new Date(opts.annonceCreatedAt).getTime();
+  const nowMs = Date.now();
+  const promo = opts.promotion ?? {};
+  const badges: Array<"VIP" | "PREMIUM" | "TOP" | "URGENT" | "PROLONGATION"> = [];
+
+  const promoteCfg = PUBLISHING_CONFIG.promote;
+  const find = (arr: any[], id: number) =>
+    Array.isArray(arr) ? arr.find((o) => Number(o.id) === Number(id)) : undefined;
+
+  const durations: number[] = [];
+
+  // Extended prolongation (duration)
+  if (promo.extended?.optionId) {
+    const opt = find(promoteCfg.extended.options as any, Number(promo.extended.optionId));
+    if (opt?.days) {
+      badges.push("PROLONGATION");
+      durations.push(Number(opt.days));
+    }
+  }
+
+  // Featured premium (visibility)
+  let featuredActive = false;
+  if (promo.featured?.optionId) {
+    const opt = find(promoteCfg.featured.options as any, Number(promo.featured.optionId));
+    if (opt?.days) {
+      const end = createdAtMs + daysToMs(Number(opt.days));
+      if (nowMs <= end) {
+        featuredActive = true;
+        badges.push("PREMIUM");
+      }
+      durations.push(Number(opt.days));
+    }
+  }
+
+  // Autoreneew top (boost)
+  let topActive = false;
+  let topLastBumpAt: string | null = null;
+  let topEveryHours: number | null = null;
+  if (promo.autorenew?.optionId) {
+    const opt = find(promoteCfg.autorenew.options as any, Number(promo.autorenew.optionId));
+    if (opt?.days && opt?.everyHours) {
+      const days = Number(opt.days);
+      const everyHours = Number(opt.everyHours);
+      topEveryHours = everyHours;
+      const end = createdAtMs + daysToMs(days);
+      durations.push(days);
+      if (nowMs <= end) {
+        topActive = true;
+        badges.push("TOP");
+        const cappedNow = Math.min(nowMs, end);
+        const elapsedHours = Math.max(0, (cappedNow - createdAtMs) / hoursToMs(1));
+        const bumps = Math.floor(elapsedHours / Math.max(1, everyHours));
+        const bumpAtMs = createdAtMs + bumps * hoursToMs(Math.max(1, everyHours));
+        topLastBumpAt = new Date(bumpAtMs).toISOString();
+      }
+    }
+  }
+
+  // Urgent
+  let urgentActive = false;
+  if (promo.urgent?.optionId) {
+    const opt = find(promoteCfg.urgent.options as any, Number(promo.urgent.optionId));
+    if (opt?.days) {
+      const end = createdAtMs + daysToMs(Number(opt.days));
+      if (nowMs <= end) {
+        urgentActive = true;
+        badges.push("URGENT");
+      }
+      durations.push(Number(opt.days));
+    }
+  }
+
+  // Expiry = max of durations (simple, consistent with dashboard estimate)
+  const maxDays = durations.length ? Math.max(...durations) : null;
+  const expiresAt = maxDays ? new Date(createdAtMs + daysToMs(maxDays)).toISOString() : null;
+  const remainingDays =
+    expiresAt === null ? null : Math.ceil((new Date(expiresAt).getTime() - nowMs) / daysToMs(1));
+
+  return {
+    badges,
+    expiresAt,
+    remainingDays,
+    topLastBumpAt,
+    topEveryHours,
+    featuredActive,
+    urgentActive,
+    topActive,
+  };
+}
+
 function asyncHandler(
   fn: (req: any, res: any, next: any) => Promise<any>,
 ): (req: any, res: any, next: any) => void {
@@ -117,6 +229,7 @@ export async function registerRoutes(
   const hasUsersEmail = await hasUsersEmailColumn();
   const hasProfileAttrs = await hasProfilesAttributesColumns();
   const hasUsersEmailVerified = await hasUsersEmailVerificationColumns();
+  const hasProfilesBusiness = await hasProfilesBusinessColumns();
   const env = getEnv();
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -131,15 +244,19 @@ export async function registerRoutes(
     return crypto.randomBytes(32).toString("hex");
   }
 
-  async function sendVerificationEmail(userId: string, email: string) {
+  async function sendVerificationEmail(
+    userId: string,
+    email: string,
+  ): Promise<{ sent: boolean; token?: string; messageId?: string }> {
     if (!resend) {
       console.warn("RESEND_API_KEY not configured – skipping verification email");
-      return;
+      return { sent: false };
     }
 
     const token = generateToken();
     const sentAt = new Date();
 
+    // Store token first so the link is valid even if the user clicks quickly.
     await db
       .update(users as any)
       .set({
@@ -151,20 +268,43 @@ export async function registerRoutes(
 
     const verifyLink = appUrl(`/email/verify?token=${encodeURIComponent(token)}`);
 
-    await resend.emails.send({
-      from: resendFrom,
-      to: email,
-      subject: "Confirme ton email – NIXYAH",
-      html: `
-        <p>Bonjour,</p>
-        <p>Merci d'avoir créé un compte sur <strong>NIXYAH</strong>.</p>
-        <p>Pour sécuriser ton espace et pouvoir publier des annonces (WhatsApp / visibilité), clique sur le lien ci-dessous&nbsp;:</p>
-        <p><a href="${verifyLink}" target="_blank" rel="noopener">Confirmer mon email</a></p>
-        <p>Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.</p>
-        <p>— L'équipe NIXYAH</p>
-      `,
-      text: `Merci d'avoir créé un compte sur NIXYAH.\n\nClique sur ce lien pour confirmer ton email : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
-    });
+    try {
+      const result = await resend.emails.send({
+        from: resendFrom,
+        to: email,
+        subject: "Confirme ton email – NIXYAH",
+        html: `
+          <p>Bonjour,</p>
+          <p>Merci d'avoir créé un compte sur <strong>NIXYAH</strong>.</p>
+          <p>Pour sécuriser ton espace et pouvoir publier des annonces (WhatsApp / visibilité), clique sur le lien ci-dessous&nbsp;:</p>
+          <p><a href="${verifyLink}" target="_blank" rel="noopener">Confirmer mon email</a></p>
+          <p>Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.</p>
+          <p>— L'équipe NIXYAH</p>
+        `,
+        text: `Merci d'avoir créé un compte sur NIXYAH.\n\nClique sur ce lien pour confirmer ton email : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
+      });
+
+      return { sent: true, token, messageId: (result as any)?.id };
+    } catch (e) {
+      console.error("Resend failed to send verification email", {
+        userId,
+        email,
+        from: resendFrom,
+        appBaseUrl: env.APP_BASE_URL ?? null,
+        error: e,
+      });
+
+      // Keep the token so we can retry with the same link if needed,
+      // but clear sentAt so we don't enforce rate limits on a failed attempt.
+      await db
+        .update(users as any)
+        .set({
+          emailVerificationSentAt: null,
+        })
+        .where(eq(users.id, userId));
+
+      throw e;
+    }
   }
 
   async function sendResetPasswordEmail(userId: string, email: string) {
@@ -347,6 +487,29 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  // Publishing / promote configuration (tokens + options). Backend remains source of truth.
+  app.get(
+    "/api/publishing/config",
+    asyncHandler(async (_req, res) => {
+      const PROMO_FACTOR = 0.7; // -30% promotion on money prices
+      res.json({
+        publication: PUBLISHING_CONFIG.publication,
+        promote: {
+          ...PUBLISHING_CONFIG.promote,
+          extended: {
+            ...PUBLISHING_CONFIG.promote.extended,
+            options: PUBLISHING_CONFIG.promote.extended.options.map((o) => ({
+              ...o,
+              pricePromo: Math.round(o.price * PROMO_FACTOR),
+              promoPercent: 30,
+            })),
+          },
+        },
+        // Keep backend-only rules off the public config by default.
+      });
+    }),
+  );
+
   app.get(
     "/api/support",
     asyncHandler(async (_req, res) => {
@@ -443,6 +606,10 @@ export async function registerRoutes(
         })
         .parse(req.body);
 
+      // Expire tokens after 7 days to limit long-lived links.
+      const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+      const minSentAt = new Date(Date.now() - maxAgeMs);
+
       const [u] = await db
         .update(users as any)
         .set({
@@ -450,7 +617,16 @@ export async function registerRoutes(
           emailVerificationToken: null,
           emailVerificationSentAt: null,
         })
-        .where(eq((users as any).emailVerificationToken, payload.token))
+        .where(
+          and(
+            eq((users as any).emailVerificationToken, payload.token),
+            or(
+              // Backward-compat: allow older rows where sentAt is null.
+              isNull((users as any).emailVerificationSentAt),
+              gt((users as any).emailVerificationSentAt, minSentAt),
+            ),
+          ),
+        )
         .returning({
           id: users.id,
           email: (users as any).email,
@@ -576,6 +752,7 @@ export async function registerRoutes(
             hasUsersEmail && hasUsersEmailVerified
               ? ((users as any).emailVerified as any)
               : (sql<boolean>`false` as any),
+          tokensBalance: users.tokensBalance,
         })
         .from(users)
         .where(eq(users.id, userId))
@@ -587,7 +764,63 @@ export async function registerRoutes(
         username: u.username,
         email: (u as any).email ?? null,
         emailVerified: (u as any).emailVerified ?? false,
+        tokensBalance: Number(u.tokensBalance ?? 0),
+        emailVerificationAvailable: Boolean(hasUsersEmail && hasUsersEmailVerified),
+        resendConfigured: Boolean(env.RESEND_API_KEY),
       });
+    }),
+  );
+
+  // Renvoyer un email de confirmation (utilisable depuis le dashboard)
+  app.post(
+    "/api/email/resend",
+    asyncHandler(async (req, res) => {
+      const userId = req.session?.userId as string | undefined;
+      if (!userId) return res.status(401).json({ message: "Not logged in" });
+      if (!hasUsersEmail || !hasUsersEmailVerified) {
+        return res.status(400).json({ message: "Email verification not available" });
+      }
+
+      const [u] = await db
+        .select({
+          email: (users as any).email,
+          emailVerified: (users as any).emailVerified,
+          emailVerificationSentAt: (users as any).emailVerificationSentAt,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!u || !(u as any).email) {
+        return res.status(400).json({ message: "Aucun email enregistré. Ajoute un email d’abord." });
+      }
+      if ((u as any).emailVerified) {
+        return res.json({ ok: true, sent: false, alreadyVerified: true });
+      }
+
+      const lastSentAt = (u as any).emailVerificationSentAt as Date | null | undefined;
+      if (lastSentAt && Date.now() - new Date(lastSentAt).getTime() < 60_000) {
+        return res.status(429).json({
+          message: "Un email vient d’être envoyé. Attends 1 minute avant de réessayer.",
+        });
+      }
+
+      if (!env.RESEND_API_KEY) {
+        return res.status(500).json({
+          message: "Emails indisponibles (RESEND_API_KEY manquante). Contacte l’administrateur.",
+        });
+      }
+
+      try {
+        const r = await sendVerificationEmail(userId, String((u as any).email));
+        return res.json({ ok: true, sent: r.sent });
+      } catch (e: any) {
+        return res.status(502).json({
+          message:
+            e?.message ??
+            "Impossible d’envoyer l’email de confirmation pour le moment. Réessaie plus tard.",
+        });
+      }
     }),
   );
 
@@ -621,11 +854,18 @@ export async function registerRoutes(
               : (sql<boolean>`false` as any),
         });
 
+      let verificationEmailSent: boolean | null = null;
+      let verificationEmailError: string | null = null;
       if (payload.email && hasUsersEmail && hasUsersEmailVerified) {
         try {
-          await sendVerificationEmail(u.id, payload.email);
+          const r = await sendVerificationEmail(u.id, payload.email);
+          verificationEmailSent = Boolean(r.sent);
         } catch (e) {
           console.error("Failed to send verification email on /api/me/account", e);
+          verificationEmailSent = false;
+          verificationEmailError =
+            (e as any)?.message ??
+            "Impossible d’envoyer l’email de confirmation pour le moment. Vérifie la configuration Resend.";
         }
       }
 
@@ -633,6 +873,8 @@ export async function registerRoutes(
         username: u.username,
         email: (u as any).email ?? null,
         emailVerified: (u as any).emailVerified ?? false,
+        verificationEmailSent,
+        verificationEmailError,
       });
     }),
   );
@@ -751,6 +993,10 @@ export async function registerRoutes(
           lng: z.number().min(-180).max(180).optional(),
           accuracy: z.number().min(0).max(5000).optional(),
           showLocation: z.boolean().optional(),
+          businessName: z.string().max(160).nullable().optional(),
+          address: z.string().max(255).nullable().optional(),
+          openingHours: z.string().max(128).nullable().optional(),
+          roomsCount: z.number().int().min(0).max(999).nullable().optional(),
         })
         .parse(req.body);
 
@@ -768,6 +1014,10 @@ export async function registerRoutes(
           ...(payload.lat === undefined ? {} : { lat: payload.lat }),
           ...(payload.lng === undefined ? {} : { lng: payload.lng }),
           ...(payload.showLocation === undefined ? {} : { showLocation: payload.showLocation }),
+          ...(hasProfilesBusiness && payload.businessName !== undefined ? { businessName: payload.businessName } : {}),
+          ...(hasProfilesBusiness && payload.address !== undefined ? { address: payload.address } : {}),
+          ...(hasProfilesBusiness && payload.openingHours !== undefined ? { openingHours: payload.openingHours } : {}),
+          ...(hasProfilesBusiness && payload.roomsCount !== undefined ? { roomsCount: payload.roomsCount } : {}),
           updatedAt: new Date(),
         })
         .where(eq(profiles.id, profileId))
@@ -781,6 +1031,10 @@ export async function registerRoutes(
           ...(hasContactPref ? { contactPreference: profiles.contactPreference } : {}),
           lat: profiles.lat,
           lng: profiles.lng,
+          businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
+          address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
+          openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),
+          roomsCount: hasProfilesBusiness ? (profiles as any).roomsCount : (sql<number | null>`null` as any),
         });
 
       if (payload.lat !== undefined && payload.lng !== undefined) {
@@ -1024,18 +1278,35 @@ export async function registerRoutes(
 
       await logIpEvent({ req, kind: "signup_success", userId: created.userId });
 
+      let verificationEmailSent: boolean | null = null;
+      let verificationEmailError: string | null = null;
       if (hasUsersEmail && hasUsersEmailVerified) {
         const email = (created as any).userEmail as string | null | undefined;
         if (email) {
           try {
-            await sendVerificationEmail(created.userId, email);
+            if (!env.RESEND_API_KEY) {
+              verificationEmailSent = false;
+              verificationEmailError =
+                "Emails indisponibles (RESEND_API_KEY manquante). Contacte l’administrateur.";
+            } else {
+              const r = await sendVerificationEmail(created.userId, email);
+              verificationEmailSent = Boolean(r.sent);
+            }
           } catch (e) {
             console.error("Failed to send verification email on signup", e);
+            verificationEmailSent = false;
+            verificationEmailError =
+              (e as any)?.message ??
+              "Impossible d’envoyer l’email de confirmation pour le moment. Vérifie la configuration Resend.";
           }
         }
       }
 
-      return res.json(created);
+      return res.json({
+        ...created,
+        verificationEmailSent,
+        verificationEmailError,
+      });
     }),
   );
 
@@ -1162,11 +1433,25 @@ export async function registerRoutes(
 
   app.get(
     "/api/adult-products",
-    asyncHandler(async (_req, res) => {
+    asyncHandler(async (req, res) => {
+      const ownerProfileId = z
+        .string()
+        .uuid()
+        .optional()
+        .parse(req.query.ownerProfileId);
+      const salonId = z.string().uuid().optional().parse(req.query.salonId);
+      const limit = z
+        .string()
+        .optional()
+        .transform((v) => (v ? Number(v) : 100))
+        .pipe(z.number().int().min(1).max(200))
+        .parse(req.query.limit);
+
       const rows = await db
         .select({
           id: adultProductsTable.id,
           salonId: adultProductsTable.salonId,
+          ownerProfileId: (adultProductsTable as any).ownerProfileId,
           name: adultProductsTable.name,
           subtitle: adultProductsTable.subtitle,
           price: adultProductsTable.price,
@@ -1174,12 +1459,21 @@ export async function registerRoutes(
           description: adultProductsTable.description,
           imageUrl: adultProductsTable.imageUrl,
           tag: adultProductsTable.tag,
+          stockQty: (adultProductsTable as any).stockQty,
+          placeType: (adultProductsTable as any).placeType,
           createdAt: adultProductsTable.createdAt,
+          updatedAt: (adultProductsTable as any).updatedAt,
         })
         .from(adultProductsTable)
-        .where(eq(adultProductsTable.active, true))
+        .where(
+          and(
+            eq(adultProductsTable.active, true),
+            ownerProfileId ? eq((adultProductsTable as any).ownerProfileId, ownerProfileId) : undefined,
+            salonId ? eq(adultProductsTable.salonId, salonId) : undefined,
+          ),
+        )
         .orderBy(desc(adultProductsTable.createdAt))
-        .limit(100);
+        .limit(limit);
 
       res.json(rows);
     }),
@@ -1194,6 +1488,7 @@ export async function registerRoutes(
         .select({
           id: adultProductsTable.id,
           salonId: adultProductsTable.salonId,
+          ownerProfileId: (adultProductsTable as any).ownerProfileId,
           name: adultProductsTable.name,
           subtitle: adultProductsTable.subtitle,
           price: adultProductsTable.price,
@@ -1201,7 +1496,10 @@ export async function registerRoutes(
           description: adultProductsTable.description,
           imageUrl: adultProductsTable.imageUrl,
           tag: adultProductsTable.tag,
+          stockQty: (adultProductsTable as any).stockQty,
+          placeType: (adultProductsTable as any).placeType,
           createdAt: adultProductsTable.createdAt,
+          updatedAt: (adultProductsTable as any).updatedAt,
           active: adultProductsTable.active,
         })
         .from(adultProductsTable)
@@ -1211,6 +1509,120 @@ export async function registerRoutes(
       if (!row) return res.status(404).json({ message: "Produit introuvable" });
 
       res.json(row);
+    }),
+  );
+
+  // Boutique: manage own products (owner-only)
+  app.get(
+    "/api/me/adult-products",
+    asyncHandler(async (req, res) => {
+      const profileId = req.session?.profileId;
+      if (!profileId) return res.status(401).json({ message: "Not logged in" });
+
+      const rows = await db
+        .select({
+          id: adultProductsTable.id,
+          name: adultProductsTable.name,
+          subtitle: adultProductsTable.subtitle,
+          price: adultProductsTable.price,
+          size: adultProductsTable.size,
+          description: adultProductsTable.description,
+          imageUrl: adultProductsTable.imageUrl,
+          stockQty: (adultProductsTable as any).stockQty,
+          placeType: (adultProductsTable as any).placeType,
+          active: adultProductsTable.active,
+          createdAt: adultProductsTable.createdAt,
+        })
+        .from(adultProductsTable)
+        .where(eq((adultProductsTable as any).ownerProfileId, profileId))
+        .orderBy(desc(adultProductsTable.createdAt))
+        .limit(200);
+
+      res.json(rows);
+    }),
+  );
+
+  app.post(
+    "/api/me/adult-products",
+    asyncHandler(async (req, res) => {
+      await ensureIpNotBanned(req);
+      const profileId = req.session?.profileId;
+      if (!profileId) return res.status(401).json({ message: "Not logged in" });
+
+      const payload = insertAdultProductSchema
+        .pick({
+          name: true,
+          subtitle: true,
+          price: true,
+          size: true,
+          description: true,
+          imageUrl: true,
+          stockQty: true,
+          placeType: true,
+          active: true,
+        })
+        .parse(req.body);
+
+      const [created] = await db
+        .insert(adultProductsTable)
+        .values({
+          ...(payload as any),
+          ownerProfileId: profileId,
+          // Avoid categories on public UI
+          tag: null,
+          updatedAt: new Date(),
+        } as any)
+        .returning({
+          id: adultProductsTable.id,
+          name: adultProductsTable.name,
+          price: adultProductsTable.price,
+          active: adultProductsTable.active,
+          createdAt: adultProductsTable.createdAt,
+        });
+
+      res.json(created);
+    }),
+  );
+
+  app.patch(
+    "/api/me/adult-products/:id",
+    asyncHandler(async (req, res) => {
+      const profileId = req.session?.profileId;
+      if (!profileId) return res.status(401).json({ message: "Not logged in" });
+      const id = z.string().uuid().parse(req.params.id);
+
+      const payload = z
+        .object({
+          name: z.string().min(2).max(160).optional(),
+          subtitle: z.string().max(200).nullable().optional(),
+          price: z.string().min(1).max(64).optional(),
+          size: z.string().max(64).nullable().optional(),
+          description: z.string().max(5000).nullable().optional(),
+          imageUrl: z.string().url().nullable().optional(),
+          stockQty: z.number().int().min(0).max(100000).optional(),
+          placeType: z.string().max(32).nullable().optional(),
+          active: z.boolean().optional(),
+        })
+        .parse(req.body);
+
+      const [p] = await db
+        .select({ id: adultProductsTable.id, ownerProfileId: (adultProductsTable as any).ownerProfileId })
+        .from(adultProductsTable)
+        .where(eq(adultProductsTable.id, id))
+        .limit(1);
+      if (!p) return res.status(404).json({ message: "Not found" });
+      if ((p as any).ownerProfileId !== profileId) return res.status(403).json({ message: "Forbidden" });
+
+      const [updated] = await db
+        .update(adultProductsTable)
+        .set({ ...(payload as any), updatedAt: new Date() } as any)
+        .where(eq(adultProductsTable.id, id))
+        .returning({
+          id: adultProductsTable.id,
+          active: adultProductsTable.active,
+        });
+
+      res.json(updated);
     }),
   );
 
@@ -1287,6 +1699,10 @@ export async function registerRoutes(
         photoUrl: profiles.photoUrl,
         isPro: profiles.isPro,
         accountType: profiles.accountType,
+        businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
+        address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
+        openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),
+        roomsCount: hasProfilesBusiness ? (profiles as any).roomsCount : (sql<number | null>`null` as any),
         ...(hasVip ? { isVip: (profiles as any).isVip } : {}),
         visible: profiles.visible,
         phone: profiles.phone,
@@ -1334,7 +1750,7 @@ export async function registerRoutes(
     const ids = list.map((p) => p.id);
     const latestAnnonceByProfile = new Map<
       string,
-      { id: string; title: string; createdAt: string }
+      { id: string; title: string; createdAt: string; badges: string[] }
     >();
 
     if (includeLatestAnnonce && ids.length) {
@@ -1344,6 +1760,7 @@ export async function registerRoutes(
           id: annonces.id,
           title: annonces.title,
           createdAt: annonces.createdAt,
+          promotion: (annonces as any).promotion,
         })
         .from(annonces)
         .where(and(inArray(annonces.profileId, ids), eq(annonces.active, true)))
@@ -1351,10 +1768,15 @@ export async function registerRoutes(
 
       for (const a of annonceRows) {
         if (!latestAnnonceByProfile.has(a.profileId)) {
+          const meta = computePromotionMeta({
+            annonceCreatedAt: a.createdAt,
+            promotion: (a as any).promotion,
+          });
           latestAnnonceByProfile.set(a.profileId, {
             id: a.id,
             title: a.title,
             createdAt: new Date(a.createdAt).toISOString(),
+            badges: meta.badges,
           });
         }
       }
@@ -1531,6 +1953,7 @@ export async function registerRoutes(
           body: annonces.body,
           active: annonces.active,
           createdAt: annonces.createdAt,
+          promotion: (annonces as any).promotion,
 
           profileId: profiles.id,
           pseudo: profiles.pseudo,
@@ -1572,7 +1995,28 @@ export async function registerRoutes(
           ? list.filter((a) => a.distanceKm !== null && a.distanceKm <= q.maxDistanceKm!)
           : list;
 
-      const ids = filtered.map((a) => a.profileId);
+      // Persistence & ordering: apply "TOP / PREMIUM / URGENT" promotion logic on the feed (non-distance mode).
+      // When distance is used, keep distance as primary sort key (we don't want to distort nearby results).
+      const sorted = distanceKm
+        ? filtered
+        : [...filtered].sort((a: any, b: any) => {
+            const aMeta = computePromotionMeta({ annonceCreatedAt: a.createdAt, promotion: a.promotion });
+            const bMeta = computePromotionMeta({ annonceCreatedAt: b.createdAt, promotion: b.promotion });
+            const aBump = aMeta.topLastBumpAt ? new Date(aMeta.topLastBumpAt).getTime() : new Date(a.createdAt).getTime();
+            const bBump = bMeta.topLastBumpAt ? new Date(bMeta.topLastBumpAt).getTime() : new Date(b.createdAt).getTime();
+
+            // TOP first
+            if (aMeta.topActive !== bMeta.topActive) return aMeta.topActive ? -1 : 1;
+            // last bump (or createdAt)
+            if (aBump !== bBump) return bBump - aBump;
+            // PREMIUM then URGENT
+            if (aMeta.featuredActive !== bMeta.featuredActive) return aMeta.featuredActive ? -1 : 1;
+            if (aMeta.urgentActive !== bMeta.urgentActive) return aMeta.urgentActive ? -1 : 1;
+            // fallback by createdAt
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          });
+
+      const ids = sorted.map((a) => a.profileId);
       const mediaRows =
         ids.length === 0
           ? []
@@ -1608,7 +2052,7 @@ export async function registerRoutes(
       }
 
       const payload = await Promise.all(
-        filtered.map(async (a) => {
+        sorted.map(async (a) => {
           const media = mediaByProfile.get(a.profileId);
           const sanitizedProfilePhotoUrl = sanitizeUrl(a.photoUrl ?? null);
 
@@ -1657,6 +2101,8 @@ export async function registerRoutes(
             active: a.active,
             createdAt: a.createdAt,
             distanceKm: a.distanceKm,
+            promotion: (a as any).promotion ?? null,
+            promotionMeta: computePromotionMeta({ annonceCreatedAt: a.createdAt, promotion: (a as any).promotion }),
             profile: {
               id: a.profileId,
               pseudo: a.pseudo,
@@ -1923,7 +2369,12 @@ export async function registerRoutes(
         verified: profiles.verified,
         photoUrl: profiles.photoUrl,
         isPro: profiles.isPro,
+        isVip: (profiles as any).isVip ?? sql<boolean>`false`,
         accountType: profiles.accountType,
+        businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
+        address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
+        openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),
+        roomsCount: hasProfilesBusiness ? (profiles as any).roomsCount : (sql<number | null>`null` as any),
         visible: profiles.visible,
         phone: profiles.phone,
         showPhone: profiles.showPhone,
@@ -2007,6 +2458,7 @@ export async function registerRoutes(
         body: annonces.body,
         active: annonces.active,
         createdAt: annonces.createdAt,
+        promotion: (annonces as any).promotion,
       })
       .from(annonces)
       .where(and(eq(annonces.profileId, id), eq(annonces.active, true)))
@@ -2093,6 +2545,7 @@ export async function registerRoutes(
     }
 
     const userId = req.session?.userId as string | undefined;
+    if (!userId) return res.status(401).json({ message: "Not logged in" });
     if (userId && hasUsersEmail && hasUsersEmailVerified) {
       const [u] = await db
         .select({
@@ -2111,8 +2564,120 @@ export async function registerRoutes(
       }
     }
 
+    function findById<T extends { id: number }>(opts: T[], id: number): T | undefined {
+      return opts.find((o) => o.id === id);
+    }
+
+    function computeTotalTokens(input: {
+      promote?: any;
+      isVip: boolean;
+    }): { totalTokens: number; breakdown: Record<string, number> } {
+      const breakdown: Record<string, number> = {};
+      let total = 0;
+
+      if (PUBLISHING_CONFIG.publication.enabled) {
+        const pub = Math.max(0, Number(PUBLISHING_CONFIG.publication.tokenRequired ?? 0));
+        breakdown.publication = pub;
+        total += pub;
+      }
+
+      const promote = input.promote ?? {};
+
+      if (promote.extended?.optionId) {
+        const opt = findById(PUBLISHING_CONFIG.promote.extended.options, Number(promote.extended.optionId));
+        if (!opt) {
+          throw Object.assign(new Error("Option 'extended' invalide."), { status: 400 });
+        }
+        const mode = String(promote.extended.paymentMode ?? "tokens");
+        if (mode === "tokens") {
+          breakdown.extended = opt.tokens;
+          total += opt.tokens;
+        } else {
+          breakdown.extended = 0;
+        }
+      }
+      if (promote.featured?.optionId) {
+        const opt = findById(PUBLISHING_CONFIG.promote.featured.options, Number(promote.featured.optionId));
+        if (!opt) {
+          throw Object.assign(new Error("Option 'featured' invalide."), { status: 400 });
+        }
+        breakdown.featured = opt.tokens;
+        total += opt.tokens;
+      }
+      if (promote.autorenew?.optionId) {
+        const opt = findById(PUBLISHING_CONFIG.promote.autorenew.options, Number(promote.autorenew.optionId));
+        if (!opt) {
+          throw Object.assign(new Error("Option 'autorenew' invalide."), { status: 400 });
+        }
+        breakdown.autorenew = opt.tokens;
+        total += opt.tokens;
+      }
+      if (promote.urgent?.optionId) {
+        const opt = findById(PUBLISHING_CONFIG.promote.urgent.options, Number(promote.urgent.optionId));
+        if (!opt) {
+          throw Object.assign(new Error("Option 'urgent' invalide."), { status: 400 });
+        }
+        breakdown.urgent = opt.tokens;
+        total += opt.tokens;
+      }
+
+      // VIP rule: if both featured + autorenew are selected, discount 1 token (server-side).
+      if (
+        input.isVip &&
+        promote.featured?.optionId &&
+        promote.autorenew?.optionId &&
+        PUBLISHING_CONFIG.rules?.vip?.discountTokens
+      ) {
+        const disc = Math.max(0, Number(PUBLISHING_CONFIG.rules.vip.discountTokens));
+        breakdown.vipDiscount = -disc;
+        total -= disc;
+      }
+
+      total = Math.max(0, total);
+
+      const maxTotal = Number(PUBLISHING_CONFIG.rules?.stacking?.maxTotalTokens ?? 20);
+      if (Number.isFinite(maxTotal) && total > maxTotal) {
+        throw Object.assign(new Error("Trop d’options sélectionnées (limite jetons dépassée)."), { status: 400 });
+      }
+
+      return { totalTokens: total, breakdown };
+    }
+
     // Create annonce and update profile with "pro" fields to make it visible/highlighted.
     const created = await db.transaction(async (tx) => {
+      const [pMeta] = await tx
+        .select({
+          userId: profiles.userId,
+          isVip: (profiles as any).isVip ?? sql<boolean>`false`,
+        })
+        .from(profiles)
+        .where(eq(profiles.id, payload.profileId))
+        .limit(1);
+
+      if (!pMeta) {
+        throw Object.assign(new Error("Profil introuvable"), { status: 404 });
+      }
+      if (pMeta.userId !== userId) {
+        throw Object.assign(new Error("Forbidden"), { status: 403 });
+      }
+
+      const { totalTokens } = computeTotalTokens({
+        promote: payload.promote,
+        isVip: Boolean((pMeta as any).isVip),
+      });
+
+      // Hard block: no tokens => no publication (when enabled).
+      if (PUBLISHING_CONFIG.publication.enabled && totalTokens > 0) {
+        const updated = await tx
+          .update(users)
+          .set({ tokensBalance: sql`${users.tokensBalance} - ${totalTokens}` } as any)
+          .where(and(eq(users.id, userId), sql`${users.tokensBalance} >= ${totalTokens}`))
+          .returning({ tokensBalance: (users as any).tokensBalance });
+        if (!updated.length) {
+          throw Object.assign(new Error("Solde de jetons insuffisant : publication refusée."), { status: 403 });
+        }
+      }
+
       const existing = await tx
         .select({ id: annonces.id })
         .from(annonces)
@@ -2128,6 +2693,7 @@ export async function registerRoutes(
                 title: payload.title.trim(),
                 body: payload.body?.trim(),
                 active: true,
+                promotion: payload.promote ?? null,
               })
               .where(eq(annonces.id, existing[0].id))
               .returning({
@@ -2145,6 +2711,7 @@ export async function registerRoutes(
                 profileId: payload.profileId,
                 title: payload.title.trim(),
                 body: payload.body?.trim(),
+                promotion: payload.promote ?? null,
               })
               .returning({
                 id: annonces.id,

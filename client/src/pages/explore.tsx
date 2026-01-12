@@ -29,64 +29,169 @@ type ApiProfile = {
   ville: string;
   lieu: string | null; // utilisé comme "quartier" / lieu approx
   verified: boolean;
+  isPro?: boolean | null;
   isVip?: boolean;
   photoUrl: string | null;
+  photos?: string[] | null;
   description: string | null;
   services?: string[] | null;
   tarif?: string | null;
   disponibilite?: { date: string; heureDebut: string; duree: string } | null;
   distanceKm?: number | null;
   accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
-  latestAnnonce?: { id: string; title: string; createdAt: string } | null;
+  latestAnnonce?: { id: string; title: string; createdAt: string; badges?: string[] } | null;
 };
+
+function formatRelativeTime(iso: string, lang: "fr" | "en") {
+  const ts = new Date(iso).getTime();
+  if (Number.isNaN(ts)) return "";
+  const diffSec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (diffSec < 60) return lang === "en" ? `${diffSec}s ago` : `il y a ${diffSec}s`;
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return lang === "en" ? `${diffMin}min ago` : `il y a ${diffMin} min`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return lang === "en" ? `${diffH}h ago` : `il y a ${diffH}h`;
+  const diffD = Math.round(diffH / 24);
+  return lang === "en" ? `${diffD}d ago` : `il y a ${diffD}j`;
+}
 
 function ProfileRow({
   p,
   onClick,
+  lang,
 }: {
   p: ApiProfile;
   onClick: () => void;
+  lang: "fr" | "en";
 }) {
+  const badges = p.latestAnnonce?.badges ?? [];
+  const urgent = badges.includes("URGENT");
+  const premium = badges.includes("PREMIUM");
+  const top = badges.includes("TOP");
+  const photoCount = Array.isArray(p.photos) ? p.photos.length : 0;
+  const title = p.latestAnnonce?.title?.trim()
+    ? p.latestAnnonce?.title
+    : `${p.pseudo} • ${p.age}`;
+
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left rounded-2xl border border-border bg-card/80 hover:bg-card transition-colors overflow-hidden"
+      className="group w-full text-left rounded-3xl border border-border bg-card/70 hover:bg-card transition-colors overflow-hidden shadow-sm hover:shadow-md"
     >
-      <div className="flex items-center gap-3 p-3">
-        <img
-          src={p.photoUrl || avatarUrl}
-          alt={p.pseudo}
-          className="w-14 h-14 rounded-2xl object-cover border border-border"
-          onError={(e) => {
-            const img = e.currentTarget;
-            img.onerror = null;
-            img.src = avatarUrl;
-          }}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="text-sm font-semibold text-foreground truncate">
-              {p.pseudo} • {p.age}
-            </div>
-            {p.verified && <BadgeCheck className="w-4 h-4 text-primary shrink-0" />}
+      <div className="flex gap-3 p-3">
+        <div className="relative w-[92px] h-[112px] rounded-2xl overflow-hidden border border-border shrink-0 bg-muted/30">
+          <img
+            src={p.photoUrl || avatarUrl}
+            alt={p.pseudo}
+            className="absolute inset-0 w-full h-full object-cover"
+            onError={(e) => {
+              const img = e.currentTarget;
+              img.onerror = null;
+              img.src = avatarUrl;
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+
+          <div className="absolute top-2 left-2 flex flex-wrap gap-1">
             {p.isVip && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-400/20 text-amber-200 border border-amber-400/30 flex items-center gap-1">
-                <Crown className="w-3.5 h-3.5" />
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/35 text-white border border-white/15 backdrop-blur flex items-center gap-1">
+                <Crown className="w-3.5 h-3.5 text-amber-300" />
                 VIP
               </span>
             )}
           </div>
-          <div className="text-xs text-muted-foreground truncate">
-            {p.ville}
-            {p.lieu ? ` • ${p.lieu}` : ""}
-            {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
-          </div>
-          <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
-            {p.description ?? "—"}
+
+          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2">
+            {photoCount > 0 ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/35 text-white border border-white/15 backdrop-blur">
+                {photoCount} {lang === "en" ? "photos" : "photos"}
+              </span>
+            ) : (
+              <span />
+            )}
+            {urgent ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-500/80 text-white border border-white/15">
+                {lang === "en" ? "Urgent" : "Urgent"}
+              </span>
+            ) : null}
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-foreground leading-snug line-clamp-2">
+                {title}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span>
+                  {lang === "en" ? "Posted by" : "Publié par"}{" "}
+                  <span className="text-foreground/90 font-medium">{p.pseudo}</span>
+                </span>
+                {p.isPro ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-primary/10 text-primary border border-primary/20">
+                    pro
+                  </span>
+                ) : null}
+                {p.verified ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
+                    <BadgeCheck className="w-3.5 h-3.5" />
+                    {lang === "en" ? "Certified" : "Certifié"}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5 group-hover:text-foreground transition-colors" />
+          </div>
+
+          <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+            <MapPin className="w-3.5 h-3.5" />
+            <span className="truncate">
+              {p.ville}
+              {p.lieu ? ` • ${p.lieu}` : ""}
+              {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
+            </span>
+          </div>
+
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {premium ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                PREMIUM
+              </span>
+            ) : null}
+            {top ? (
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                TOP
+              </span>
+            ) : null}
+            {(p.services ?? []).slice(0, 2).map((s) => (
+              <span
+                key={s}
+                className="px-2 py-0.5 rounded-full text-[10px] bg-muted/30 text-muted-foreground border border-border"
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+
+          <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">
+            {p.description ?? "—"}
+          </div>
+
+          <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+            <span className="truncate">
+              {p.tarif ? (
+                <span className="text-foreground font-semibold">{p.tarif}</span>
+              ) : (
+                <span />
+              )}
+            </span>
+            {p.latestAnnonce?.createdAt ? (
+              <span className="shrink-0">{formatRelativeTime(p.latestAnnonce.createdAt, lang)}</span>
+            ) : null}
+          </div>
+        </div>
       </div>
     </button>
   );
@@ -473,15 +578,15 @@ export default function Explore() {
                 <div className="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/92 via-black/40 to-transparent pointer-events-none" />
                 <div className="absolute bottom-0 left-0 right-0 p-4">
                   <div className="rounded-3xl bg-black/70 border border-white/12 backdrop-blur-xl px-5 py-5 space-y-3">
-                    <div className="text-white text-lg font-semibold tracking-tight line-clamp-1">
+                    <div className="text-foreground dark:text-white text-lg font-semibold tracking-tight line-clamp-1">
                       {p.latestAnnonce?.title ?? (lang === "en" ? "Private listing" : "Annonce privée")}
                     </div>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="text-white text-2xl font-semibold tracking-tight truncate">
-                          {p.pseudo} <span className="text-white/70 font-light">{p.age}</span>
+                        <div className="text-foreground dark:text-white text-2xl font-semibold tracking-tight truncate">
+                          {p.pseudo} <span className="text-muted-foreground dark:text-white/70 font-light">{p.age}</span>
                         </div>
-                        <div className="mt-1 flex items-center gap-2 text-white/75 text-sm">
+                        <div className="mt-1 flex items-center gap-2 text-muted-foreground dark:text-white/75 text-sm">
                           <MapPin className="w-4 h-4" />
                           <span className="truncate">
                             {p.ville}
@@ -503,7 +608,7 @@ export default function Explore() {
                         )}
                       </div>
                     </div>
-                    <div className="text-white/70 text-sm line-clamp-2">{p.description ?? "—"}</div>
+                    <div className="text-muted-foreground dark:text-white/70 text-sm line-clamp-2">{p.description ?? "—"}</div>
                     <div className="flex items-center justify-end">
                       <Button className="rounded-2xl" onClick={() => openProfile(p.id)}>
                         {lang === "en" ? "Open" : "Voir"}
@@ -818,7 +923,7 @@ export default function Explore() {
                 </div>
               ) : (
                 paged.map((p) => (
-                  <ProfileRow key={p.id} p={p} onClick={() => openProfile(p.id)} />
+                  <ProfileRow key={p.id} p={p} onClick={() => openProfile(p.id)} lang={lang} />
                 ))
               )}
             </div>
