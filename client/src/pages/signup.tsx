@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { getProfileId } from "@/lib/session";
 import { cityOptions } from "@/lib/cities";
@@ -503,7 +503,7 @@ export default function Signup() {
                               const lat = pos.coords.latitude;
                               const lng = pos.coords.longitude;
                               const r = await fetch(
-                                `/api/geo/reverse?lat=${encodeURIComponent(
+                                `${API_BASE_URL}/api/geo/reverse?lat=${encodeURIComponent(
                                   lat,
                                 )}&lng=${encodeURIComponent(lng)}`,
                               );

@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { getProfileId } from "@/lib/session";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -338,9 +338,10 @@ export default function AnnonceNew() {
     fd.append("file", file);
     fd.append("kind", kind);
 
-    const res = await fetch("/api/uploads/direct", {
+    const res = await fetch(`${API_BASE_URL}/api/uploads/direct`, {
       method: "POST",
       body: fd,
+      credentials: "include",
     });
     if (!res.ok) {
       if (res.status === 401) {

@@ -2504,7 +2504,6 @@ export async function registerRoutes(
     let mapUrl: string | null = null;
     const showLocation = (p as any).showLocation ?? false;
     if (
-      showLocation &&
       (p as any).lat !== null &&
       (p as any).lng !== null &&
       (p as any).lat !== undefined &&

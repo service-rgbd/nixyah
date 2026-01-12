@@ -1,0 +1,9 @@
+name = "nixyah"
+main = "worker.ts"
+compatibility_date = "2025-01-12"
+
+[assets]
+binding = "ASSETS"
+directory = "dist/public"
+
+

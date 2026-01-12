@@ -375,6 +375,24 @@ export default function Dashboard() {
                     />
                     <div className="flex-1">
                       <div className="text-base font-semibold text-foreground">{data.pseudo}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        {account?.email && account?.emailVerified ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <Mail className="w-3.5 h-3.5" />
+                            {lang === "en" ? "Email verified" : "Email vérifié"}
+                          </span>
+                        ) : account?.email ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <Mail className="w-3.5 h-3.5" />
+                            {lang === "en" ? "Email pending" : "Email à confirmer"}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-muted-foreground border border-border">
+                            <Mail className="w-3.5 h-3.5" />
+                            {lang === "en" ? "No email" : "Aucun email"}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {data.ville} • {data.age} ans
                       </div>

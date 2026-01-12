@@ -1,5 +1,16 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+// En production, toutes les requêtes /api/... doivent pointer vers l'API Render.
+// On fixe explicitement la base pour éviter tout problème de configuration d'env.
+export const API_BASE_URL = "https://api.nixyah.com";
+
+function withApiBase(url: string): string {
+  if (!url.startsWith("/")) return url;
+  if (!API_BASE_URL) return url;
+  const base = API_BASE_URL.replace(/\/+$/, "");
+  return `${base}${url}`;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let message = res.statusText || "Une erreur est survenue.";
@@ -26,7 +37,7 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const res = await fetch(url, {
+  const res = await fetch(withApiBase(url), {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
@@ -43,7 +54,7 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const res = await fetch(withApiBase(queryKey.join("/") as string), {
       credentials: "include",
     });
 
