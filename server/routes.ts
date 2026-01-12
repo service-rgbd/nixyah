@@ -253,6 +253,18 @@ export async function registerRoutes(
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
+  function saveSession(req: any): Promise<void> {
+    return new Promise((resolve) => {
+      if (!req.session) return resolve();
+      req.session.save(() => resolve());
+    });
+  }
+
+  async function redirectAfterSessionSave(req: any, res: any, url: string): Promise<void> {
+    await saveSession(req);
+    res.redirect(url);
+  }
+
   async function requireTurnstile(req: any, res: any, token: unknown): Promise<boolean> {
     const secret = (env as any).TURNSTILE_SECRET_KEY as string | undefined;
     if (!secret) return true; // disabled / not configured
@@ -771,7 +783,7 @@ export async function registerRoutes(
       if (!u) {
         // Aucun compte existant: on stocke l'email vérifié en session pour pré-remplir l'inscription.
         (req.session as any).oauthPending = { provider: "google", email };
-        return res.redirect(appUrl(`/signup?oauth=google`));
+        return await redirectAfterSessionSave(req, res, appUrl(`/signup?oauth=google`));
       }
 
       const [p] = await db
@@ -790,7 +802,7 @@ export async function registerRoutes(
       await logIpEvent({ req, kind: "login_success_google", userId: (u as any).id });
 
       // If state points to signup (common mistake), prefer dashboard for existing users.
-      return res.redirect(appUrl(state));
+      return await redirectAfterSessionSave(req, res, appUrl(state));
       } catch (e) {
         console.error("Google OAuth callback crashed", e);
         return res.redirect(appUrl(`/login?oauth=server_error`));
@@ -1384,6 +1396,8 @@ export async function registerRoutes(
 
   app.post("/api/logout", (req, res) => {
     req.session?.destroy(() => {
+      // Best-effort cookie clear (default cookie name used by express-session)
+      res.clearCookie("connect.sid");
       res.json({ ok: true });
     });
   });
