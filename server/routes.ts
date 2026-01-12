@@ -235,6 +235,10 @@ export async function registerRoutes(
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
   const resendFrom = env.RESEND_FROM ?? "NIXYAH <no-reply@nixyah.com>";
 
+  const googleClientId = (env as any).GOOGLE_CLIENT_ID as string | undefined;
+  const googleClientSecret = (env as any).GOOGLE_CLIENT_SECRET as string | undefined;
+  const googleRedirectUri = (env as any).GOOGLE_REDIRECT_URI as string | undefined;
+
   function appUrl(path: string): string {
     const base = env.APP_BASE_URL || "http://localhost:5000";
     return `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
@@ -242,6 +246,90 @@ export async function registerRoutes(
 
   function generateToken(): string {
     return crypto.randomBytes(32).toString("hex");
+  }
+
+  function renderEmailLayout(opts: {
+    title: string;
+    intro: string;
+    body?: string;
+    buttonLabel?: string;
+    buttonUrl?: string;
+    footer?: string;
+  }): string {
+    const button = opts.buttonLabel && opts.buttonUrl
+      ? `
+        <tr>
+          <td align="center" style="padding: 24px 24px 8px 24px;">
+            <a href="${opts.buttonUrl}" target="_blank" rel="noopener"
+              style="
+                display: inline-block;
+                padding: 12px 24px;
+                border-radius: 999px;
+                background: linear-gradient(135deg,#ec4899,#8b5cf6);
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 600;
+                text-decoration: none;
+                letter-spacing: 0.02em;
+              "
+            >
+              ${opts.buttonLabel}
+            </a>
+          </td>
+        </tr>
+      `
+      : "";
+
+    const body = opts.body
+      ? `<tr>
+            <td style="padding: 0 24px 8px 24px; font-size: 14px; line-height: 1.6; color: #4b5563;">
+              ${opts.body}
+            </td>
+          </tr>`
+      : "";
+
+    const footer = opts.footer
+      ? `<tr>
+            <td style="padding: 16px 24px 0 24px; font-size: 11px; line-height: 1.5; color: #9ca3af;">
+              ${opts.footer}
+            </td>
+          </tr>`
+      : "";
+
+    return `
+      <div style="background-color:#0b0b10;padding:32px 16px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;background-color:#0f172a;border-radius:24px;border:1px solid rgba(148,163,184,0.35);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+          <tr>
+            <td style="padding:20px 24px 8px 24px;border-bottom:1px solid rgba(148,163,184,0.25);">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div style="width:32px;height:32px;border-radius:999px;background:linear-gradient(135deg,#ec4899,#8b5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">N</div>
+                <div style="font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9ca3af;">NIXYAH</div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 24px 4px 24px;">
+              <h1 style="margin:0;font-size:18px;line-height:1.4;font-weight:600;color:#e5e7eb;">
+                ${opts.title}
+              </h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 24px 8px 24px;font-size:14px;line-height:1.6;color:#9ca3af;">
+              ${opts.intro}
+            </td>
+          </tr>
+          ${body}
+          ${button}
+          ${footer}
+          <tr>
+            <td style="padding:24px 24px 24px 24px;font-size:11px;line-height:1.6;color:#6b7280;border-top:1px solid rgba(31,41,55,0.8);">
+              Cet email est envoyé automatiquement par la plateforme NIXYAH. Merci de ne pas y répondre directement.
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
   }
 
   async function sendVerificationEmail(
@@ -269,18 +357,23 @@ export async function registerRoutes(
     const verifyLink = appUrl(`/email/verify?token=${encodeURIComponent(token)}`);
 
     try {
+      const html = renderEmailLayout({
+        title: "Confirme ton email pour activer ton espace",
+        intro:
+          "Merci d'avoir créé un compte sur <strong>NIXYAH</strong>. Nous te demandons de confirmer ton adresse email pour sécuriser ton espace et activer la publication d'annonces.",
+        body:
+          "Clique sur le bouton ci‑dessous pour confirmer ton email. Si tu n'es pas à l'origine de cette demande, tu peux ignorer ce message.",
+        buttonLabel: "Confirmer mon email",
+        buttonUrl: verifyLink,
+        footer:
+          "Après confirmation, tu pourras publier des annonces, gérer ta visibilité et mettre à jour tes informations en quelques clics.",
+      });
+
       const result = await resend.emails.send({
         from: resendFrom,
         to: email,
         subject: "Confirme ton email – NIXYAH",
-        html: `
-          <p>Bonjour,</p>
-          <p>Merci d'avoir créé un compte sur <strong>NIXYAH</strong>.</p>
-          <p>Pour sécuriser ton espace et pouvoir publier des annonces (WhatsApp / visibilité), clique sur le lien ci-dessous&nbsp;:</p>
-          <p><a href="${verifyLink}" target="_blank" rel="noopener">Confirmer mon email</a></p>
-          <p>Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.</p>
-          <p>— L'équipe NIXYAH</p>
-        `,
+        html,
         text: `Merci d'avoir créé un compte sur NIXYAH.\n\nClique sur ce lien pour confirmer ton email : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
       });
 
@@ -326,18 +419,23 @@ export async function registerRoutes(
 
     const resetLink = appUrl(`/password/reset?token=${encodeURIComponent(token)}`);
 
+    const html = renderEmailLayout({
+      title: "Réinitialise ton mot de passe",
+      intro:
+        "Tu as demandé à réinitialiser ton mot de passe sur <strong>NIXYAH</strong>.",
+      body:
+        "Pour choisir un nouveau mot de passe, clique sur le bouton ci‑dessous. Ce lien est valable pendant <strong>1 heure</strong> pour des raisons de sécurité.",
+      buttonLabel: "Choisir un nouveau mot de passe",
+      buttonUrl: resetLink,
+      footer:
+        "Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email. Ton mot de passe actuel restera valide.",
+    });
+
     await resend.emails.send({
       from: resendFrom,
       to: email,
       subject: "Réinitialise ton mot de passe – NIXYAH",
-      html: `
-        <p>Bonjour,</p>
-        <p>Tu as demandé à réinitialiser ton mot de passe sur <strong>NIXYAH</strong>.</p>
-        <p>Clique sur le lien suivant pour choisir un nouveau mot de passe (valable 1 heure)&nbsp;:</p>
-        <p><a href="${resetLink}" target="_blank" rel="noopener">Réinitialiser mon mot de passe</a></p>
-        <p>Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.</p>
-        <p>— L'équipe NIXYAH</p>
-      `,
+      html,
       text: `Tu as demandé à réinitialiser ton mot de passe sur NIXYAH.\n\nLien (valable 1h) : ${resetLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
     });
   }
@@ -486,6 +584,147 @@ export async function registerRoutes(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+
+  // --- Authentification Google OAuth2 (login uniquement, sans création auto de profil) ---
+  app.get(
+    "/api/auth/google",
+    asyncHandler(async (req, res) => {
+      if (!googleClientId || !googleRedirectUri) {
+        return res
+          .status(500)
+          .json({ message: "Google OAuth non configuré (GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI manquants)." });
+      }
+
+      const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+      url.searchParams.set("client_id", googleClientId);
+      url.searchParams.set("redirect_uri", googleRedirectUri);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("scope", "openid email profile");
+      url.searchParams.set("access_type", "online");
+      url.searchParams.set("include_granted_scopes", "true");
+
+      const state = typeof req.query.state === "string" ? req.query.state : "";
+      if (state) url.searchParams.set("state", state);
+
+      res.redirect(url.toString());
+    }),
+  );
+
+  // Pending OAuth info (used to prefill signup flow when user doesn't exist yet)
+  app.get(
+    "/api/auth/pending",
+    asyncHandler(async (req, res) => {
+      const pending = (req.session as any)?.oauthPending as
+        | { provider: "google"; email: string }
+        | undefined;
+      res.json({ provider: pending?.provider ?? null, email: pending?.email ?? null });
+    }),
+  );
+
+  app.get(
+    "/api/auth/google/callback",
+    asyncHandler(async (req, res) => {
+      if (!googleClientId || !googleClientSecret || !googleRedirectUri) {
+        return res
+          .status(500)
+          .send("Google OAuth non configuré. Contacte l’administrateur.");
+      }
+
+      const code = typeof req.query.code === "string" ? req.query.code : null;
+      const error = typeof req.query.error === "string" ? req.query.error : null;
+      const state = typeof req.query.state === "string" ? req.query.state : "";
+
+      if (error) {
+        console.error("Google OAuth error:", error);
+        return res.redirect(appUrl(`/login?oauth=google_error`));
+      }
+      if (!code) {
+        return res.redirect(appUrl(`/login?oauth=missing_code`));
+      }
+
+      // 1) Échanger le code contre un access_token
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: googleClientId,
+          client_secret: googleClientSecret,
+          redirect_uri: googleRedirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      if (!tokenRes.ok) {
+        const text = await tokenRes.text().catch(() => "");
+        console.error("Google token exchange failed", tokenRes.status, text);
+        return res.redirect(appUrl(`/login?oauth=token_error`));
+      }
+
+      const tokenJson: any = await tokenRes.json();
+      const accessToken = tokenJson.access_token as string | undefined;
+      if (!accessToken) {
+        console.error("Google OAuth: missing access_token", tokenJson);
+        return res.redirect(appUrl(`/login?oauth=token_missing`));
+      }
+
+      // 2) Récupérer les infos utilisateur (email, etc.)
+      const userinfoRes = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!userinfoRes.ok) {
+        const text = await userinfoRes.text().catch(() => "");
+        console.error("Google userinfo failed", userinfoRes.status, text);
+        return res.redirect(appUrl(`/login?oauth=userinfo_error`));
+      }
+
+      const userinfo: any = await userinfoRes.json();
+      const email = typeof userinfo.email === "string" ? userinfo.email.toLowerCase() : null;
+      const emailVerified = Boolean(userinfo.email_verified);
+
+      if (!email || !emailVerified) {
+        return res.redirect(appUrl(`/login?oauth=email_unverified`));
+      }
+
+      if (!hasUsersEmail) {
+        return res.redirect(appUrl(`/login?oauth=email_column_missing`));
+      }
+
+      // 3) Tenter de retrouver un utilisateur existant avec cet email
+      const [u] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(sql`lower(${(users as any).email}) = ${email}`)
+        .limit(1);
+
+      if (!u) {
+        // Aucun compte existant: on stocke l'email vérifié en session pour pré-remplir l'inscription.
+        (req.session as any).oauthPending = { provider: "google", email };
+        return res.redirect(appUrl(`/signup?oauth=google`));
+      }
+
+      const [p] = await db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(eq(profiles.userId, (u as any).id))
+        .limit(1);
+
+      if (!p) {
+        return res.redirect(appUrl(`/login?oauth=no_profile`));
+      }
+
+      req.session.userId = (u as any).id;
+      req.session.profileId = p.id;
+
+      await logIpEvent({ req, kind: "login_success_google", userId: (u as any).id });
+
+      // If state points to signup (common mistake), prefer dashboard for existing users.
+      const redirectPath =
+        state && state.startsWith("/") && !state.startsWith("/signup") ? state : "/dashboard";
+      return res.redirect(appUrl(redirectPath));
+    }),
+  );
 
   // Publishing / promote configuration (tokens + options). Backend remains source of truth.
   app.get(
@@ -1188,6 +1427,10 @@ export async function registerRoutes(
       const payload = signupSchema.parse(req.body);
 
       const username = payload.username.trim();
+      const pending = (req.session as any)?.oauthPending as
+        | { provider: "google"; email: string }
+        | undefined;
+      const pendingEmail = pending?.provider === "google" ? pending.email : null;
 
       // Basic uniqueness check (we also have DB uniques)
       const existing = await db
@@ -1222,8 +1465,18 @@ export async function registerRoutes(
       const created = await db.transaction(async (tx) => {
         const accountType = payload.accountType ?? "profile";
         const userValues: any = { username, passwordHash };
-        if (hasUsersEmail && payload.email) {
-          userValues.email = payload.email.trim().toLowerCase();
+        if (hasUsersEmail) {
+          const rawEmail = payload.email?.trim() ? payload.email.trim().toLowerCase() : null;
+          const emailToUse = rawEmail ?? pendingEmail;
+          if (emailToUse) {
+            userValues.email = emailToUse;
+            // If coming from verified Google OAuth, mark email as verified immediately.
+            if (hasUsersEmailVerified && pendingEmail && emailToUse === pendingEmail) {
+              userValues.emailVerified = true;
+              userValues.emailVerificationToken = null;
+              userValues.emailVerificationSentAt = null;
+            }
+          }
         }
 
         const [u] = await tx
@@ -1275,6 +1528,10 @@ export async function registerRoutes(
 
       req.session.userId = created.userId;
       req.session.profileId = created.profile.id;
+      // Clear pending OAuth if we just created a profile (avoid reusing on next signup).
+      if ((req.session as any)?.oauthPending) {
+        (req.session as any).oauthPending = null;
+      }
 
       await logIpEvent({ req, kind: "signup_success", userId: created.userId });
 
@@ -1289,8 +1546,14 @@ export async function registerRoutes(
               verificationEmailError =
                 "Emails indisponibles (RESEND_API_KEY manquante). Contacte l’administrateur.";
             } else {
-              const r = await sendVerificationEmail(created.userId, email);
-              verificationEmailSent = Boolean(r.sent);
+              // If user was created via Google verified email, do not send verification email.
+              const wasGoogleVerified = Boolean(pendingEmail && email.toLowerCase() === pendingEmail.toLowerCase());
+              if (wasGoogleVerified) {
+                verificationEmailSent = null;
+              } else {
+                const r = await sendVerificationEmail(created.userId, email);
+                verificationEmailSent = Boolean(r.sent);
+              }
             }
           } catch (e) {
             console.error("Failed to send verification email on signup", e);

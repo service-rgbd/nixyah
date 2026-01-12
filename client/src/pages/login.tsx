@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import logoTitle from "@assets/logo-titre.png";
@@ -24,7 +24,9 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/support");
+        const res = await fetch(`${API_BASE_URL}/api/support`, {
+          credentials: "include",
+        });
         if (!res.ok) return;
         const data = (await res.json()) as { resetEmail?: string | null };
         if (!cancelled) setResetEmail(data.resetEmail ?? null);
@@ -50,6 +52,11 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleLogin = () => {
+    const state = encodeURIComponent("/dashboard");
+    window.location.href = `${API_BASE_URL}/api/auth/google?state=${state}`;
   };
 
   return (
@@ -167,6 +174,29 @@ export default function Login() {
                       : lang === "en"
                         ? "Sign in"
                         : "Se connecter"}
+                  </Button>
+
+                  <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border" />
+                    </div>
+                    <div className="relative flex justify-center text-[11px]">
+                      <span className="bg-background px-2 text-muted-foreground">
+                        {lang === "en" ? "or continue with" : "ou continuer avec"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full h-11 rounded-full gap-2"
+                    onClick={handleGoogleLogin}
+                  >
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-medium">
+                      {lang === "en" ? "Continue with Google" : "Continuer avec Google"}
+                    </span>
                   </Button>
 
                   <div className="pt-2 text-center text-xs text-muted-foreground">

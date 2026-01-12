@@ -34,6 +34,10 @@ const envAliases: Record<string, string[]> = {
   RESEND_FROM: ["RESEND_FROM", "resend_from", "resendFrom"],
   APP_BASE_URL: ["APP_BASE_URL", "app_base_url", "appBaseUrl"],
 
+  GOOGLE_CLIENT_ID: ["GOOGLE_CLIENT_ID", "google_client_id", "googleClientId"],
+  GOOGLE_CLIENT_SECRET: ["GOOGLE_CLIENT_SECRET", "google_client_secret", "googleClientSecret"],
+  GOOGLE_REDIRECT_URI: ["GOOGLE_REDIRECT_URI", "google_redirect_uri", "googleRedirectUri"],
+
   // CORS (comma-separated list of allowed origins for API when frontend is deployed separately)
   CORS_ORIGINS: ["CORS_ORIGINS", "cors_origins", "corsOrigins", "CORS_ORIGIN", "cors_origin"],
 
@@ -75,6 +79,10 @@ const envSchema = z.object({
   RESEND_API_KEY: nonEmpty("RESEND_API_KEY").optional(),
   RESEND_FROM: z.string().optional(),
   APP_BASE_URL: z.string().optional(),
+
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().optional(),
 
   CORS_ORIGINS: z.string().optional(),
   SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).optional(),

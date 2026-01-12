@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
-import { ArrowLeft, ArrowRight, User, Calendar, MapPin, Lock, Check, Shield, Mail } from "lucide-react";
+import { ArrowLeft, ArrowRight, User, Calendar, MapPin, Lock, Check, Shield, Mail, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +39,7 @@ const steps = [
 export default function Signup() {
   const [, setLocation] = useLocation();
   const [currentStep, setCurrentStep] = useState(1);
+  const [emailLocked, setEmailLocked] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     gender: null,
     age: "",
@@ -120,6 +121,36 @@ export default function Signup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Prefill email after Google OAuth if needed (user didn't exist yet).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = new URL(window.location.href);
+        const oauth = url.searchParams.get("oauth");
+        if (oauth !== "google") return;
+
+        const res = await apiRequest("GET", "/api/auth/pending");
+        const json = await res.json();
+        const email = typeof json?.email === "string" ? json.email : "";
+        if (!email) return;
+        if (cancelled) return;
+
+        setFormData((prev) => ({ ...prev, email }));
+        setEmailLocked(true);
+        toast({
+          title: "Email Google récupéré",
+          description: "Ton email a été vérifié par Google. Termine l’inscription pour créer ton profil.",
+        });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSubmit = async () => {
     setSubmitError(null);
     setSubmitting(true);
@@ -163,6 +194,11 @@ export default function Signup() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleGoogleSignup = () => {
+    const state = encodeURIComponent("/signup?oauth=google");
+    window.location.href = `${API_BASE_URL}/api/auth/google?state=${state}`;
   };
 
   const slideVariants = {
@@ -581,6 +617,28 @@ export default function Signup() {
               </div>
 
               <div className="space-y-6">
+                <div className="space-y-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full h-12 rounded-2xl gap-2"
+                    onClick={handleGoogleSignup}
+                  >
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium">S’inscrire avec Google</span>
+                  </Button>
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border" />
+                    </div>
+                    <div className="relative flex justify-center text-[11px]">
+                      <span className="bg-card/70 px-2 text-muted-foreground">
+                        ou créer un compte manuellement
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="username" className="flex items-center gap-2">
                     <User className="w-4 h-4 text-muted-foreground" />
@@ -621,7 +679,7 @@ export default function Signup() {
                 <div className="space-y-2">
                   <Label htmlFor="email" className="flex items-center gap-2">
                     <Mail className="w-4 h-4 text-muted-foreground" />
-                    Email (optionnel)
+                    Email {emailLocked ? "(Google vérifié)" : "(optionnel)"}
                   </Label>
                   <Input
                     id="email"
@@ -630,9 +688,10 @@ export default function Signup() {
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     className="h-14 text-lg"
+                    disabled={emailLocked}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Non affiché sur ton profil. Utilisé uniquement si tu perds ton mot de passe.
+                    Non affiché sur ton profil. Utilisé pour récupérer ton mot de passe et confirmer ta publication.
                   </p>
                 </div>
 
