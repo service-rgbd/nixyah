@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useI18n } from "@/lib/i18n";
 import { apiRequest } from "@/lib/queryClient";
 import { Turnstile } from "@/components/turnstile";
+import { API_BASE_URL } from "@/lib/queryClient";
 
 export default function PasswordForgot() {
   const [, setLocation] = useLocation();
@@ -17,11 +18,38 @@ export default function PasswordForgot() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const turnstileEnabled = Boolean((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY);
+  const [turnstileRequired, setTurnstileRequired] = useState(false);
+  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
+  const hasSiteKey = Boolean(siteKey && String(siteKey).trim().length > 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/support`, { credentials: "include" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { turnstileRequired?: boolean };
+        if (!cancelled) setTurnstileRequired(Boolean(data.turnstileRequired));
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSubmit = async () => {
     setError(null);
-    if (turnstileEnabled && !turnstileToken) {
+    if (turnstileRequired && !hasSiteKey) {
+      setError(
+        lang === "en"
+          ? "Security check is enabled on the server, but the frontend Turnstile site key is missing."
+          : "Turnstile est activé côté serveur, mais VITE_TURNSTILE_SITE_KEY manque côté Cloudflare.",
+      );
+      return;
+    }
+    if (turnstileRequired && !turnstileToken) {
       setError(lang === "en" ? "Please complete the anti-bot check." : "Valide le contrôle anti-bot (Turnstile).");
       return;
     }
@@ -93,11 +121,23 @@ export default function PasswordForgot() {
                   />
                 </div>
 
-                <Turnstile
-                  action="password_forgot"
-                  className="pt-1 flex justify-center"
-                  onToken={(tok) => setTurnstileToken(tok)}
-                />
+                {turnstileRequired && (
+                  <>
+                    {!hasSiteKey ? (
+                      <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive">
+                        {lang === "en"
+                          ? "Turnstile is required but VITE_TURNSTILE_SITE_KEY is missing on the frontend build."
+                          : "Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare."}
+                      </div>
+                    ) : (
+                      <Turnstile
+                        action="password_forgot"
+                        className="pt-1 flex justify-center"
+                        onToken={(tok) => setTurnstileToken(tok)}
+                      />
+                    )}
+                  </>
+                )}
 
                 <Button
                   className="w-full h-11 mt-1"

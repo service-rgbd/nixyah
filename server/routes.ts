@@ -843,6 +843,7 @@ export async function registerRoutes(
       res.json({
         resetEmail: env.ADMIN_EMAIL ?? "Ra.fils27@hotmail.com",
         telegramUrl: (env as any).SUPPORT_TELEGRAM_URL ?? "https://t.me/+cNj_edHZTyc2YWE0",
+        turnstileRequired: Boolean((env as any).TURNSTILE_SECRET_KEY),
       });
     }),
   );

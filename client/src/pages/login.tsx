@@ -21,7 +21,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetEmail, setResetEmail] = useState<string | null>(null);
-  const turnstileEnabled = Boolean((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY);
+  const [turnstileRequired, setTurnstileRequired] = useState(false);
+  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
+  const hasSiteKey = Boolean(siteKey && String(siteKey).trim().length > 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,8 +33,10 @@ export default function Login() {
           credentials: "include",
         });
         if (!res.ok) return;
-        const data = (await res.json()) as { resetEmail?: string | null };
-        if (!cancelled) setResetEmail(data.resetEmail ?? null);
+        const data = (await res.json()) as { resetEmail?: string | null; turnstileRequired?: boolean };
+        if (cancelled) return;
+        setResetEmail(data.resetEmail ?? null);
+        setTurnstileRequired(Boolean(data.turnstileRequired));
       } catch {
         // ignore
       }
@@ -69,7 +73,15 @@ export default function Login() {
 
   const handleLogin = async () => {
     setError(null);
-    if (turnstileEnabled && !turnstileToken) {
+    if (turnstileRequired && !hasSiteKey) {
+      setError(
+        lang === "en"
+          ? "Security check is enabled on the server, but the frontend Turnstile site key is missing."
+          : "La sécurité Turnstile est activée sur le serveur, mais la clé VITE_TURNSTILE_SITE_KEY manque côté Cloudflare.",
+      );
+      return;
+    }
+    if (turnstileRequired && !turnstileToken) {
       setError(lang === "en" ? "Please complete the anti-bot check." : "Valide le contrôle anti-bot (Turnstile).");
       return;
     }
@@ -92,17 +104,15 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-primary/60 via-primary/40 to-background flex flex-col">
-      <header className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] flex items-center justify-between text-white">
+    <div className="min-h-screen bg-gradient-to-b from-primary/20 via-background to-background flex flex-col">
+      <header className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] flex items-center justify-between">
         <button
           onClick={() => setLocation("/start")}
-          className="w-9 h-9 rounded-full bg-white/15 flex items-center justify-center border border-white/20 backdrop-blur"
+          className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div className="text-sm font-medium">
-          {lang === "en" ? "Back" : "Retour"}
-        </div>
+        <div className="text-sm font-medium">{lang === "en" ? "Back" : "Retour"}</div>
         <div className="w-9" />
       </header>
 
@@ -194,11 +204,23 @@ export default function Login() {
                     </div>
                   </div>
 
-                  <Turnstile
-                    action="login"
-                    className="pt-1 flex justify-center"
-                    onToken={(tok) => setTurnstileToken(tok)}
-                  />
+                  {turnstileRequired && (
+                    <>
+                      {!hasSiteKey ? (
+                        <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive">
+                          {lang === "en"
+                            ? "Turnstile is required but VITE_TURNSTILE_SITE_KEY is missing on the frontend build."
+                            : "Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare."}
+                        </div>
+                      ) : (
+                        <Turnstile
+                          action="login"
+                          className="pt-1 flex justify-center"
+                          onToken={(tok) => setTurnstileToken(tok)}
+                        />
+                      )}
+                    </>
+                  )}
 
                   <Button
                     className="w-full h-12 rounded-full mt-2"

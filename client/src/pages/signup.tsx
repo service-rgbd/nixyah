@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 import { ArrowLeft, ArrowRight, User, Calendar, MapPin, Lock, Check, Shield, Mail, Sparkles } from "lucide-react";
@@ -42,6 +42,7 @@ export default function Signup() {
   const [currentStep, setCurrentStep] = useState(1);
   const [emailLocked, setEmailLocked] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileRequired, setTurnstileRequired] = useState(false);
   const [formData, setFormData] = useState<FormData>({
     gender: null,
     age: "",
@@ -58,7 +59,17 @@ export default function Signup() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
-  const turnstileEnabled = Boolean((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY);
+  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
+  const hasSiteKey = Boolean(siteKey && String(siteKey).trim().length > 0);
+  const oauthFromUrl = useMemo(() => {
+    try {
+      const url = new URL(window.location.href);
+      return url.searchParams.get("oauth");
+    } catch {
+      return null;
+    }
+  }, []);
+  const showGoogleSignup = !emailLocked && formData.email.trim().length === 0 && oauthFromUrl !== "google";
 
   const progress = (currentStep / steps.length) * 100;
 
@@ -124,6 +135,23 @@ export default function Signup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/support`, { credentials: "include" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { turnstileRequired?: boolean };
+        if (!cancelled) setTurnstileRequired(Boolean(data.turnstileRequired));
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Prefill email after Google OAuth if needed (user didn't exist yet).
   useEffect(() => {
     let cancelled = false;
@@ -156,7 +184,11 @@ export default function Signup() {
 
   const handleSubmit = async () => {
     setSubmitError(null);
-    if (turnstileEnabled && !turnstileToken) {
+    if (turnstileRequired && !hasSiteKey) {
+      setSubmitError("Turnstile est activé côté serveur, mais VITE_TURNSTILE_SITE_KEY manque côté Cloudflare.");
+      return;
+    }
+    if (turnstileRequired && !turnstileToken) {
       setSubmitError("Valide le contrôle anti-bot (Turnstile) avant de créer ton compte.");
       return;
     }
@@ -626,15 +658,17 @@ export default function Signup() {
 
               <div className="space-y-6">
                 <div className="space-y-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full h-12 rounded-2xl gap-2"
-                    onClick={handleGoogleSignup}
-                  >
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    <span className="text-sm font-medium">S’inscrire avec Google</span>
-                  </Button>
+                  {showGoogleSignup && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full h-12 rounded-2xl gap-2"
+                      onClick={handleGoogleSignup}
+                    >
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-medium">S’inscrire avec Google</span>
+                    </Button>
+                  )}
                   <div className="relative">
                     <div className="absolute inset-0 flex items-center">
                       <span className="w-full border-t border-border" />
@@ -719,11 +753,21 @@ export default function Signup() {
                   />
                 </div>
 
-                <Turnstile
-                  action="signup"
-                  className="pt-1 flex justify-center"
-                  onToken={(tok) => setTurnstileToken(tok)}
-                />
+                {turnstileRequired && (
+                  <>
+                    {!hasSiteKey ? (
+                      <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive">
+                        Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare.
+                      </div>
+                    ) : (
+                      <Turnstile
+                        action="signup"
+                        className="pt-1 flex justify-center"
+                        onToken={(tok) => setTurnstileToken(tok)}
+                      />
+                    )}
+                  </>
+                )}
               </div>
             </motion.div>
           )}
