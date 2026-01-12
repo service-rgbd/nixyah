@@ -252,6 +252,24 @@ export async function registerRoutes(
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
+  function sanitizeOAuthState(input: string | null | undefined): string {
+    const raw = String(input ?? "").trim();
+    if (!raw) return "/dashboard";
+    // Only allow relative paths. Reject full URLs or host-like inputs.
+    if (raw.includes("://") || raw.includes(" ")) return "/dashboard";
+    // Common mistake: passing "nixyah.com/dashboard" (no leading slash)
+    if (/^[a-z0-9.-]+\.[a-z]{2,}\/?/i.test(raw)) return "/dashboard";
+    const s = raw.startsWith("/") ? raw : `/${raw}`;
+    // Prevent open redirects / odd paths.
+    if (!s.startsWith("/")) return "/dashboard";
+    // Allow only a small set of destinations we actually handle.
+    if (s.startsWith("/signup")) return "/signup?oauth=google";
+    if (s.startsWith("/dashboard")) return "/dashboard";
+    if (s.startsWith("/annonce")) return "/dashboard";
+    if (s.startsWith("/start")) return "/start";
+    return "/dashboard";
+  }
+
   function generateToken(): string {
     return crypto.randomBytes(32).toString("hex");
   }
@@ -611,7 +629,7 @@ export async function registerRoutes(
       url.searchParams.set("access_type", "online");
       url.searchParams.set("include_granted_scopes", "true");
 
-      const state = typeof req.query.state === "string" ? req.query.state : "";
+      const state = sanitizeOAuthState(typeof req.query.state === "string" ? req.query.state : "");
       if (state) url.searchParams.set("state", state);
 
       res.redirect(url.toString());
@@ -623,7 +641,8 @@ export async function registerRoutes(
     "/api/auth/google/*",
     asyncHandler(async (req, res) => {
       const raw = String((req.params as any)[0] ?? "");
-      const state = raw ? `/${raw}`.replace(/\/{2,}/g, "/") : "/dashboard";
+      const normalized = raw ? `/${raw}`.replace(/\/{2,}/g, "/") : "/dashboard";
+      const state = sanitizeOAuthState(normalized);
       return res.redirect(`/api/auth/google?state=${encodeURIComponent(state)}`);
     }),
   );
@@ -651,7 +670,7 @@ export async function registerRoutes(
 
       const code = typeof req.query.code === "string" ? req.query.code : null;
       const error = typeof req.query.error === "string" ? req.query.error : null;
-      const state = typeof req.query.state === "string" ? req.query.state : "";
+      const state = sanitizeOAuthState(typeof req.query.state === "string" ? req.query.state : "");
 
       if (error) {
         console.error("Google OAuth error:", error);
@@ -739,9 +758,7 @@ export async function registerRoutes(
       await logIpEvent({ req, kind: "login_success_google", userId: (u as any).id });
 
       // If state points to signup (common mistake), prefer dashboard for existing users.
-      const redirectPath =
-        state && state.startsWith("/") && !state.startsWith("/signup") ? state : "/dashboard";
-      return res.redirect(appUrl(redirectPath));
+      return res.redirect(appUrl(state));
       } catch (e) {
         console.error("Google OAuth callback crashed", e);
         return res.redirect(appUrl(`/login?oauth=server_error`));

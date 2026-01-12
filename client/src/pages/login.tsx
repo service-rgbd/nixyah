@@ -39,6 +39,31 @@ export default function Login() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const oauth = url.searchParams.get("oauth");
+      if (!oauth) return;
+      const map: Record<string, { fr: string; en: string }> = {
+        google_error: { fr: "Connexion Google refusée.", en: "Google sign-in was canceled." },
+        missing_code: { fr: "Code Google manquant. Réessaie.", en: "Missing Google code. Please retry." },
+        token_error: { fr: "Erreur échange token Google. Vérifie la config Google.", en: "Google token exchange failed." },
+        token_missing: { fr: "Token Google manquant. Réessaie.", en: "Missing Google access token." },
+        userinfo_error: { fr: "Impossible de lire ton profil Google.", en: "Unable to fetch Google profile." },
+        email_unverified: { fr: "Email Google non vérifié.", en: "Google email is not verified." },
+        email_column_missing: { fr: "Email indisponible côté serveur (DB).", en: "Email column missing on server." },
+        not_linked: { fr: "Aucun compte trouvé. Inscris-toi avec Google.", en: "No account found. Sign up with Google." },
+        no_profile: { fr: "Compte sans profil. Contacte l’admin.", en: "Account has no profile." },
+        server_error: { fr: "Erreur serveur OAuth. Réessaie.", en: "OAuth server error. Please retry." },
+      };
+      const msg = map[oauth];
+      if (!msg) return;
+      setError(lang === "en" ? msg.en : msg.fr);
+    } catch {
+      // ignore
+    }
+  }, [lang]);
+
   const handleLogin = async () => {
     setError(null);
     setLoading(true);
