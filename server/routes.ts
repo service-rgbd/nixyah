@@ -636,17 +636,6 @@ export async function registerRoutes(
     }),
   );
 
-  // Backward/typo-tolerant: some clients may hit /api/auth/google/<state> instead of using ?state=
-  app.get(
-    "/api/auth/google/*",
-    asyncHandler(async (req, res) => {
-      const raw = String((req.params as any)[0] ?? "");
-      const normalized = raw ? `/${raw}`.replace(/\/{2,}/g, "/") : "/dashboard";
-      const state = sanitizeOAuthState(normalized);
-      return res.redirect(`/api/auth/google?state=${encodeURIComponent(state)}`);
-    }),
-  );
-
   // Pending OAuth info (used to prefill signup flow when user doesn't exist yet)
   app.get(
     "/api/auth/pending",
@@ -765,6 +754,16 @@ export async function registerRoutes(
       }
     }),
   );
+
+  // Backward/typo-tolerant: some clients may hit /api/auth/google/<state> instead of using ?state=
+  // IMPORTANT: must NOT capture /api/auth/google/callback (handled above).
+  app.get("/api/auth/google/*", (req, res, next) => {
+    if (req.path.startsWith("/api/auth/google/callback")) return next();
+    const raw = String((req.params as any)[0] ?? "");
+    const normalized = raw ? `/${raw}`.replace(/\/{2,}/g, "/") : "/dashboard";
+    const state = sanitizeOAuthState(normalized);
+    return res.redirect(`/api/auth/google?state=${encodeURIComponent(state)}`);
+  });
 
   // Publishing / promote configuration (tokens + options). Backend remains source of truth.
   app.get(
