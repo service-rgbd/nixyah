@@ -239,9 +239,17 @@ export async function registerRoutes(
   const googleClientSecret = (env as any).GOOGLE_CLIENT_SECRET as string | undefined;
   const googleRedirectUri = (env as any).GOOGLE_REDIRECT_URI as string | undefined;
 
+  function normalizeFrontendBase(input: string): string {
+    const base = String(input || "").trim() || "http://localhost:5000";
+    const clean = base.replace(/\/+$/, "");
+    // Safety: if someone mistakenly sets APP_BASE_URL to the API host, convert api.* -> root.
+    // Example: https://api.nixyah.com -> https://nixyah.com
+    return clean.replace(/^https?:\/\/api\./i, (m) => m.replace(/api\./i, ""));
+  }
+
   function appUrl(path: string): string {
-    const base = env.APP_BASE_URL || "http://localhost:5000";
-    return `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+    const base = normalizeFrontendBase(env.APP_BASE_URL || "http://localhost:5000");
+    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
   function generateToken(): string {
@@ -607,6 +615,16 @@ export async function registerRoutes(
       if (state) url.searchParams.set("state", state);
 
       res.redirect(url.toString());
+    }),
+  );
+
+  // Backward/typo-tolerant: some clients may hit /api/auth/google/<state> instead of using ?state=
+  app.get(
+    "/api/auth/google/*",
+    asyncHandler(async (req, res) => {
+      const raw = String((req.params as any)[0] ?? "");
+      const state = raw ? `/${raw}`.replace(/\/{2,}/g, "/") : "/dashboard";
+      return res.redirect(`/api/auth/google?state=${encodeURIComponent(state)}`);
     }),
   );
 

@@ -99,7 +99,18 @@ app.use(
   ["/api/uploads/presign", "/api/uploads/direct", "/api/event-rsvp"],
   rateLimit({
     windowMs: 15 * 60_000,
-    max: 60,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }) as unknown as RequestHandler,
+);
+
+// Extra hardening for upload endpoints (larger payloads, higher abuse potential)
+app.use(
+  ["/api/uploads/direct", "/api/uploads/presign"],
+  rateLimit({
+    windowMs: 10 * 60_000,
+    max: 12,
     standardHeaders: true,
     legacyHeaders: false,
   }) as unknown as RequestHandler,
