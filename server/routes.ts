@@ -241,7 +241,8 @@ export async function registerRoutes(
 
   function normalizeFrontendBase(input: string): string {
     const base = String(input || "").trim() || "http://localhost:5000";
-    const clean = base.replace(/\/+$/, "");
+    const withScheme = /^https?:\/\//i.test(base) ? base : `https://${base}`;
+    const clean = withScheme.replace(/\/+$/, "");
     // Safety: if someone mistakenly sets APP_BASE_URL to the API host, convert api.* -> root.
     // Example: https://api.nixyah.com -> https://nixyah.com
     return clean.replace(/^https?:\/\/api\./i, (m) => m.replace(/api\./i, ""));
