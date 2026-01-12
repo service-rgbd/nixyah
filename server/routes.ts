@@ -642,6 +642,7 @@ export async function registerRoutes(
   app.get(
     "/api/auth/google/callback",
     asyncHandler(async (req, res) => {
+      try {
       if (!googleClientId || !googleClientSecret || !googleRedirectUri) {
         return res
           .status(500)
@@ -741,6 +742,10 @@ export async function registerRoutes(
       const redirectPath =
         state && state.startsWith("/") && !state.startsWith("/signup") ? state : "/dashboard";
       return res.redirect(appUrl(redirectPath));
+      } catch (e) {
+        console.error("Google OAuth callback crashed", e);
+        return res.redirect(appUrl(`/login?oauth=server_error`));
+      }
     }),
   );
 
@@ -1414,6 +1419,42 @@ export async function registerRoutes(
 
       if (!u || !verifyPassword(payload.password, u.passwordHash)) {
         await logIpEvent({ req, kind: "login_failed" });
+        // If the user exists and has an email, after 3 failed attempts we send a reset link (throttled).
+        // This is intentionally conservative to avoid spamming.
+        if (u && hasUsersEmail && env.RESEND_API_KEY) {
+          try {
+            const [meta] = await db
+              .select({
+                email: (users as any).email,
+              })
+              .from(users)
+              .where(eq(users.id, u.id))
+              .limit(1);
+            const email = (meta as any)?.email ? String((meta as any).email) : null;
+
+            if (email) {
+              const sess: any = req.session as any;
+              sess.loginFail = sess.loginFail || {};
+              const key = String(u.id);
+              const now = Date.now();
+              const item = sess.loginFail[key] || { count: 0, lastResetSentAt: 0 };
+              item.count = Number(item.count || 0) + 1;
+
+              // Send at most once every 30 minutes per user/session.
+              const canSendReset = now - Number(item.lastResetSentAt || 0) > 30 * 60_000;
+              if (item.count >= 3 && canSendReset) {
+                await sendResetPasswordEmail(u.id, email);
+                item.lastResetSentAt = now;
+                item.count = 0; // reset counter after sending
+              }
+
+              sess.loginFail[key] = item;
+            }
+          } catch (e) {
+            // don't block login response on email failures
+            console.error("Failed to send auto reset email after failed logins", e);
+          }
+        }
         return res.status(401).json({ message: "Identifiants invalides" });
       }
 
