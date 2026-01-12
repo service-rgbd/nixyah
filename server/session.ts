@@ -42,6 +42,11 @@ export function sessionMiddleware() {
     }
   }
 
+  // When frontend is on a different site (nixyah.com) than the API (api.nixyah.com),
+  // cookies must be SameSite=None to be sent with cross-site fetch() + credentials: "include".
+  const sameSite =
+    (process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax");
+
   return session({
     store,
     secret,
@@ -50,7 +55,7 @@ export function sessionMiddleware() {
     proxy: isProd,
     cookie: {
       httpOnly: true,
-      sameSite: (process.env.SESSION_COOKIE_SAMESITE as any) || "lax",
+      sameSite,
       secure: isProd,
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     },
