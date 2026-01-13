@@ -253,6 +253,20 @@ export async function registerRoutes(
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
+  function deriveCookieDomainFromAppBase(): string | undefined {
+    try {
+      const raw = String(env.APP_BASE_URL || "").trim();
+      if (!raw) return undefined;
+      const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      const host = new URL(withScheme).hostname.replace(/^www\./i, "");
+      if (!host || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return undefined;
+      if (!host.includes(".")) return undefined;
+      return `.${host}`;
+    } catch {
+      return undefined;
+    }
+  }
+
   function saveSession(req: any): Promise<void> {
     return new Promise((resolve) => {
       if (!req.session) return resolve();
@@ -683,6 +697,8 @@ export async function registerRoutes(
       url.searchParams.set("scope", "openid email profile");
       url.searchParams.set("access_type", "online");
       url.searchParams.set("include_granted_scopes", "true");
+      // Force account picker to avoid "instant redirect" when a Google session already exists.
+      url.searchParams.set("prompt", "select_account");
 
       const state = sanitizeOAuthState(typeof req.query.state === "string" ? req.query.state : "");
       if (state) url.searchParams.set("state", state);
@@ -1398,6 +1414,10 @@ export async function registerRoutes(
     req.session?.destroy(() => {
       // Best-effort cookie clear (default cookie name used by express-session)
       res.clearCookie("connect.sid");
+      const domain = deriveCookieDomainFromAppBase();
+      if (domain) {
+        res.clearCookie("connect.sid", { path: "/", domain });
+      }
       res.json({ ok: true });
     });
   });

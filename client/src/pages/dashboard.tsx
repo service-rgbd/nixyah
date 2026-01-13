@@ -63,6 +63,7 @@ export default function Dashboard() {
   const { lang, t } = useI18n();
   const profileId = getProfileId();
   const queryClient = useQueryClient();
+  const [loggingOut, setLoggingOut] = useState(false);
   const [phone, setPhone] = useState("");
   const [showPhone, setShowPhone] = useState(false);
   const [telegram, setTelegram] = useState("");
@@ -77,6 +78,21 @@ export default function Dashboard() {
     const el = document.getElementById(id);
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await apiRequest("POST", "/api/logout");
+    } catch {
+      // ignore: still clear local state to avoid a "half logged-in" UI
+    } finally {
+      clearSession();
+      queryClient.clear();
+      // Full reload to reset any in-memory state before reconnecting
+      window.location.href = "/login";
+    }
   };
 
   const { data, isLoading } = useQuery<ApiProfileDetail | null>({
@@ -209,6 +225,25 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
+      {loggingOut && (
+        <div className="fixed inset-0 z-[100] bg-background/70 backdrop-blur-sm flex items-center justify-center">
+          <div className="rounded-2xl border border-border bg-card/95 shadow-xl p-5 w-[min(420px,calc(100%-2rem))]">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-foreground">
+                  {lang === "en" ? "Signing out…" : "Déconnexion…"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {lang === "en"
+                    ? "Cleaning session data before reconnect."
+                    : "Nettoyage de la session et des données avant reconnexion."}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <Dialog open={showEmailDialog} onOpenChange={setShowEmailDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -343,14 +378,8 @@ export default function Dashboard() {
                   </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuItem
-                  onClick={async () => {
-                    try {
-                      await apiRequest("POST", "/api/logout");
-                    } finally {
-                      clearSession();
-                      setLocation("/");
-                    }
-                  }}
+                  onClick={handleLogout}
+                  disabled={loggingOut}
                   data-testid="button-logout"
                 >
                   <LogOut className="w-4 h-4" />
