@@ -1,6 +1,27 @@
 import "dotenv/config";
 import { z } from "zod";
 
+function normalizeDatabaseUrl(raw: string): string {
+  let v = String(raw ?? "").trim();
+  // Render/UI copy-paste sometimes includes surrounding quotes
+  if (
+    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+
+  // Some Neon snippets include `channel_binding=require` which isn't supported everywhere.
+  // Removing it improves compatibility and avoids confusing auth failures.
+  try {
+    const u = new URL(v);
+    if (u.searchParams.has("channel_binding")) u.searchParams.delete("channel_binding");
+    return u.toString();
+  } catch {
+    return v;
+  }
+}
+
 function nonEmpty(name: string) {
   return z
     .string()
@@ -61,7 +82,7 @@ for (const [canonical, aliases] of Object.entries(envAliases)) {
 const envSchema = z.object({
   NODE_ENV: z.string().optional(),
 
-  DATABASE_URL: nonEmpty("DATABASE_URL").optional(),
+  DATABASE_URL: nonEmpty("DATABASE_URL").transform(normalizeDatabaseUrl).optional(),
 
   ADMIN_TOKEN: nonEmpty("ADMIN_TOKEN").optional(),
   SECRET_TOKEN: nonEmpty("SECRET_TOKEN").optional(),
