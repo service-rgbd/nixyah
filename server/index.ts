@@ -166,12 +166,17 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const message = err?.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    // Do not crash the dev server on request errors.
-    // In production, you may want to log/monitor these errors.
-    log(String(message), "error");
+    // Never leak internal errors (DB auth, stack traces, etc.) to clients in production.
+    const safeMessage =
+      isProd && Number(status) >= 500 ? "Internal Server Error" : String(message);
+
+    res.status(status).json({ message: safeMessage });
+
+    // Log full error server-side for debugging/monitoring.
+    log(`${status} ${String(message)}`, "error");
+    if (err) console.error(err);
   });
 
   // importantly only setup vite in development and after
