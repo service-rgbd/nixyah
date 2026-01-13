@@ -27,6 +27,7 @@ import { useEffect } from "react";
 import { useAppSettings } from "@/lib/appSettings";
 import { useTheme } from "next-themes";
 import { getProfileId, setSessionIds } from "@/lib/session";
+import { API_BASE_URL } from "@/lib/queryClient";
 
 function Router() {
   return (
@@ -70,7 +71,7 @@ function App() {
     if (stored) return;
     (async () => {
       try {
-        const res = await fetch("/api/me", { credentials: "include" });
+        const res = await fetch(`${API_BASE_URL}/api/me`, { credentials: "include" });
         if (!res.ok) return;
         const json = (await res.json()) as { userId: string | null; profileId: string | null };
         if (json.userId && json.profileId) {
