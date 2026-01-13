@@ -2,6 +2,14 @@ name = "nixyah"
 main = "worker.ts"
 compatibility_date = "2025-01-12"
 
+routes = [
+  { pattern = "nixyah.com", zone_name = "nixyah.com", custom_domain = true }
+]
+
+[vars]
+# Public key (frontend). Kept here to avoid overwriting Dashboard config on deploy.
+VITE_TURNSTILE_SITE_KEY = "0x4AAAAAACMG1DLjcrhNtkKC"
+
 [assets]
 binding = "ASSETS"
 directory = "dist/public"
