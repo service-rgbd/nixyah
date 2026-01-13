@@ -126,6 +126,34 @@ export const annonces = pgTable("annonces", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const tokenTransactions = pgTable("token_transactions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  delta: integer("delta").notNull(),
+  reason: varchar("reason", { length: 64 }).notNull(),
+  meta: jsonb("meta"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const payments = pgTable("payments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  providerRef: varchar("provider_ref", { length: 255 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull(),
+  currency: varchar("currency", { length: 8 }),
+  amount: integer("amount"),
+  tokens: integer("tokens").notNull().default(0),
+  items: jsonb("items"),
+  rawEventId: varchar("raw_event_id", { length: 255 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+});
+
 export const salons = pgTable("salons", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   type: salonTypeEnum("type").notNull(),
@@ -353,6 +381,8 @@ export type SignupPayload = z.infer<typeof signupSchema>;
 export type AnnonceCreatePayload = z.infer<typeof annonceCreateSchema>;
 export type ProfileMedia = typeof profileMedia.$inferSelect;
 export type Annonce = typeof annonces.$inferSelect;
+export type TokenTransaction = typeof tokenTransactions.$inferSelect;
+export type Payment = typeof payments.$inferSelect;
 export type Salon = typeof salons.$inferSelect;
 export type AdultProduct = typeof adultProductsTable.$inferSelect;
 export type IpLog = typeof ipLogs.$inferSelect;

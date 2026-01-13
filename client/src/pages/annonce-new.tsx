@@ -80,7 +80,7 @@ export default function AnnonceNew() {
 
   // Promote selections (keep the keys exactly: promote['extended'], promote['featured'], etc.)
   const [extendedOptionId, setExtendedOptionId] = useState<string>("none");
-  const [extendedPaymentMode, setExtendedPaymentMode] = useState<"tokens" | "money">("tokens");
+  const [extendedPaymentMode] = useState<"tokens">("tokens");
   const [featuredOptionId, setFeaturedOptionId] = useState<string>("none");
   const [autorenewOptionId, setAutorenewOptionId] = useState<string>("none");
   const [urgentOptionId, setUrgentOptionId] = useState<string>("none");
@@ -168,7 +168,7 @@ export default function AnnonceNew() {
     let total = Math.max(0, pubRequired);
     if (extendedOptionId !== "none") {
       const opt = find(promote?.extended?.options, Number(extendedOptionId));
-      if (opt && extendedPaymentMode === "tokens") total += Number(opt.tokens ?? 0);
+      if (opt) total += Number(opt.tokens ?? 0);
     }
     if (featuredOptionId !== "none") {
       const opt = find(promote?.featured?.options, Number(featuredOptionId));
@@ -228,8 +228,8 @@ export default function AnnonceNew() {
       const opt = find(promote?.extended?.options, Number(extendedOptionId));
       if (opt) {
         items.push({
-          label: `Prolongation ${opt.days}j (${extendedPaymentMode === "tokens" ? "jetons" : "CFA"})`,
-          tokens: extendedPaymentMode === "tokens" ? Number(opt.tokens ?? 0) : 0,
+          label: `Prolongation ${opt.days}j (jetons)`,
+          tokens: Number(opt.tokens ?? 0),
         });
       }
     }
@@ -428,7 +428,7 @@ export default function AnnonceNew() {
       if (extendedOptionId !== "none") {
         promotePayload.extended = {
           optionId: Number(extendedOptionId),
-          paymentMode: extendedPaymentMode,
+          paymentMode: "tokens",
         };
       }
       if (featuredOptionId !== "none") promotePayload.featured = { optionId: Number(featuredOptionId) };
@@ -605,26 +605,11 @@ export default function AnnonceNew() {
                           );
                         })}
                       </div>
-                      {extendedOptionId !== "none" && (
-                        <div className="grid grid-cols-2 gap-2">
-                          <Button
-                            type="button"
-                            variant={extendedPaymentMode === "tokens" ? "default" : "outline"}
-                            onClick={() => setExtendedPaymentMode("tokens")}
-                            className="h-10"
-                          >
-                            Payer en jetons
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={extendedPaymentMode === "money" ? "default" : "outline"}
-                            onClick={() => setExtendedPaymentMode("money")}
-                            className="h-10"
-                          >
-                            Payer en CFA
-                          </Button>
+                      {extendedOptionId !== "none" ? (
+                        <div className="text-xs text-muted-foreground">
+                          Paiement en jetons uniquement (paiement Mobile Money / carte à venir).
                         </div>
-                      )}
+                      ) : null}
                     </div>
 
                     <div className="space-y-2">

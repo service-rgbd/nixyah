@@ -73,6 +73,9 @@ export default function Dashboard() {
   const [showLocation, setShowLocation] = useState(false);
   const [accountEmail, setAccountEmail] = useState("");
   const [showEmailDialog, setShowEmailDialog] = useState(false);
+  const [showTokensDialog, setShowTokensDialog] = useState(false);
+  const [tokenPackages, setTokenPackages] = useState<Array<{ id: string; label: string; tokens: number; currency: string; amount: number }> | null>(null);
+  const [buyingTokens, setBuyingTokens] = useState(false);
 
   const scrollToId = (id: string) => {
     const el = document.getElementById(id);
@@ -116,6 +119,15 @@ export default function Dashboard() {
     queryKey: ["/api/publishing/config"],
     retry: false,
   });
+
+  const { data: tokenPackagesRes } = useQuery<{ packages: Array<{ id: string; label: string; tokens: number; currency: string; amount: number }> }>({
+    queryKey: ["/api/tokens/packages"],
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (tokenPackagesRes?.packages) setTokenPackages(tokenPackagesRes.packages);
+  }, [tokenPackagesRes]);
 
   const { data: support } = useQuery<{ resetEmail: string | null; telegramUrl: string | null }>({
     queryKey: ["/api/support"],
@@ -320,6 +332,78 @@ export default function Dashboard() {
               }}
             >
               {lang === "en" ? "Save" : "Enregistrer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showTokensDialog} onOpenChange={setShowTokensDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">{lang === "en" ? "Buy tokens" : "Acheter des jetons"}</DialogTitle>
+            <DialogDescription className="text-xs">
+              {lang === "en"
+                ? "Pay by card with Stripe. Mobile Money will be added next."
+                : "Paiement par carte via Stripe. Mobile Money arrive ensuite."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 pt-2">
+            {(tokenPackages ?? []).length ? (
+              (tokenPackages ?? []).map((p) => (
+                <Button
+                  key={p.id}
+                  variant="outline"
+                  className="w-full h-12 justify-between"
+                  disabled={buyingTokens}
+                  onClick={async () => {
+                    if (buyingTokens) return;
+                    setBuyingTokens(true);
+                    try {
+                      const r = await apiRequest("POST", "/api/tokens/checkout", {
+                        packageId: p.id,
+                        provider: "stripe",
+                      });
+                      const json = await r.json();
+                      const url = String(json?.checkoutUrl ?? "");
+                      if (!url) throw new Error("Checkout URL missing");
+                      window.location.href = url;
+                    } catch (e: any) {
+                      toast({
+                        title: lang === "en" ? "Payment unavailable" : "Paiement indisponible",
+                        description: e?.message ?? undefined,
+                      });
+                      setBuyingTokens(false);
+                    }
+                  }}
+                >
+                  <span className="text-sm font-semibold">{p.label}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {p.amount} {p.currency}
+                  </span>
+                </Button>
+              ))
+            ) : (
+              <div className="text-sm text-muted-foreground">{lang === "en" ? "Loading…" : "Chargement…"}</div>
+            )}
+
+            <Button
+              variant="ghost"
+              className="w-full justify-start"
+              onClick={() =>
+                toast({
+                  title: "Mobile Money",
+                  description: lang === "en" ? "Coming soon." : "Bientôt disponible.",
+                })
+              }
+            >
+              {lang === "en" ? "Mobile Money (soon)" : "Mobile Money (bientôt)"}
+            </Button>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button variant="ghost" type="button" onClick={() => setShowTokensDialog(false)} disabled={buyingTokens}>
+              {lang === "en" ? "Close" : "Fermer"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -579,7 +663,7 @@ export default function Dashboard() {
                 variant="outline"
                 className="h-14 justify-start gap-2"
                 onClick={() => {
-                  toast({ title: "Achat de jetons bientôt disponible" });
+                  setShowTokensDialog(true);
                 }}
               >
                 <Coins className="w-4 h-4" />

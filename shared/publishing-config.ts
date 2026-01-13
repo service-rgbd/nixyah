@@ -72,7 +72,9 @@ export const PUBLISHING_CONFIG: PublishingConfig = {
     extended: {
       type: "duration",
       stackable: false,
-      paymentMode: ["tokens", "money"],
+      // Money-mode requires a payment integration for "promote" (not implemented yet).
+      // For now, keep publication/boost purely token-based to avoid free prolongation.
+      paymentMode: ["tokens"],
       options: [
         { id: 1, days: 45, tokens: 1, price: 4600 },
         { id: 2, days: 90, tokens: 2, price: 7900 },

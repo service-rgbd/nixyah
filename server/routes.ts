@@ -16,6 +16,8 @@ import {
   insertAdultProductSchema,
   ipLogs,
   ipBans,
+  payments,
+  tokenTransactions,
 } from "@shared/schema";
 import { PUBLISHING_CONFIG } from "@shared/publishing-config";
 import { and, desc, eq, inArray, or, sql, gt, isNull } from "drizzle-orm";
@@ -33,6 +35,8 @@ import {
 import { getEnv } from "./env";
 import { Resend } from "resend";
 import crypto from "crypto";
+import { TOKEN_PACKAGES, findTokenPackage, getStripe, getStripeWebhookSecret } from "./payments";
+import type Stripe from "stripe";
 
 function isPlaceholderUrl(url: string | null | undefined) {
   if (!url) return false;
@@ -871,6 +875,177 @@ export async function registerRoutes(
     }),
   );
 
+  // Tokens / payments
+  app.get(
+    "/api/tokens/packages",
+    asyncHandler(async (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ packages: TOKEN_PACKAGES });
+    }),
+  );
+
+  app.post(
+    "/api/tokens/checkout",
+    asyncHandler(async (req, res) => {
+      const userId = req.session?.userId as string | undefined;
+      if (!userId) return res.status(401).json({ message: "Not logged in" });
+
+      const payload = z
+        .object({
+          packageId: z.string().min(3).max(64),
+          provider: z.enum(["stripe", "mobile_money"]).default("stripe"),
+        })
+        .parse(req.body);
+
+      if (payload.provider === "mobile_money") {
+        return res.status(501).json({ message: "Mobile Money: bientôt disponible" });
+      }
+
+      const stripe = getStripe();
+      if (!stripe) {
+        return res.status(500).json({ message: "Paiement indisponible (Stripe non configuré)." });
+      }
+
+      const pack = findTokenPackage(payload.packageId);
+      if (!pack) return res.status(400).json({ message: "Pack jetons invalide." });
+
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [
+          {
+            price_data: {
+              currency: pack.currency.toLowerCase(),
+              unit_amount: pack.amount,
+              product_data: { name: `NIXYAH – ${pack.label}` },
+            },
+            quantity: 1,
+          },
+        ],
+        // Note: use a URL on the frontend domain
+        success_url: appUrl(`/dashboard?pay=success&session_id={CHECKOUT_SESSION_ID}`),
+        cancel_url: appUrl(`/dashboard?pay=cancel`),
+        metadata: {
+          userId,
+          packageId: pack.id,
+          tokens: String(pack.tokens),
+        },
+      });
+
+      // Store payment record (created) for support + later reconciliation
+      await db
+        .insert(payments)
+        .values({
+          userId,
+          provider: "stripe",
+          providerRef: session.id,
+          status: "created",
+          currency: pack.currency,
+          amount: pack.amount,
+          tokens: pack.tokens,
+          items: { packageId: pack.id, kind: "tokens" } as any,
+        } as any)
+        .onConflictDoNothing();
+
+      res.json({ checkoutUrl: session.url });
+    }),
+  );
+
+  app.post(
+    "/api/payments/stripe/webhook",
+    asyncHandler(async (req, res) => {
+      const stripe = getStripe();
+      const whsec = getStripeWebhookSecret();
+      if (!stripe || !whsec) {
+        return res.status(500).json({ message: "Stripe webhook not configured" });
+      }
+
+      const sig = req.get("stripe-signature") || "";
+      const raw = (req as any).rawBody;
+      const rawBuf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ""));
+
+      let event: Stripe.Event;
+      try {
+        event = stripe.webhooks.constructEvent(rawBuf, sig, whsec);
+      } catch {
+        return res.status(400).json({ message: "Invalid signature" });
+      }
+
+      // Idempotence by event id
+      const already = await db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(and(eq((payments as any).provider, "stripe"), eq((payments as any).rawEventId, event.id)))
+        .limit(1);
+      if (already.length) return res.json({ ok: true, deduped: true });
+
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const userId = (session.metadata?.userId as string | undefined) ?? undefined;
+        const tokens = Number(session.metadata?.tokens ?? 0);
+        const packageId = (session.metadata?.packageId as string | undefined) ?? null;
+        if (!userId || !Number.isFinite(tokens) || tokens <= 0) {
+          // still store the event id to avoid retries storm
+          await db
+            .insert(payments)
+            .values({
+              userId: userId ?? (sql`gen_random_uuid()` as any),
+              provider: "stripe",
+              providerRef: String(session.id ?? session.payment_intent ?? event.id),
+              status: "failed",
+              tokens: 0,
+              rawEventId: event.id,
+              items: { packageId } as any,
+            } as any)
+            .onConflictDoNothing();
+          return res.json({ ok: true });
+        }
+
+        await db.transaction(async (tx) => {
+          // Mark payment as paid (or insert if missing) with event id (idempotence)
+          await tx
+            .insert(payments)
+            .values({
+              userId,
+              provider: "stripe",
+              providerRef: String(session.id ?? session.payment_intent ?? event.id),
+              status: "paid",
+              currency: (session.currency ?? null)?.toUpperCase() ?? null,
+              amount: typeof session.amount_total === "number" ? session.amount_total : null,
+              tokens,
+              items: { packageId, kind: "tokens" } as any,
+              rawEventId: event.id,
+              paidAt: new Date(),
+            } as any)
+            .onConflictDoUpdate({
+              target: [(payments as any).provider, (payments as any).providerRef],
+              set: {
+                status: "paid",
+                rawEventId: event.id,
+                paidAt: new Date(),
+              } as any,
+            });
+
+          // Credit tokens balance
+          await tx
+            .update(users)
+            .set({ tokensBalance: sql`${users.tokensBalance} + ${tokens}` } as any)
+            .where(eq(users.id, userId));
+
+          // Ledger entry
+          await tx.insert(tokenTransactions).values({
+            userId,
+            delta: tokens,
+            reason: "purchase",
+            meta: { provider: "stripe", sessionId: session.id, packageId } as any,
+          } as any);
+        });
+      }
+
+      // Acknowledge for all event types
+      res.json({ ok: true });
+    }),
+  );
+
   app.get(
     "/api/support",
     asyncHandler(async (_req, res) => {
@@ -1135,6 +1310,29 @@ export async function registerRoutes(
         emailVerificationAvailable: Boolean(hasUsersEmail && hasUsersEmailVerified),
         resendConfigured: Boolean(env.RESEND_API_KEY),
       });
+    }),
+  );
+
+  app.get(
+    "/api/tokens/transactions",
+    asyncHandler(async (req, res) => {
+      const userId = req.session?.userId as string | undefined;
+      if (!userId) return res.status(401).json({ message: "Not logged in" });
+
+      const rows = await db
+        .select({
+          id: tokenTransactions.id,
+          delta: tokenTransactions.delta,
+          reason: tokenTransactions.reason,
+          meta: tokenTransactions.meta,
+          createdAt: tokenTransactions.createdAt,
+        })
+        .from(tokenTransactions)
+        .where(eq(tokenTransactions.userId, userId))
+        .orderBy(desc(tokenTransactions.createdAt))
+        .limit(50);
+
+      res.json({ transactions: rows });
     }),
   );
 
@@ -3154,11 +3352,14 @@ export async function registerRoutes(
           throw Object.assign(new Error("Option 'extended' invalide."), { status: 400 });
         }
         const mode = String(promote.extended.paymentMode ?? "tokens");
+        if (mode !== "tokens") {
+          throw Object.assign(new Error("Paiement en argent non disponible pour la prolongation (utilise des jetons)."), {
+            status: 400,
+          });
+        }
         if (mode === "tokens") {
           breakdown.extended = opt.tokens;
           total += opt.tokens;
-        } else {
-          breakdown.extended = 0;
         }
       }
       if (promote.featured?.optionId) {
