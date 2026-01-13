@@ -258,7 +258,7 @@ export default function Explore() {
     limit: "40",
   }).toString()}`;
 
-  const { data, isLoading } = useQuery<ApiProfile[]>({ queryKey: [query] });
+  const { data, isLoading, error } = useQuery<ApiProfile[]>({ queryKey: [query] });
   const { data: vipData, isLoading: vipLoading } = useQuery<ApiProfile[]>({
     queryKey: [vipQuery],
     retry: false,
@@ -555,6 +555,12 @@ export default function Explore() {
           {isLoading ? (
             <div className="h-[100svh] flex items-center justify-center text-sm text-muted-foreground">
               {lang === "en" ? "Loading…" : "Chargement…"}
+            </div>
+          ) : error ? (
+            <div className="h-[100svh] flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
+              {lang === "en"
+                ? "Server error: unable to load profiles right now."
+                : "Erreur serveur : impossible de charger les profils pour le moment."}
             </div>
           ) : filtered.length === 0 ? (
             <div className="h-[100svh] flex items-center justify-center px-6 text-center text-sm text-muted-foreground">

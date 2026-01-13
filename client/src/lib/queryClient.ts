@@ -4,6 +4,16 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 // On fixe explicitement la base pour éviter tout problème de configuration d'env.
 export const API_BASE_URL = "https://api.nixyah.com";
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 function withApiBase(url: string): string {
   if (!url.startsWith("/")) return url;
   if (!API_BASE_URL) return url;
@@ -28,7 +38,7 @@ async function throwIfResNotOk(res: Response) {
     } catch {
       // ignore parse errors, fall back to generic message
     }
-    throw new Error(message);
+    throw new ApiError(res.status, message);
   }
 }
 

@@ -10,6 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { useI18n } from "@/lib/i18n";
 import { PhotoSwipe } from "@/components/photo-swipe";
 import { useEffect, useState } from "react";
+import { ApiError } from "@/lib/queryClient";
 
 type ApiProfileDetail = {
   id: string;
@@ -74,7 +75,12 @@ export default function ProfileDetail() {
       ? `/api/profiles/${params.id}?lat=${coords.lat}&lng=${coords.lng}`
       : `/api/profiles/${params.id}`;
 
-  const { data: profile, isLoading } = useQuery<ApiProfileDetail>({
+  const {
+    data: profile,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery<ApiProfileDetail>({
     queryKey: [queryPath],
   });
 
@@ -83,6 +89,41 @@ export default function ProfileDetail() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-2">
           <p className="text-muted-foreground">Chargement du profil…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    const status = error instanceof ApiError ? error.status : null;
+    if (status === 404) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <h2 className="font-display text-2xl text-foreground">Profil introuvable</h2>
+            <Button onClick={() => setLocation("/explore")} data-testid="button-back-home">
+              Retour
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4 max-w-md px-6">
+          <h2 className="font-display text-2xl text-foreground">Erreur serveur</h2>
+          <p className="text-muted-foreground">
+            Impossible de charger ce profil pour le moment. Réessaie dans quelques instants.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Button variant="outline" onClick={() => setLocation("/explore")} data-testid="button-back-home">
+              Retour
+            </Button>
+            <Button onClick={() => refetch()} data-testid="button-retry">
+              Réessayer
+            </Button>
+          </div>
         </div>
       </div>
     );
