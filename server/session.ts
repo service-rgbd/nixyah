@@ -42,10 +42,32 @@ export function sessionMiddleware() {
     }
   }
 
-  // When frontend is on a different site (nixyah.com) than the API (api.nixyah.com),
-  // cookies must be SameSite=None to be sent with cross-site fetch() + credentials: "include".
+  // When frontend and API are on different origins (e.g. nixyah.com vs api.nixyah.com),
+  // cookies can be rejected or not sent depending on SameSite/Domain rules and browser policies.
+  // We default to a robust production setup:
+  // - SameSite=None (allows credentialed cross-origin XHR)
+  // - Secure=true (required by browsers when SameSite=None)
+  // - Domain=.nixyah.com (share cookie across subdomains) derived from APP_BASE_URL when possible.
   const sameSite =
     (process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax");
+
+  let derivedDomain: string | undefined = undefined;
+  try {
+    const raw = String(process.env.APP_BASE_URL || "").trim();
+    if (raw) {
+      const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      const host = new URL(withScheme).hostname.replace(/^www\./i, "");
+      if (host && host.includes(".") && host !== "localhost" && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+        derivedDomain = `.${host}`;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  const cookieDomain =
+    (process.env.SESSION_COOKIE_DOMAIN || "").trim() ||
+    (isProd ? derivedDomain : undefined);
 
   return session({
     store,
@@ -57,6 +79,7 @@ export function sessionMiddleware() {
       httpOnly: true,
       sameSite,
       secure: isProd,
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     },
   });
