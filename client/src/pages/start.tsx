@@ -162,6 +162,9 @@ export default function Start() {
     queryKey: [profilesAllQuery],
   });
 
+  // VIP (small hook for navigation; the dedicated VIP page does the premium rendering)
+  const vipCount = useMemo(() => (profilesAll ?? []).filter((p) => Boolean(p.isVip)).length, [profilesAll]);
+
   const normalize = (s: string) => s.trim().toLowerCase();
   const applyProfileFilters = (arr: StartProfile[]) => {
     const qQuartier = normalize(quartierFilter);
@@ -417,6 +420,39 @@ export default function Start() {
               {hasSession ? t("mySpace") : (lang === "en" ? "Profile" : "Profil")}
             </Button>
           </div>
+
+          {/* VIP shortcut (premium, without breaking existing navigation) */}
+          <button
+            type="button"
+            onClick={() => setLocation("/vip")}
+            className="w-full rounded-3xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-card/70 to-card px-4 py-4 shadow-[0_18px_60px_-45px_rgba(245,158,11,0.55)]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-black/25 border border-white/10 flex items-center justify-center">
+                  <Crown className="w-5 h-5 text-amber-300" />
+                </div>
+                <div className="text-left">
+                  <div className="text-sm font-semibold text-foreground">
+                    {lang === "en" ? "VIP Escorts & VIP Masseuses" : "Escortes VIP & Masseuses VIP"}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {lang === "en"
+                      ? "Premium profiles pinned on top."
+                      : "Profils premium épinglés en premier."}
+                  </div>
+                </div>
+              </div>
+              <div className="inline-flex items-center gap-2">
+                {vipCount ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/25 border border-white/10 text-foreground/90">
+                    {vipCount} VIP
+                  </span>
+                ) : null}
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </div>
+            </div>
+          </button>
 
           {/* Filtres principaux (pour salons, annonces, escorts-girls, produits) */}
           <div>

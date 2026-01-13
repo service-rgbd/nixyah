@@ -8,6 +8,7 @@ import Loader from "@/pages/loader";
 import Conditions from "@/pages/conditions";
 import Start from "@/pages/start";
 import Explore from "@/pages/explore";
+import Vip from "@/pages/vip";
 import ProfileDetail from "@/pages/profile";
 import Signup from "@/pages/signup";
 import Settings from "@/pages/settings";
@@ -38,6 +39,7 @@ function Router() {
       <Route path="/start" component={Start} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/explore" component={Explore} />
+      <Route path="/vip" component={Vip} />
       <Route path="/profile/:id" component={ProfileDetail} />
       <Route path="/signup" component={Signup} />
       <Route path="/login" component={Login} />
