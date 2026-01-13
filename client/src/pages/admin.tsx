@@ -7,7 +7,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useI18n } from "@/lib/i18n";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
+import { Input } from "@/components/ui/input";
 
 type AdminUser = {
   id: string;
@@ -35,15 +36,26 @@ type AdminAnnonce = {
   pseudo: string;
 };
 
+type AdminIpBan = {
+  id: string;
+  ipPattern: string;
+  reason: string | null;
+  bannedUntil: string | null;
+  createdAt: string;
+};
+
 export default function AdminPage() {
   const [, setLocation] = useLocation();
   const { lang } = useI18n();
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [banIp, setBanIp] = useState("");
+  const [banReason, setBanReason] = useState("");
+  const [banMinutes, setBanMinutes] = useState("1440");
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/admin/me", { credentials: "include" });
+        const res = await fetch(`${API_BASE_URL}/api/admin/me`, { credentials: "include" });
         setAllowed(res.ok);
       } catch {
         setAllowed(false);
@@ -63,14 +75,20 @@ export default function AdminPage() {
     queryKey: ["/api/admin/annonces"],
     enabled: allowed === true,
   });
+  const bansQuery = useQuery<AdminIpBan[]>({
+    queryKey: ["/api/admin/ip-bans"],
+    enabled: allowed === true,
+    retry: false,
+  });
 
   const counts = useMemo(() => {
     return {
       users: usersQuery.data?.length ?? 0,
       profiles: profilesQuery.data?.length ?? 0,
       annonces: annoncesQuery.data?.length ?? 0,
+      bans: bansQuery.data?.length ?? 0,
     };
-  }, [usersQuery.data, profilesQuery.data, annoncesQuery.data]);
+  }, [usersQuery.data, profilesQuery.data, annoncesQuery.data, bansQuery.data]);
 
   if (allowed === null) {
     return (
@@ -127,6 +145,10 @@ export default function AdminPage() {
               <TabsTrigger value="annonces" className="flex-1">
                 <Megaphone className="w-4 h-4 mr-2" />
                 {lang === "en" ? "Ads" : "Annonces"} ({counts.annonces})
+              </TabsTrigger>
+              <TabsTrigger value="bans" className="flex-1">
+                <Shield className="w-4 h-4 mr-2" />
+                {lang === "en" ? "Bans" : "Bans"} ({counts.bans})
               </TabsTrigger>
               <TabsTrigger value="users" className="flex-1">
                 <Users className="w-4 h-4 mr-2" />
@@ -200,8 +222,97 @@ export default function AdminPage() {
               ) : (
                 (usersQuery.data ?? []).map((u) => (
                   <div key={u.id} className="rounded-2xl border border-border bg-card/70 backdrop-blur p-4">
-                    <div className="font-semibold text-foreground truncate">{u.username}</div>
-                    <div className="text-sm text-muted-foreground truncate">{u.email ?? "—"}</div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-foreground truncate">{u.username}</div>
+                        <div className="text-sm text-muted-foreground truncate">{u.email ?? "—"}</div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={async () => {
+                          await apiRequest("POST", `/api/admin/users/${u.id}/ban`, {
+                            minutes: 60 * 24 * 7,
+                            reason: `Banned from admin UI (${u.username})`,
+                          });
+                          await bansQuery.refetch();
+                        }}
+                      >
+                        {lang === "en" ? "Ban 7d" : "Ban 7j"}
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </TabsContent>
+
+            <TabsContent value="bans" className="space-y-3">
+              <div className="rounded-2xl border border-border bg-card/70 backdrop-blur p-4 space-y-3">
+                <div className="text-sm font-semibold text-foreground">{lang === "en" ? "Add an IP ban" : "Ajouter un ban IP"}</div>
+                <div className="grid grid-cols-1 gap-2">
+                  <Input
+                    value={banIp}
+                    onChange={(e) => setBanIp(e.target.value)}
+                    placeholder={lang === "en" ? "IP or prefix (e.g. 102.67. or 102.67.10.2)" : "IP ou prefix (ex: 102.67. ou 102.67.10.2)"}
+                    className="h-10"
+                  />
+                  <Input
+                    value={banReason}
+                    onChange={(e) => setBanReason(e.target.value)}
+                    placeholder={lang === "en" ? "Reason (optional)" : "Raison (optionnel)"}
+                    className="h-10"
+                  />
+                  <Input
+                    value={banMinutes}
+                    onChange={(e) => setBanMinutes(e.target.value)}
+                    placeholder={lang === "en" ? "Duration in minutes (optional)" : "Durée en minutes (optionnel)"}
+                    className="h-10"
+                  />
+                </div>
+                <Button
+                  className="w-full"
+                  onClick={async () => {
+                    const ipPattern = banIp.trim();
+                    if (!ipPattern) return;
+                    const minutesNum = banMinutes.trim() ? Number(banMinutes.trim()) : null;
+                    await apiRequest("POST", "/api/admin/ip-bans", {
+                      ipPattern,
+                      reason: banReason.trim() || null,
+                      minutes: Number.isFinite(minutesNum as any) ? minutesNum : null,
+                    });
+                    setBanIp("");
+                    setBanReason("");
+                    await bansQuery.refetch();
+                  }}
+                >
+                  {lang === "en" ? "Ban" : "Bannir"}
+                </Button>
+              </div>
+
+              {bansQuery.isLoading ? (
+                <div className="h-24 rounded-2xl bg-muted/40 border border-border" />
+              ) : (
+                (bansQuery.data ?? []).map((b) => (
+                  <div key={b.id} className="rounded-2xl border border-border bg-card/70 backdrop-blur p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-foreground truncate">{b.ipPattern}</div>
+                        <div className="text-sm text-muted-foreground truncate">{b.reason ?? "—"}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {lang === "en" ? "Until" : "Jusqu’au"}: {b.bannedUntil ?? (lang === "en" ? "indefinite" : "illimité")}
+                        </div>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={async () => {
+                          await apiRequest("DELETE", `/api/admin/ip-bans/${b.id}`);
+                          await bansQuery.refetch();
+                        }}
+                      >
+                        {lang === "en" ? "Unban" : "Déban"}
+                      </Button>
+                    </div>
                   </div>
                 ))
               )}

@@ -546,7 +546,11 @@ export async function registerRoutes(
     if (!env.ADMIN_EMAIL) return false;
 
     const [u] = await db
-      .select({ username: users.username, email: hasUsersEmail ? (users as any).email : sql<string | null>`null` })
+      .select({
+        username: users.username,
+        email: hasUsersEmail ? (users as any).email : sql<string | null>`null`,
+        emailVerified: hasUsersEmailVerified ? (users as any).emailVerified : sql<boolean>`false`,
+      })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
@@ -555,7 +559,12 @@ export async function registerRoutes(
     const adminEmail = env.ADMIN_EMAIL.toLowerCase();
     const email = (u as any).email ? String((u as any).email).toLowerCase() : null;
     const username = String(u.username).toLowerCase();
-    return (email && email === adminEmail) || username === adminEmail;
+    // If email-based admin is used, require verified email (when column exists).
+    if (email && email === adminEmail) {
+      if (hasUsersEmailVerified && !(u as any).emailVerified) return false;
+      return true;
+    }
+    return username === adminEmail;
   }
 
   function getClientIp(req: any): string | null {
@@ -2576,6 +2585,135 @@ export async function registerRoutes(
       const ok = await isAdmin(req);
       if (!ok) return res.status(403).json({ message: "Forbidden" });
       res.json({ ok: true });
+    }),
+  );
+
+  // IP bans (used by ensureIpNotBanned)
+  app.get(
+    "/api/admin/ip-bans",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const rows = await db
+        .select({
+          id: ipBans.id,
+          ipPattern: ipBans.ipPattern,
+          reason: ipBans.reason,
+          bannedUntil: ipBans.bannedUntil,
+          createdAt: ipBans.createdAt,
+        })
+        .from(ipBans)
+        .orderBy(desc(ipBans.createdAt))
+        .limit(500);
+
+      res.json(rows);
+    }),
+  );
+
+  app.post(
+    "/api/admin/ip-bans",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const payload = z
+        .object({
+          ipPattern: z.string().min(3).max(64),
+          reason: z.string().max(500).optional().nullable(),
+          minutes: z.number().int().min(1).max(60 * 24 * 365).optional().nullable(),
+        })
+        .parse(req.body);
+
+      const ipPattern = payload.ipPattern.trim();
+      const bannedUntil =
+        typeof payload.minutes === "number" ? new Date(Date.now() + payload.minutes * 60_000) : null;
+
+      const [created] = await db
+        .insert(ipBans)
+        .values({
+          ipPattern,
+          reason: payload.reason ?? null,
+          bannedUntil,
+        })
+        .returning({
+          id: ipBans.id,
+          ipPattern: ipBans.ipPattern,
+          reason: ipBans.reason,
+          bannedUntil: ipBans.bannedUntil,
+          createdAt: ipBans.createdAt,
+        });
+
+      res.json(created);
+    }),
+  );
+
+  app.delete(
+    "/api/admin/ip-bans/:id",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const id = z.string().uuid().parse(req.params.id);
+      const [deleted] = await db
+        .delete(ipBans)
+        .where(eq(ipBans.id, id))
+        .returning({ id: ipBans.id });
+
+      res.json(deleted ?? { id });
+    }),
+  );
+
+  // Ban a user by their most recent IP (from ip_logs)
+  app.post(
+    "/api/admin/users/:id/ban",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const userId = z.string().uuid().parse(req.params.id);
+      const payload = z
+        .object({
+          reason: z.string().max(500).optional().nullable(),
+          minutes: z.number().int().min(1).max(60 * 24 * 365).optional().nullable(),
+          ipPattern: z.string().min(3).max(64).optional().nullable(),
+        })
+        .parse(req.body);
+
+      let ipPattern = payload.ipPattern?.trim() || null;
+      if (!ipPattern) {
+        const [log] = await db
+          .select({ ip: ipLogs.ip })
+          .from(ipLogs)
+          .where(eq(ipLogs.userId, userId))
+          .orderBy(desc(ipLogs.createdAt))
+          .limit(1);
+        ipPattern = log?.ip ? String(log.ip) : null;
+      }
+
+      if (!ipPattern) {
+        return res.status(404).json({ message: "No IP found for this user (no logs yet)." });
+      }
+
+      const bannedUntil =
+        typeof payload.minutes === "number" ? new Date(Date.now() + payload.minutes * 60_000) : null;
+
+      const [created] = await db
+        .insert(ipBans)
+        .values({
+          ipPattern,
+          reason: payload.reason ?? `Banned by admin for user ${userId}`,
+          bannedUntil,
+        })
+        .returning({
+          id: ipBans.id,
+          ipPattern: ipBans.ipPattern,
+          reason: ipBans.reason,
+          bannedUntil: ipBans.bannedUntil,
+          createdAt: ipBans.createdAt,
+        });
+
+      res.json({ ok: true, userId, ban: created });
     }),
   );
 
