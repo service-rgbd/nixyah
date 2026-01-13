@@ -4,3 +4,17 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Local environment (NEVER commit secrets)
+.env
+.env.*
+*.env
+*.env.*
+.env.backup.local
+.env.*.local
+
+# Common secret/key files
+*.pem
+*.key
+*.p12
+*.pfx
