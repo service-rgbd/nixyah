@@ -37,6 +37,7 @@ import { Resend } from "resend";
 import crypto from "crypto";
 import { TOKEN_PACKAGES, findTokenPackage, getStripe, getStripeWebhookSecret } from "./payments";
 import type Stripe from "stripe";
+import { getOrSet, invalidateTag } from "./cache";
 
 function isPlaceholderUrl(url: string | null | undefined) {
   if (!url) return false;
@@ -208,6 +209,13 @@ function computePromotionMeta(opts: {
     urgentActive,
     topActive,
   };
+}
+
+const PROFILES_CACHE_TTL_MS = 30 * 1000;
+const PROFILES_CACHE_TAG = "profiles:list";
+
+function invalidateProfilesCache() {
+  invalidateTag(PROFILES_CACHE_TAG);
 }
 
 function asyncHandler(
@@ -1613,6 +1621,7 @@ export async function registerRoutes(
         await checkGpsMultiAccount(req, profileId, payload.lat, payload.lng);
       }
 
+      invalidateProfilesCache();
       res.json(updated ?? { id: profileId, visible: payload.visible ?? true });
     }),
   );
@@ -1937,6 +1946,7 @@ export async function registerRoutes(
         }
       }
 
+      invalidateProfilesCache();
       return res.json({
         ...created,
         verificationEmailSent,
@@ -2296,6 +2306,7 @@ export async function registerRoutes(
       .pipe(z.number().min(-180).max(180).optional())
       .parse(req.query.lng);
 
+    const vipOnlyChoice = vipOnly === undefined ? false : vipOnly;
     const q = {
       verifiedOnly: verifiedOnly === undefined ? false : verifiedOnly,
       proOnly: proOnly === undefined ? false : proOnly,
@@ -2306,211 +2317,243 @@ export async function registerRoutes(
       servicesFilter,
     };
 
-    const where = and(
-      eq(profiles.visible, true),
-      q.verifiedOnly ? eq(profiles.verified, true) : undefined,
-      q.proOnly ? eq(profiles.isPro, true) : undefined,
-      hasVip && (vipOnly === undefined ? false : vipOnly) ? eq((profiles as any).isVip, true) : undefined,
-      q.servicesFilter.length
-        ? sql`coalesce(${profiles.services}, ARRAY[]::text[]) && ${sqlTextArray(q.servicesFilter)}`
-        : undefined,
-    );
+    const normalizedServices = [...servicesFilter].sort((a, b) => a.localeCompare(b));
+    const cacheKeyParams = {
+      limit: q.limit,
+      verifiedOnly: q.verifiedOnly,
+      proOnly: q.proOnly,
+      vipOnly: hasVip ? vipOnlyChoice : false,
+      includeLatestAnnonce,
+      services: normalizedServices,
+      maxDistanceKm: q.maxDistanceKm ?? null,
+      userLat: q.userLat ?? null,
+      userLng: q.userLng ?? null,
+    };
+    const cacheKey = `profiles:${JSON.stringify(cacheKeyParams)}`;
 
-    const distanceKm =
-      q.userLat !== undefined && q.userLng !== undefined
-        ? sql<number>`(6371 * acos(
-            cos(radians(${q.userLat})) * cos(radians(${profiles.lat})) *
-            cos(radians(${profiles.lng}) - radians(${q.userLng})) +
-            sin(radians(${q.userLat})) * sin(radians(${profiles.lat}))
-          ))`
-        : null;
+    const payload = await getOrSet(
+      cacheKey,
+      PROFILES_CACHE_TTL_MS,
+      async () => {
+        const where = and(
+          eq(profiles.visible, true),
+          q.verifiedOnly ? eq(profiles.verified, true) : undefined,
+          q.proOnly ? eq(profiles.isPro, true) : undefined,
+          hasVip && vipOnlyChoice ? eq((profiles as any).isVip, true) : undefined,
+          q.servicesFilter.length
+            ? sql`coalesce(${profiles.services}, ARRAY[]::text[]) && ${sqlTextArray(q.servicesFilter)}`
+            : undefined,
+        );
 
-    const selectFields: any = {
-        id: profiles.id,
-        pseudo: profiles.pseudo,
-        age: profiles.age,
-        ville: profiles.ville,
-        verified: profiles.verified,
-        photoUrl: profiles.photoUrl,
-        isPro: profiles.isPro,
-        accountType: profiles.accountType,
-        businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
-        address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
-        openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),
-        roomsCount: hasProfilesBusiness ? (profiles as any).roomsCount : (sql<number | null>`null` as any),
-        ...(hasVip ? { isVip: (profiles as any).isVip } : {}),
-        visible: profiles.visible,
-        phone: profiles.phone,
-        showPhone: profiles.showPhone,
-        telegram: profiles.telegram,
-        showTelegram: profiles.showTelegram,
-        lat: profiles.lat,
-        lng: profiles.lng,
-        tarif: profiles.tarif,
-        lieu: profiles.lieu,
-        services: profiles.services,
-        disponibilite: profiles.disponibilite,
-        description: profiles.description,
-        ...(hasProfileAttrs
-          ? {
-              corpulence: (profiles as any).corpulence,
-              poids: (profiles as any).poids,
-              attitude: (profiles as any).attitude,
-              boireUnVerre: (profiles as any).boireUnVerre,
-              fume: (profiles as any).fume,
-              teintePeau: (profiles as any).teintePeau,
-              traits: (profiles as any).traits,
-              poitrine: (profiles as any).poitrine,
-              positions: (profiles as any).positions,
-              selfDescriptions: (profiles as any).selfDescriptions,
-            }
-          : {}),
-        distanceKm: distanceKm ?? sql<number>`null`,
-      };
-    if (hasContactPref) selectFields.contactPreference = profiles.contactPreference;
+        const distanceKm =
+          q.userLat !== undefined && q.userLng !== undefined
+            ? sql<number>`(6371 * acos(
+                cos(radians(${q.userLat})) * cos(radians(${profiles.lat})) *
+                cos(radians(${profiles.lng}) - radians(${q.userLng})) +
+                sin(radians(${q.userLat})) * sin(radians(${profiles.lat}))
+              ))`
+            : null;
 
-    const list = await db
-      .select(selectFields)
-      .from(profiles)
-      .where(where)
-      .orderBy(distanceKm ? distanceKm : desc(profiles.createdAt))
-      .limit(q.limit);
+        const selectFields: any = {
+          id: profiles.id,
+          pseudo: profiles.pseudo,
+          age: profiles.age,
+          ville: profiles.ville,
+          verified: profiles.verified,
+          photoUrl: profiles.photoUrl,
+          isPro: profiles.isPro,
+          accountType: profiles.accountType,
+          ...(hasProfilesBusiness
+            ? {
+                businessName: (profiles as any).businessName,
+                address: (profiles as any).address,
+                openingHours: (profiles as any).openingHours,
+                roomsCount: (profiles as any).roomsCount,
+              }
+            : {
+                businessName: sql<string | null>`null`,
+                address: sql<string | null>`null`,
+                openingHours: sql<string | null>`null`,
+                roomsCount: sql<number | null>`null`,
+              }),
+          ...(hasVip ? { isVip: (profiles as any).isVip } : {}),
+          visible: profiles.visible,
+          phone: profiles.phone,
+          showPhone: profiles.showPhone,
+          telegram: profiles.telegram,
+          showTelegram: profiles.showTelegram,
+          lat: profiles.lat,
+          lng: profiles.lng,
+          tarif: profiles.tarif,
+          lieu: profiles.lieu,
+          services: profiles.services,
+          disponibilite: profiles.disponibilite,
+          description: profiles.description,
+          ...(hasProfileAttrs
+            ? {
+                corpulence: (profiles as any).corpulence,
+                poids: (profiles as any).poids,
+                attitude: (profiles as any).attitude,
+                boireUnVerre: (profiles as any).boireUnVerre,
+                fume: (profiles as any).fume,
+                teintePeau: (profiles as any).teintePeau,
+                traits: (profiles as any).traits,
+                poitrine: (profiles as any).poitrine,
+                positions: (profiles as any).positions,
+                selfDescriptions: (profiles as any).selfDescriptions,
+              }
+            : {}),
+          distanceKm: distanceKm ?? sql<number>`null`,
+        };
+        if (hasContactPref) selectFields.contactPreference = profiles.contactPreference;
 
-    const filtered =
-      distanceKm && q.maxDistanceKm !== undefined
-        ? list.filter((p) => p.distanceKm !== null && p.distanceKm <= q.maxDistanceKm!)
-        : list;
+        const list = await db
+          .select(selectFields)
+          .from(profiles)
+          .where(where)
+          .orderBy(distanceKm ? distanceKm : desc(profiles.createdAt))
+          .limit(q.limit);
 
-    // Media: keep it light for list view (first photo + first video)
-    const ids = list.map((p) => p.id);
-    const latestAnnonceByProfile = new Map<
-      string,
-      { id: string; title: string; createdAt: string; badges: string[] }
-    >();
+        const filtered =
+          distanceKm && q.maxDistanceKm !== undefined
+            ? list.filter((p) => p.distanceKm !== null && p.distanceKm <= q.maxDistanceKm!)
+            : list;
 
-    if (includeLatestAnnonce && ids.length) {
-      const annonceRows = await db
-        .select({
-          profileId: annonces.profileId,
-          id: annonces.id,
-          title: annonces.title,
-          createdAt: annonces.createdAt,
-          promotion: (annonces as any).promotion,
-        })
-        .from(annonces)
-        .where(and(inArray(annonces.profileId, ids), eq(annonces.active, true)))
-        .orderBy(annonces.profileId, desc(annonces.createdAt));
+        const ids = list.map((p) => p.id);
+        const latestAnnonceByProfile = new Map<
+          string,
+          { id: string; title: string; createdAt: string; badges: string[] }
+        >();
 
-      for (const a of annonceRows) {
-        if (!latestAnnonceByProfile.has(a.profileId)) {
-          const meta = computePromotionMeta({
-            annonceCreatedAt: a.createdAt,
-            promotion: (a as any).promotion,
-          });
-          latestAnnonceByProfile.set(a.profileId, {
-            id: a.id,
-            title: a.title,
-            createdAt: new Date(a.createdAt).toISOString(),
-            badges: meta.badges,
-          });
-        }
-      }
-    }
-    const mediaRows =
-      ids.length === 0
-        ? []
-        : await db
+        if (includeLatestAnnonce && ids.length) {
+          const annonceRows = await db
             .select({
-              profileId: profileMedia.profileId,
-              type: profileMedia.type,
-              url: profileMedia.url,
-              key: profileMedia.key,
-              sortOrder: profileMedia.sortOrder,
+              profileId: annonces.profileId,
+              id: annonces.id,
+              title: annonces.title,
+              createdAt: annonces.createdAt,
+              promotion: (annonces as any).promotion,
             })
-            .from(profileMedia)
-            .where(inArray(profileMedia.profileId, ids))
-            .orderBy(profileMedia.profileId, profileMedia.sortOrder);
+            .from(annonces)
+            .where(and(inArray(annonces.profileId, ids), eq(annonces.active, true)))
+            .orderBy(annonces.profileId, desc(annonces.createdAt));
 
-    const mediaByProfile = new Map<
-      string,
-      {
-        photos: Array<{ url: string; key?: string | null }>;
-        video: { url: string; key?: string | null } | null;
-        cover: { url: string; key?: string | null } | null;
-      }
-    >();
-    for (const id of ids) mediaByProfile.set(id, { photos: [], video: null, cover: null });
-    for (const m of mediaRows) {
-      const bucket = mediaByProfile.get(m.profileId) ?? { photos: [], video: null, cover: null };
-      if (m.type === "photo") {
-        bucket.photos.push({ url: m.url, key: m.key });
-        if (!bucket.cover) bucket.cover = { url: m.url, key: m.key };
-      }
-      if (m.type === "video" && !bucket.video) bucket.video = { url: m.url, key: m.key };
-      mediaByProfile.set(m.profileId, bucket);
-    }
-
-    const payload = await Promise.all(
-      filtered.map(async (p) => {
-        const { phone, showPhone, telegram, showTelegram, ...safe } = p as any;
-        const preference = (p as any).contactPreference ?? "whatsapp";
-        const media = mediaByProfile.get(p.id);
-        const sanitizedProfilePhotoUrl = sanitizeUrl(p.photoUrl ?? null);
-
-        const coverUrl = sanitizeUrl(media?.cover?.url ?? null) ?? sanitizedProfilePhotoUrl ?? null;
-        const coverKey = media?.cover?.key ?? inferKeyFromUrl(coverUrl);
-
-        let resolvedCover = coverUrl;
-        if (coverKey) {
-          try {
-            resolvedCover = await createPresignedRead(coverKey, 60 * 60 * 24 * 7);
-          } catch {
-            // fallback to url if signing fails
+          for (const a of annonceRows) {
+            if (!latestAnnonceByProfile.has(a.profileId)) {
+              const meta = computePromotionMeta({
+                annonceCreatedAt: a.createdAt,
+                promotion: (a as any).promotion,
+              });
+              latestAnnonceByProfile.set(a.profileId, {
+                id: a.id,
+                title: a.title,
+                createdAt: new Date(a.createdAt).toISOString(),
+                badges: meta.badges,
+              });
+            }
           }
         }
 
-        const photoItems = (media?.photos ?? []).slice(0, 12);
-        const resolvedPhotos = await Promise.all(
-          photoItems.map(async (ph) => {
-            const u = sanitizeUrl(ph.url);
-            const key = ph.key ?? inferKeyFromUrl(u);
-            if (key) {
+        const mediaRows =
+          ids.length === 0
+            ? []
+            : await db
+                .select({
+                  profileId: profileMedia.profileId,
+                  type: profileMedia.type,
+                  url: profileMedia.url,
+                  key: profileMedia.key,
+                  sortOrder: profileMedia.sortOrder,
+                })
+                .from(profileMedia)
+                .where(inArray(profileMedia.profileId, ids))
+                .orderBy(profileMedia.profileId, profileMedia.sortOrder);
+
+        const mediaByProfile = new Map<
+          string,
+          {
+            photos: Array<{ url: string; key?: string | null }>;
+            video: { url: string; key?: string | null } | null;
+            cover: { url: string; key?: string | null } | null;
+          }
+        >();
+        for (const id of ids) mediaByProfile.set(id, { photos: [], video: null, cover: null });
+        for (const m of mediaRows) {
+          const bucket = mediaByProfile.get(m.profileId) ?? { photos: [], video: null, cover: null };
+          if (m.type === "photo") {
+            bucket.photos.push({ url: m.url, key: m.key });
+            if (!bucket.cover) bucket.cover = { url: m.url, key: m.key };
+          }
+          if (m.type === "video" && !bucket.video) bucket.video = { url: m.url, key: m.key };
+          mediaByProfile.set(m.profileId, bucket);
+        }
+
+        const payload = await Promise.all(
+          filtered.map(async (p) => {
+            const { phone, showPhone, telegram, showTelegram, ...safe } = p as any;
+            const preference = (p as any).contactPreference ?? "whatsapp";
+            const media = mediaByProfile.get(p.id);
+            const sanitizedProfilePhotoUrl = sanitizeUrl(p.photoUrl ?? null);
+
+            const coverUrl = sanitizeUrl(media?.cover?.url ?? null) ?? sanitizedProfilePhotoUrl ?? null;
+            const coverKey = media?.cover?.key ?? inferKeyFromUrl(coverUrl);
+
+            let resolvedCover = coverUrl;
+            if (coverKey) {
               try {
-                return await createPresignedRead(key, 60 * 60 * 24 * 7);
+                resolvedCover = await createPresignedRead(coverKey, 60 * 60 * 24 * 7);
               } catch {
-                return u;
+                // fallback to url if signing fails
               }
             }
-            return u;
+
+            const photoItems = (media?.photos ?? []).slice(0, 12);
+            const resolvedPhotos = await Promise.all(
+              photoItems.map(async (ph) => {
+                const u = sanitizeUrl(ph.url);
+                const key = ph.key ?? inferKeyFromUrl(u);
+                if (key) {
+                  try {
+                    return await createPresignedRead(key, 60 * 60 * 24 * 7);
+                  } catch {
+                    return u;
+                  }
+                }
+                return u;
+              }),
+            );
+
+            let resolvedVideo = sanitizeUrl(media?.video?.url ?? null);
+            const videoKey = media?.video?.key ?? inferKeyFromUrl(resolvedVideo);
+            if (videoKey) {
+              try {
+                resolvedVideo = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
+              } catch {
+                // keep url
+              }
+            }
+
+            return {
+              ...safe,
+              latestAnnonce:
+                includeLatestAnnonce && latestAnnonceByProfile.has(p.id)
+                  ? latestAnnonceByProfile.get(p.id)
+                  : null,
+              contact: {
+                phone: showPhone ? phone ?? null : null,
+                telegram: showTelegram ? telegram ?? null : null,
+                preference,
+              },
+              photoUrl: resolvedCover,
+              photos: resolvedPhotos.filter((x): x is string => Boolean(x)),
+              videoUrl: resolvedVideo,
+            };
           }),
         );
 
-        let resolvedVideo = sanitizeUrl(media?.video?.url ?? null);
-        const videoKey = media?.video?.key ?? inferKeyFromUrl(resolvedVideo);
-        if (videoKey) {
-          try {
-            resolvedVideo = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-          } catch {
-            // keep url
-          }
-        }
-
-        return {
-          ...safe,
-          latestAnnonce:
-            includeLatestAnnonce && latestAnnonceByProfile.has(p.id)
-              ? latestAnnonceByProfile.get(p.id)
-              : null,
-          contact: {
-            phone: showPhone ? phone ?? null : null,
-            telegram: showTelegram ? telegram ?? null : null,
-            preference,
-          },
-          photoUrl: resolvedCover,
-          photos: resolvedPhotos.filter((x): x is string => Boolean(x)),
-          videoUrl: resolvedVideo,
-        };
-      }),
+        return payload;
+      },
+      [PROFILES_CACHE_TAG],
     );
 
     res.json(payload);
@@ -3021,6 +3064,7 @@ export async function registerRoutes(
         .where(eq(profiles.id, id))
         .returning({ id: profiles.id, isVip: (profiles as any).isVip });
 
+      invalidateProfilesCache();
       res.json(updated);
     }),
   );
@@ -3064,6 +3108,7 @@ export async function registerRoutes(
         .where(eq(annonces.id, annonceId))
         .returning({ id: annonces.id, active: annonces.active });
 
+      invalidateProfilesCache();
       res.json(updated);
     }),
   );
@@ -3579,7 +3624,7 @@ export async function registerRoutes(
     });
 
     await logIpEvent({ req, kind: "annonce_publish", userId });
-
+    invalidateProfilesCache();
     res.json(created);
     }),
   );
@@ -3606,6 +3651,7 @@ export async function registerRoutes(
         .where(eq(annonces.id, annonceId))
         .returning({ id: annonces.id, active: annonces.active });
 
+      invalidateProfilesCache();
       res.json(updated);
     }),
   );
