@@ -26,6 +26,10 @@ import { useI18n } from "@/lib/i18n";
 import avatarUrl from "@assets/avatar.png";
 import spaPhoto from "@assets/photo_2026-01-09_17-36-41.jpg";
 import resiPhoto from "@assets/resi-meublmee.jpg";
+import eventBgToast from "@assets/Attached_image.png";
+import eventBgMask from "@assets/Masque_loup_dentelle_libertine_venitien_sexy_coquin_erotique_venise_deguisement_bal_masquerade_mask_cheapatleast_joel69100-pc.jpg";
+import eventBgParty from "@assets/vue-devant-jeune-femme-s-amusant-fete_23-2151108204.jpg.avif";
+import eventBgGlam from "@assets/pexels-xeniya-kovaleva-14280792_1024x1024.jpg.webp";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
 import { maleProducts } from "@/lib/maleProducts";
 import { apiRequest } from "@/lib/queryClient";
@@ -39,6 +43,7 @@ export default function Start() {
   const profileId = getProfileId();
   const hasSession = Boolean(profileId);
   const { lang, t } = useI18n();
+  const eventBackgrounds = [eventBgMask, eventBgParty, eventBgToast, eventBgGlam] as const;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [geoDenied, setGeoDenied] = useState(false);
@@ -184,6 +189,7 @@ export default function Start() {
     () => applyProfileFilters(profilesAll ?? []),
     [profilesAll, zoneFilter, quartierFilter, ageRange, accountTypeFilter],
   );
+  const profileHighlights = (profilesFiltered ?? []).slice(0, 4);
 
   const events = useMemo(
     () => [
@@ -577,9 +583,22 @@ export default function Start() {
                         setSettings({ ...settings, maxDistanceKm: v[0] ?? settings.maxDistanceKm })
                       }
                     />
-                  </div>
+        </div>
 
-                  <div className="space-y-3">
+        <div className="space-y-3 pt-1 text-sm leading-relaxed text-muted-foreground">
+          <p>
+            {lang === "en"
+              ? "Discover new arrivals, private moments and curated spaces. We carefully select the experiences we highlight, always respecting your discretion."
+              : "Découvre les nouveautés, moments privés et espaces sélectionnés. Nous mettons en avant des expériences choisies avec soin, dans le respect de ta discrétion."}
+          </p>
+          <p>
+            {lang === "en"
+              ? "Need support? Our team monitors requests continuously and can guide you through VIP services or exclusive promotions."
+              : "Besoin de support ? Notre équipe suit les demandes en continu et peut t’accompagner sur les services VIP ou promotions exclusives."}
+          </p>
+        </div>
+
+        <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         {lang === "en" ? "3) Practices" : "3) Pratiques"}
@@ -630,62 +649,83 @@ export default function Start() {
             </Sheet>
           </div>
 
-          {/* Produits masculins / adultes (juste sous le filtre) */}
+          {/* Profils en vedette */}
           <div className="space-y-3">
             <div className="flex items-end justify-between">
               <div>
                 <div className="text-sm font-semibold text-foreground">
-                  {lang === "en" ? "Energy & men’s care" : "Énergie & produits masculins"}
+                  {lang === "en" ? "Explorer profiles" : "Explorer les profils"}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {lang === "en"
-                    ? "Selection of endurance and comfort products."
-                    : "Sélection de produits pour l’endurance et le confort."}
+                    ? "Swipe through a curated selection of members before you dive deeper."
+                    : "Une sélection de membres pour commencer ta recherche."}
                 </div>
               </div>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/explore")}>
+                {lang === "en" ? "See all" : "Voir tout"}
+              </Button>
             </div>
+
             <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
               <CarouselContent>
-                {maleProducts.slice(0, 5).map((p) => (
-                  <CarouselItem key={p.id} className="basis-[86%] sm:basis-[60%] md:basis-[38%] lg:basis-[30%]">
-                    <button
-                      type="button"
-                      onClick={() => setLocation(`/adult-products/${p.id}`)}
-                      className="w-full rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
+                {(profileHighlights.length ? profileHighlights : Array.from({ length: 3 })).map((p, idx) => {
+                  const isPlaceholder = !Boolean(p && (p as StartProfile).id);
+                  const profile = p as StartProfile;
+                  return (
+                    <CarouselItem
+                      key={isPlaceholder ? `placeholder-${idx}` : profile.id}
+                      className="basis-[86%] sm:basis-[60%] md:basis-[42%] lg:basis-[30%]"
                     >
-                      <div className="relative h-44">
-                        <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-                        <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
-                          <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
-                            {p.tag}
-                          </span>
-                          <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">
-                            {p.price}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="p-3 space-y-1">
-                        <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
-                        <div className="text-[11px] text-muted-foreground">{p.size}</div>
-                        <p className="text-[11px] text-muted-foreground line-clamp-3">{p.description}</p>
-                      </div>
-                    </button>
-                  </CarouselItem>
-                ))}
-                {maleProducts.length > 5 && (
-                  <CarouselItem className="basis-[60%] sm:basis-[40%] md:basis-[28%] lg:basis-[22%]">
-                    <button
-                      type="button"
-                      onClick={() => setLocation("/adult-products")}
-                      className="w-full h-full min-h-[220px] rounded-3xl border border-dashed border-border/70 bg-card/60 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground"
-                    >
-                      <span className="text-2xl">➜</span>
-                      <span className="font-medium">{lang === "en" ? "See more" : "Voir plus"}</span>
-                      <span>{maleProducts.length} {lang === "en" ? "products" : "produits"}</span>
-                    </button>
-                  </CarouselItem>
-                )}
+                      {isPlaceholder ? (
+                        <div className="h-44 rounded-3xl border border-border bg-muted/30" />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openProfile(profile.id)}
+                          className="w-full h-full rounded-3xl border border-border bg-card/80 overflow-hidden shadow-sm text-left flex flex-col"
+                        >
+                          <div className="relative h-44">
+                            <img
+                              src={profile.photoUrl || avatarUrl}
+                              alt={profile.pseudo}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
+                              <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
+                                {profile.isVip ? "VIP" : profile.isPro ? "Pro" : "Profile"}
+                              </span>
+                              <span className="text-xs font-semibold bg-primary/90 px-2 py-1 rounded-full text-white">
+                                {profile.accountType === "salon"
+                                  ? "Salon"
+                                  : profile.accountType === "residence"
+                                  ? "Résidence"
+                                  : lang === "en"
+                                  ? "Escort"
+                                  : "Escort"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="p-3 flex-1 flex flex-col justify-between">
+                            <div>
+                              <div className="text-sm font-semibold text-foreground line-clamp-1">
+                                {profile.pseudo} • {profile.age}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground line-clamp-1">
+                                {profile.ville}
+                                {profile.lieu ? ` • ${profile.lieu}` : ""}
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground line-clamp-2">
+                              {profile.description ?? (lang === "en" ? "Tap to view profile details." : "Appuie pour la fiche complète.")}
+                            </p>
+                          </div>
+                        </button>
+                      )}
+                    </CarouselItem>
+                  );
+                })}
               </CarouselContent>
             </Carousel>
           </div>
@@ -707,42 +747,131 @@ export default function Start() {
 
             <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
               <CarouselContent>
-                {events.map((ev) => (
-                  <CarouselItem key={ev.id} className="basis-[92%] sm:basis-[60%] md:basis-[45%] lg:basis-[34%]">
-                    <div className="w-full rounded-3xl bg-card border border-border overflow-hidden shadow-sm">
-                      <div className="p-4 space-y-2">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-foreground line-clamp-2">{ev.title}</div>
-                            <div className="text-[11px] text-muted-foreground mt-1">
-                              {formatEventDate(ev.date)} • {ev.city}
+                {events.map((ev, idx) => {
+                  const bg = eventBackgrounds[idx % eventBackgrounds.length];
+                  return (
+                    <CarouselItem key={ev.id} className="basis-[92%] sm:basis-[60%] md:basis-[45%] lg:basis-[34%]">
+                      <div className="relative w-full min-h-[210px] rounded-3xl border border-border overflow-hidden shadow-sm bg-card">
+                        <img
+                          src={bg}
+                          alt=""
+                          aria-hidden="true"
+                          className="absolute inset-0 w-full h-full object-cover"
+                          draggable={false}
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/88 via-black/48 to-black/18" />
+                        <div className="absolute inset-0 opacity-10 [background:radial-gradient(circle_at_18%_20%,hsl(var(--primary))_0%,transparent_62%),radial-gradient(circle_at_88%_30%,hsl(var(--primary))_0%,transparent_66%)]" />
+
+                        <div className="relative z-10 p-4 space-y-2.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-white line-clamp-2 drop-shadow-[0_10px_24px_rgba(0,0,0,0.8)]">
+                                {ev.title}
+                              </div>
+                              <div className="text-[11px] text-white/80 mt-1">
+                                {formatEventDate(ev.date)} • {ev.city}
+                              </div>
                             </div>
+                            <span className="shrink-0 px-3 py-1 rounded-full text-[11px] bg-white/12 border border-white/20 text-white backdrop-blur-sm">
+                              {ev.tag}
+                            </span>
                           </div>
-                          <span className="shrink-0 px-3 py-1 rounded-full text-[11px] bg-primary/10 border border-primary/20 text-primary">
-                            {ev.tag}
-                          </span>
+
+                          <p className="text-[11px] text-white/80 line-clamp-3">{ev.description}</p>
+
+                          <Button
+                            className="w-full rounded-2xl bg-white/14 text-white border border-white/15 hover:bg-white/20 hover:text-white"
+                            onClick={() => {
+                              setSelectedEventId(ev.id);
+                              setEventDialogOpen(true);
+                              setRsvpDone(false);
+                              setRsvpName("");
+                              setRsvpContact("");
+                              setRsvpMessage("");
+                            }}
+                          >
+                            {lang === "en" ? "Participate" : "Participer"}
+                          </Button>
                         </div>
-                        <p className="text-[11px] text-muted-foreground line-clamp-3">{ev.description}</p>
-                        <Button
-                          className="w-full rounded-2xl"
-                          onClick={() => {
-                            setSelectedEventId(ev.id);
-                            setEventDialogOpen(true);
-                            setRsvpDone(false);
-                            setRsvpName("");
-                            setRsvpContact("");
-                            setRsvpMessage("");
-                          }}
-                        >
-                          {lang === "en" ? "Participate" : "Participer"}
-                        </Button>
                       </div>
-                    </div>
-                  </CarouselItem>
-                ))}
+                    </CarouselItem>
+                  );
+                })}
               </CarouselContent>
             </Carousel>
           </div>
+
+        <div className="space-y-3 pt-1 text-sm leading-relaxed text-muted-foreground">
+          <p>
+            {lang === "en"
+              ? "Discover new arrivals, private moments and curated spaces. We carefully select the experiences we highlight, always respecting your discretion."
+              : "Découvre les nouveautés, moments privés et espaces sélectionnés. Nous mettons en avant des expériences choisies avec soin, dans le respect de ta discrétion."}
+          </p>
+          <p>
+            {lang === "en"
+              ? "Need support? Our team monitors requests continuously and can guide you through VIP services or exclusive promotions."
+              : "Besoin de support ? Notre équipe suit les demandes en continu et peut t’accompagner sur les services VIP ou promotions exclusives."}
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-end justify-between">
+            <div>
+              <div className="text-sm font-semibold text-foreground">
+                {lang === "en" ? "Energy & men’s care" : "Énergie & produits masculins"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {lang === "en"
+                  ? "Selection of endurance and comfort products."
+                  : "Sélection de produits pour l’endurance et le confort."}
+              </div>
+            </div>
+          </div>
+          <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
+            <CarouselContent>
+              {maleProducts.slice(0, 5).map((p) => (
+                <CarouselItem key={p.id} className="basis-[86%] sm:basis-[60%] md:basis-[38%] lg:basis-[30%]">
+                  <button
+                    type="button"
+                    onClick={() => setLocation(`/adult-products/${p.id}`)}
+                    className="w-full rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
+                  >
+                    <div className="relative h-44">
+                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
+                        <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
+                          {p.tag}
+                        </span>
+                        <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">
+                          {p.price}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-3 space-y-1">
+                      <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
+                      <div className="text-[11px] text-muted-foreground">{p.size}</div>
+                      <p className="text-[11px] text-muted-foreground line-clamp-3">{p.description}</p>
+                    </div>
+                  </button>
+                </CarouselItem>
+              ))}
+              {maleProducts.length > 5 && (
+                <CarouselItem className="basis-[60%] sm:basis-[40%] md:basis-[28%] lg:basis-[22%]">
+                  <button
+                    type="button"
+                    onClick={() => setLocation("/adult-products")}
+                    className="w-full h-full min-h-[220px] rounded-3xl border border-dashed border-border/70 bg-card/60 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <span className="text-2xl">➜</span>
+                    <span className="font-medium">{lang === "en" ? "See more" : "Voir plus"}</span>
+                    <span>{maleProducts.length} {lang === "en" ? "products" : "produits"}</span>
+                  </button>
+                </CarouselItem>
+              )}
+            </CarouselContent>
+          </Carousel>
+        </div>
 
           {/* Profils (liste verticale par catégories) */}
           <div className="space-y-3">
@@ -1174,6 +1303,65 @@ export default function Start() {
                 </div>
               ) : null}
             </div>
+          </div>
+
+          <div className="space-y-3">
+          <div className="flex items-end justify-between">
+            <div>
+              <div className="text-sm font-semibold text-foreground">
+                {lang === "en" ? "Energy & men’s care" : "Énergie & produits masculins"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {lang === "en"
+                  ? "Selection of endurance and comfort products."
+                  : "Sélection de produits pour l’endurance et le confort."}
+              </div>
+            </div>
+          </div>
+          <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
+            <CarouselContent>
+              {maleProducts.slice(0, 5).map((p) => (
+                <CarouselItem key={p.id} className="basis-[86%] sm:basis-[60%] md:basis-[38%] lg:basis-[30%]">
+                  <button
+                    type="button"
+                    onClick={() => setLocation(`/adult-products/${p.id}`)}
+                    className="w-full rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
+                  >
+                    <div className="relative h-44">
+                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
+                        <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
+                          {p.tag}
+                        </span>
+                        <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">
+                          {p.price}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-3 space-y-1">
+                      <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
+                      <div className="text-[11px] text-muted-foreground">{p.size}</div>
+                      <p className="text-[11px] text-muted-foreground line-clamp-3">{p.description}</p>
+                    </div>
+                  </button>
+                </CarouselItem>
+              ))}
+              {maleProducts.length > 5 && (
+                <CarouselItem className="basis-[60%] sm:basis-[40%] md:basis-[28%] lg:basis-[22%]">
+                  <button
+                    type="button"
+                    onClick={() => setLocation("/adult-products")}
+                    className="w-full h-full min-h-[220px] rounded-3xl border border-dashed border-border/70 bg-card/60 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <span className="text-2xl">➜</span>
+                    <span className="font-medium">{lang === "en" ? "See more" : "Voir plus"}</span>
+                    <span>{maleProducts.length} {lang === "en" ? "products" : "produits"}</span>
+                  </button>
+                </CarouselItem>
+              )}
+            </CarouselContent>
+          </Carousel>
           </div>
         </motion.div>
 
