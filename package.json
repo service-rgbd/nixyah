@@ -5,11 +5,12 @@
   "license": "MIT",
   "scripts": {
     "dev:client": "vite dev --port 5000",
-    "dev": "cross-env NODE_ENV=development tsx watch server/index.ts",
-    "build": "tsx script/build.ts",
+    "dev": "NODE_ENV=development node node_modules/tsx/dist/cli.mjs watch server/index.ts",
+    "dev:serve": "npm run dev",
+    "build": "node node_modules/tsx/dist/cli.mjs script/build.ts",
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "env:check": "tsx script/env-check.ts",
+    "env:check": "node node_modules/tsx/dist/cli.mjs script/env-check.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
@@ -110,7 +111,8 @@
     "@types/react-dom": "^19.2.0",
     "@types/ws": "^8.5.13",
     "drizzle-kit": "^0.31.4",
-    "typescript": "5.6.3"
+    "typescript": "5.6.3",
+    "wrangler": "^4.61.1"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"

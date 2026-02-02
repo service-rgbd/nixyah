@@ -2936,6 +2936,51 @@ export async function registerRoutes(
     }),
   );
 
+  app.post(
+    "/api/admin/users/:id/credit",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const userId = z.string().uuid().parse(req.params.id);
+      const payload = z
+        .object({
+          tokens: z.number().int().min(1).max(100000),
+          reason: z.string().max(200).optional().nullable(),
+        })
+        .parse(req.body);
+
+      const updated = await db.transaction(async (tx) => {
+        const [u] = await tx
+          .update(users)
+          .set({
+            tokensBalance: sql`coalesce(${users.tokensBalance}, 0) + ${payload.tokens}`,
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(users.id, userId))
+          .returning({ tokensBalance: users.tokensBalance });
+
+        if (!u) {
+          throw Object.assign(new Error("Utilisateur introuvable"), { status: 404 });
+        }
+
+        await tx.insert(tokenTransactions).values({
+          userId,
+          delta: payload.tokens,
+          reason: payload.reason ?? "Crédit administrateur",
+          meta: {
+            grantedBy: req.session?.userId ?? null,
+            reason: payload.reason ?? null,
+          },
+        } as any);
+
+        return u;
+      });
+
+      res.json({ ok: true, tokensBalance: Number((updated as any)?.tokensBalance ?? 0) });
+    }),
+  );
+
   app.get(
     "/api/admin/profiles",
     asyncHandler(async (req, res) => {
