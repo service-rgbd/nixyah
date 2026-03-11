@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface CreateStoryInput {
+  caption: string;
+  dishName?: string;
+  price?: number;
+  emoji?: string;
+  bgColor?: string;
 }

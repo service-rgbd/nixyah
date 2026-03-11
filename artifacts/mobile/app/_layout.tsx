@@ -40,6 +40,22 @@ function RootLayoutNav() {
         name="chat/[chatId]"
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
+      <Stack.Screen
+        name="auth/login"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="auth/register-client"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="auth/register-chef"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="chef/post-story"
+        options={{ headerShown: false, animation: "slide_from_bottom", presentation: "modal" }}
+      />
     </Stack>
   );
 }

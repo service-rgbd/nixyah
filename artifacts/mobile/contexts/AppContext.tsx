@@ -7,12 +7,14 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { apiFetch } from "@/constants/api";
 
 export interface Chef {
   id: string;
   name: string;
   specialty: string;
   location: string;
+  zone?: string;
   rating: number;
   reviewCount: number;
   priceRange: string;
@@ -22,6 +24,7 @@ export interface Chef {
   bio: string;
   dishes: Dish[];
   responseTime: string;
+  stories?: Story[];
 }
 
 export interface Dish {
@@ -32,6 +35,20 @@ export interface Dish {
   category: string;
   prepTime: string;
   isPopular?: boolean;
+}
+
+export interface Story {
+  id: string;
+  chefId: string;
+  chefName: string;
+  chefCoverColor: string;
+  caption: string;
+  dishName?: string | null;
+  price?: number | null;
+  emoji?: string | null;
+  bgColor?: string | null;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface Order {
@@ -65,152 +82,76 @@ export interface Chat {
   messages: ChatMessage[];
 }
 
-export interface FavoriteChef {
+export interface AuthUser {
   id: string;
   name: string;
-  specialty: string;
+  email?: string | null;
+  phone?: string | null;
+  type: "client" | "chef";
   location: string;
-  rating: number;
   coverColor: string;
+  chefProfile?: {
+    id: string;
+    specialty: string;
+    location: string;
+    zone: string;
+    bio: string;
+    rating: number;
+    reviewCount: number;
+    priceRange: string;
+    isVerified: boolean;
+    isOnline: boolean;
+    responseTime: string;
+  } | null;
 }
 
 interface AppContextValue {
   chefs: Chef[];
+  stories: Story[];
   orders: Order[];
   chats: Chat[];
   favorites: string[];
-  hasOnboarded: boolean;
-  setHasOnboarded: (v: boolean) => void;
+  isLoadingChefs: boolean;
+  user: AuthUser | null;
+  token: string | null;
+  isLoadingAuth: boolean;
+  login: (emailOrPhone: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  registerClient: (data: RegisterClientData) => Promise<void>;
+  registerChef: (data: RegisterChefData) => Promise<void>;
   addOrder: (order: Order) => void;
   toggleFavorite: (chefId: string) => void;
   sendMessage: (chatId: string, chefId: string, text: string, chefName: string, chefSpecialty: string, coverColor: string) => void;
   getChef: (id: string) => Chef | undefined;
+  refreshChefs: () => Promise<void>;
+  refreshStories: () => Promise<void>;
+  postStory: (data: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string }) => Promise<void>;
+}
+
+export interface RegisterClientData {
+  name: string;
+  email?: string;
+  phone?: string;
+  password: string;
+  location: string;
+  preferences?: string[];
+}
+
+export interface RegisterChefData {
+  name: string;
+  email?: string;
+  phone?: string;
+  password: string;
+  specialty: string;
+  location: string;
+  zone: string;
+  bio: string;
+  priceRange: string;
+  coverColor?: string;
+  specialties?: string[];
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
-
-const MOCK_CHEFS: Chef[] = [
-  {
-    id: "1",
-    name: "Ama Coulibaly",
-    specialty: "Cuisine Ivoirienne",
-    location: "Cocody, Abidjan",
-    rating: 4.9,
-    reviewCount: 124,
-    priceRange: "2 000 – 8 000 FCFA",
-    isVerified: true,
-    isOnline: true,
-    coverColor: "#C4522A",
-    bio: "Passionnée de cuisine ivoirienne depuis 15 ans. Je cuisine le vrai attiéké poulet braisé, le kedjenou et le garba de manière artisanale, comme à Grand-Bassam.",
-    responseTime: "< 10 min",
-    dishes: [
-      { id: "d1", name: "Attiéké Poisson Braisé", description: "Attiéké maison avec poisson braisé, sauce tomate pimentée", price: 3500, category: "Plats Principaux", prepTime: "30 min", isPopular: true },
-      { id: "d2", name: "Kedjenou de Poulet", description: "Poulet fermier mijoté aux épices, tomate et aubergine", price: 5000, category: "Plats Principaux", prepTime: "1h", isPopular: true },
-      { id: "d3", name: "Garba Complet", description: "Attiéké avec thon, vinaigrette piment", price: 2000, category: "Plats Principaux", prepTime: "20 min" },
-      { id: "d4", name: "Riz Sauce Graine", description: "Riz blanc avec sauce graine de palme, viande et légumes", price: 4500, category: "Plats Principaux", prepTime: "45 min" },
-      { id: "d5", name: "Foutou Banane + Soupe Kplé", description: "Foutou artisanal avec soupe kplé au poisson fumé", price: 4000, category: "Plats Principaux", prepTime: "50 min" },
-    ],
-  },
-  {
-    id: "2",
-    name: "Fatou Diallo",
-    specialty: "Cuisine Dioula & Grillades",
-    location: "Yopougon, Abidjan",
-    rating: 4.7,
-    reviewCount: 89,
-    priceRange: "1 500 – 6 000 FCFA",
-    isVerified: true,
-    isOnline: false,
-    coverColor: "#8B5CF6",
-    bio: "Cuisinière Dioula depuis Bouaké. Mes brochettes et mon riz sauce arachide sont réputés dans tout Yop City. Livraison possible.",
-    responseTime: "< 20 min",
-    dishes: [
-      { id: "d6", name: "Brochettes Bœuf Grillées", description: "Brochettes marinées aux épices africaines, sauce piment", price: 3000, category: "Grillades", prepTime: "25 min", isPopular: true },
-      { id: "d7", name: "Riz Sauce Arachide", description: "Riz avec sauce arachide crémeuse, poulet, légumes", price: 4000, category: "Plats Principaux", prepTime: "40 min", isPopular: true },
-      { id: "d8", name: "Foutou Igname + Sauce Pistache", description: "Igname pilée avec sauce pistache et viande", price: 4500, category: "Plats Principaux", prepTime: "55 min" },
-      { id: "d9", name: "Thiéboudienne", description: "Riz au poisson sénégalais avec légumes variés", price: 5500, category: "Plats Principaux", prepTime: "1h15" },
-    ],
-  },
-  {
-    id: "3",
-    name: "Marie-Claire Bah",
-    specialty: "Traiteur & Événements",
-    location: "Marcory, Abidjan",
-    rating: 5.0,
-    reviewCount: 67,
-    priceRange: "3 000 – 15 000 FCFA",
-    isVerified: true,
-    isOnline: true,
-    coverColor: "#059669",
-    bio: "Traiteur certifiée, je prends en charge vos anniversaires, baptêmes, mariages. De 10 à 200 personnes. Cuisines fusion afro-européenne.",
-    responseTime: "< 5 min",
-    dishes: [
-      { id: "d10", name: "Menu Baptême (10 pers)", description: "Plats variés ivoiriens + desserts pour 10 personnes", price: 45000, category: "Événements", prepTime: "Sur commande", isPopular: true },
-      { id: "d11", name: "Poulet Yassa", description: "Poulet mariné au citron et oignon, riz basmati", price: 6000, category: "Plats Principaux", prepTime: "50 min" },
-      { id: "d12", name: "Grillades Mixtes", description: "Poulet, poisson, brochettes bœuf avec garnitures", price: 8000, category: "Grillades", prepTime: "1h" },
-      { id: "d13", name: "Buffet Dînatoire", description: "Buffet complet ivoirien-africain pour 20 personnes", price: 75000, category: "Événements", prepTime: "Sur commande" },
-    ],
-  },
-  {
-    id: "4",
-    name: "Adjoa Mensah",
-    specialty: "Snacks & Street Food",
-    location: "Plateau, Abidjan",
-    rating: 4.8,
-    reviewCount: 203,
-    priceRange: "500 – 3 000 FCFA",
-    isVerified: false,
-    isOnline: true,
-    coverColor: "#D97706",
-    bio: "Spécialiste du street food abidjanais. Alloco, makayabu, kédjénou express. Livraison rapide dans la Commune du Plateau.",
-    responseTime: "< 15 min",
-    dishes: [
-      { id: "d14", name: "Alloco + Œuf", description: "Banane plantain frite avec œuf brouillé et piment", price: 1000, category: "Snacks", prepTime: "10 min", isPopular: true },
-      { id: "d15", name: "Makayabu Sauce Tomate", description: "Morue salée avec tomate, oignon, piment fort", price: 2500, category: "Plats Principaux", prepTime: "20 min", isPopular: true },
-      { id: "d16", name: "Sandwich Poulet Braisé", description: "Pain baguette, poulet braisé, mayo maison", price: 1500, category: "Snacks", prepTime: "15 min" },
-      { id: "d17", name: "Jus de Gingembre Maison", description: "Gingembre frais, citron, miel de fleurs", price: 800, category: "Boissons", prepTime: "5 min" },
-    ],
-  },
-  {
-    id: "5",
-    name: "Ramatou Koné",
-    specialty: "Cuisine du Nord & Divers",
-    location: "Abobo, Abidjan",
-    rating: 4.6,
-    reviewCount: 56,
-    priceRange: "2 500 – 7 000 FCFA",
-    isVerified: true,
-    isOnline: false,
-    coverColor: "#DC2626",
-    bio: "Originaire de Korhogo, je prépare les plats du nord avec authenticité. Tô, sauce gombo, couscous de mil. Une cuisine rare à Abidjan.",
-    responseTime: "< 30 min",
-    dishes: [
-      { id: "d18", name: "Tô + Sauce Gombo", description: "Pâte de maïs avec sauce okra et viande de bœuf", price: 3000, category: "Plats Principaux", prepTime: "45 min", isPopular: true },
-      { id: "d19", name: "Couscous de Mil", description: "Couscous artisanal avec ragoût d'agneau et légumes", price: 5000, category: "Plats Principaux", prepTime: "1h" },
-      { id: "d20", name: "Soupe de Poisson Fumé", description: "Bouillon parfumé avec poisson fumé et légumes du terroir", price: 2500, category: "Soupes", prepTime: "30 min" },
-    ],
-  },
-  {
-    id: "6",
-    name: "Sophie Gnagnon",
-    specialty: "Pâtisserie & Desserts Africains",
-    location: "Deux Plateaux, Abidjan",
-    rating: 4.9,
-    reviewCount: 145,
-    priceRange: "1 000 – 5 000 FCFA",
-    isVerified: true,
-    isOnline: true,
-    coverColor: "#BE185D",
-    bio: "Pâtissière ivoirienne formée en France. Je marie les saveurs africaines avec les techniques européennes. Gâteaux, beignets, desserts fusion.",
-    responseTime: "< 10 min",
-    dishes: [
-      { id: "d21", name: "Beignets de Banane", description: "Beignets moelleux à la banane plantain, sucre glace", price: 1500, category: "Desserts", prepTime: "20 min", isPopular: true },
-      { id: "d22", name: "Gâteau Noix de Coco", description: "Layer cake coco-vanille avec crème fraîche maison", price: 4500, category: "Pâtisserie", prepTime: "Sur commande" },
-      { id: "d23", name: "Cake Chocolat-Café", description: "Fondant chocolat avec touche de café ivoirien", price: 3500, category: "Pâtisserie", prepTime: "1h" },
-      { id: "d24", name: "Pain au Chocolat Africain", description: "Viennoiserie maison fourrée au chocolat pur cacao", price: 1000, category: "Viennoiseries", prepTime: "30 min", isPopular: true },
-    ],
-  },
-];
 
 const MOCK_CHATS: Chat[] = [
   {
@@ -231,28 +172,136 @@ const MOCK_CHATS: Chat[] = [
   },
 ];
 
+function mapApiChef(c: any): Chef {
+  return {
+    id: c.id,
+    name: c.name,
+    specialty: c.specialty,
+    location: c.location,
+    zone: c.zone,
+    rating: c.rating ?? 5.0,
+    reviewCount: c.reviewCount ?? 0,
+    priceRange: c.priceRange ?? "",
+    isVerified: c.isVerified ?? false,
+    isOnline: c.isOnline ?? true,
+    coverColor: c.coverColor ?? "#C4522A",
+    bio: c.bio ?? "",
+    responseTime: c.responseTime ?? "< 30 min",
+    dishes: (c.dishes ?? []).map((d: any) => ({
+      id: d.id,
+      name: d.name,
+      description: d.description,
+      price: d.price,
+      category: d.category,
+      prepTime: d.prepTime,
+      isPopular: d.isPopular,
+    })),
+    stories: c.stories ?? [],
+  };
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const [chefs, setChefs] = useState<Chef[]>([]);
+  const [stories, setStories] = useState<Story[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [chats, setChats] = useState<Chat[]>(MOCK_CHATS);
-  const [favorites, setFavorites] = useState<string[]>(["1", "3"]);
-  const [hasOnboarded, setHasOnboardedState] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [isLoadingChefs, setIsLoadingChefs] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+
+  const refreshChefs = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ chefs: any[] }>("/chefs");
+      setChefs(data.chefs.map(mapApiChef));
+    } catch (e) {
+      console.warn("Failed to load chefs from API:", e);
+    } finally {
+      setIsLoadingChefs(false);
+    }
+  }, []);
+
+  const refreshStories = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ stories: Story[] }>("/stories");
+      setStories(data.stories);
+    } catch (e) {
+      console.warn("Failed to load stories:", e);
+    }
+  }, []);
 
   useEffect(() => {
-    AsyncStorage.getItem("nixyah_onboarded").then((v) => {
-      if (v === "true") setHasOnboardedState(true);
-    });
     AsyncStorage.getItem("nixyah_favorites").then((v) => {
       if (v) setFavorites(JSON.parse(v));
     });
     AsyncStorage.getItem("nixyah_orders").then((v) => {
       if (v) setOrders(JSON.parse(v));
     });
+
+    AsyncStorage.getItem("nixyah_token").then(async (savedToken) => {
+      if (savedToken) {
+        try {
+          const me = await apiFetch<AuthUser>("/auth/me", { token: savedToken });
+          setUser(me);
+          setToken(savedToken);
+        } catch {
+          await AsyncStorage.removeItem("nixyah_token");
+        }
+      }
+      setIsLoadingAuth(false);
+    });
+
+    refreshChefs();
+    refreshStories();
+  }, [refreshChefs, refreshStories]);
+
+  const login = useCallback(async (emailOrPhone: string, password: string) => {
+    const data = await apiFetch<{ token: string; user: AuthUser }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ emailOrPhone, password }),
+    });
+    await AsyncStorage.setItem("nixyah_token", data.token);
+    setToken(data.token);
+    setUser(data.user);
   }, []);
 
-  const setHasOnboarded = useCallback((v: boolean) => {
-    setHasOnboardedState(v);
-    AsyncStorage.setItem("nixyah_onboarded", v ? "true" : "false");
+  const logout = useCallback(async () => {
+    await AsyncStorage.removeItem("nixyah_token");
+    setToken(null);
+    setUser(null);
   }, []);
+
+  const registerClient = useCallback(async (data: RegisterClientData) => {
+    const res = await apiFetch<{ token: string; user: AuthUser }>("/auth/register/client", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    await AsyncStorage.setItem("nixyah_token", res.token);
+    setToken(res.token);
+    setUser(res.user);
+  }, []);
+
+  const registerChef = useCallback(async (data: RegisterChefData) => {
+    const res = await apiFetch<{ token: string; user: AuthUser }>("/auth/register/chef", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    await AsyncStorage.setItem("nixyah_token", res.token);
+    setToken(res.token);
+    setUser(res.user);
+    await refreshChefs();
+  }, [refreshChefs]);
+
+  const postStory = useCallback(async (storyData: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string }) => {
+    if (!token) throw new Error("Non connecté");
+    await apiFetch("/stories", {
+      method: "POST",
+      body: JSON.stringify(storyData),
+      token,
+    });
+    await refreshStories();
+  }, [token, refreshStories]);
 
   const addOrder = useCallback((order: Order) => {
     setOrders((prev) => {
@@ -307,24 +356,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const getChef = useCallback(
-    (id: string) => MOCK_CHEFS.find((c) => c.id === id),
-    []
+    (id: string) => chefs.find((c) => c.id === id),
+    [chefs]
   );
 
   const value = useMemo(
     () => ({
-      chefs: MOCK_CHEFS,
+      chefs,
+      stories,
       orders,
       chats,
       favorites,
-      hasOnboarded,
-      setHasOnboarded,
+      isLoadingChefs,
+      user,
+      token,
+      isLoadingAuth,
+      login,
+      logout,
+      registerClient,
+      registerChef,
+      postStory,
       addOrder,
       toggleFavorite,
       sendMessage,
       getChef,
+      refreshChefs,
+      refreshStories,
     }),
-    [orders, chats, favorites, hasOnboarded, setHasOnboarded, addOrder, toggleFavorite, sendMessage, getChef]
+    [chefs, stories, orders, chats, favorites, isLoadingChefs, user, token, isLoadingAuth, login, logout, registerClient, registerChef, postStory, addOrder, toggleFavorite, sendMessage, getChef, refreshChefs, refreshStories]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

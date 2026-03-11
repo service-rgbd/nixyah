@@ -1,22 +1,30 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 0.2.0
+  description: Nixyah API - Food marketplace for Côte d'Ivoire
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: chefs
+    description: Chef profiles
+  - name: stories
+    description: Chef stories
+  - name: orders
+    description: Orders
+  - name: chats
+    description: Messaging
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +32,678 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/register/client:
+    post:
+      operationId: registerClient
+      tags: [auth]
+      summary: Register a new client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterClientInput"
+      responses:
+        "201":
+          description: Client registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Email/phone already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/register/chef:
+    post:
+      operationId: registerChef
+      tags: [auth]
+      summary: Register a new chef
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterChefInput"
+      responses:
+        "201":
+          description: Chef registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Email/phone already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /chefs:
+    get:
+      operationId: listChefs
+      tags: [chefs]
+      summary: List all chefs
+      parameters:
+        - name: specialty
+          in: query
+          schema:
+            type: string
+        - name: location
+          in: query
+          schema:
+            type: string
+        - name: online
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of chefs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chefs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ChefProfile"
+                required: [chefs]
+
+  /chefs/{id}:
+    get:
+      operationId: getChef
+      tags: [chefs]
+      summary: Get chef by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Chef profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChefProfile"
+        "404":
+          description: Chef not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /stories:
+    get:
+      operationId: listStories
+      tags: [stories]
+      summary: List recent stories
+      responses:
+        "200":
+          description: List of stories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stories:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Story"
+                required: [stories]
+
+    post:
+      operationId: createStory
+      tags: [stories]
+      summary: Create a story (chef only)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStoryInput"
+      responses:
+        "201":
+          description: Story created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Story"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /stories/{id}:
+    delete:
+      operationId: deleteStory
+      tags: [stories]
+      summary: Delete a story
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Story deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                required: [success]
+
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: List orders for current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Order"
+                required: [orders]
+
+    post:
+      operationId: createOrder
+      tags: [orders]
+      summary: Create an order
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderInput"
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+
+  /chats:
+    get:
+      operationId: listChats
+      tags: [chats]
+      summary: List chats for current user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of chats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chats:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Chat"
+                required: [chats]
+
+  /chats/{chatId}/messages:
+    get:
+      operationId: getChatMessages
+      tags: [chats]
+      summary: Get messages for a chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Message"
+                required: [messages]
+
+    post:
+      operationId: sendMessage
+      tags: [chats]
+      summary: Send a message
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageInput"
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
     HealthStatus:
       type: object
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required: [error, message]
+
+    RegisterClientInput:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        password:
+          type: string
+        location:
+          type: string
+        preferences:
+          type: array
+          items:
+            type: string
+      required: [name, password, location]
+
+    RegisterChefInput:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        password:
+          type: string
+        specialty:
+          type: string
+        location:
+          type: string
+        zone:
+          type: string
+        bio:
+          type: string
+        priceRange:
+          type: string
+        coverColor:
+          type: string
+        specialties:
+          type: array
+          items:
+            type: string
+      required: [name, password, specialty, location, zone, bio, priceRange]
+
+    LoginInput:
+      type: object
+      properties:
+        emailOrPhone:
+          type: string
+        password:
+          type: string
+      required: [emailOrPhone, password]
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/UserProfile"
+      required: [token, user]
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        type:
+          type: string
+          enum: [client, chef]
+        location:
+          type: string
+        coverColor:
+          type: string
+        chefProfile:
+          $ref: "#/components/schemas/ChefProfile"
+      required: [id, name, type, location]
+
+    ChefProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        name:
+          type: string
+        specialty:
+          type: string
+        location:
+          type: string
+        zone:
+          type: string
+        bio:
+          type: string
+        rating:
+          type: number
+        reviewCount:
+          type: integer
+        priceRange:
+          type: string
+        isVerified:
+          type: boolean
+        isOnline:
+          type: boolean
+        coverColor:
+          type: string
+        responseTime:
+          type: string
+        dishes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Dish"
+        stories:
+          type: array
+          items:
+            $ref: "#/components/schemas/Story"
+      required: [id, userId, name, specialty, location, zone, bio, rating, reviewCount, priceRange, isVerified, isOnline, coverColor, responseTime]
+
+    Dish:
+      type: object
+      properties:
+        id:
+          type: string
+        chefId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+        category:
+          type: string
+        prepTime:
+          type: string
+        isPopular:
+          type: boolean
+      required: [id, chefId, name, description, price, category, prepTime]
+
+    Story:
+      type: object
+      properties:
+        id:
+          type: string
+        chefId:
+          type: string
+        chefName:
+          type: string
+        chefCoverColor:
+          type: string
+        caption:
+          type: string
+        dishName:
+          type: string
+        price:
+          type: number
+        emoji:
+          type: string
+        bgColor:
+          type: string
+        createdAt:
+          type: string
+        expiresAt:
+          type: string
+      required: [id, chefId, chefName, chefCoverColor, caption, createdAt, expiresAt]
+
+    CreateStoryInput:
+      type: object
+      properties:
+        caption:
+          type: string
+        dishName:
+          type: string
+        price:
+          type: number
+        emoji:
+          type: string
+        bgColor:
+          type: string
+      required: [caption]
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        chefId:
+          type: string
+        chefName:
+          type: string
+        status:
+          type: string
+          enum: [pending, accepted, preparing, ready, delivered]
+        total:
+          type: number
+        occasion:
+          type: string
+        persons:
+          type: integer
+        notes:
+          type: string
+        createdAt:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+      required: [id, clientId, chefId, chefName, status, total, createdAt]
+
+    OrderItem:
+      type: object
+      properties:
+        dishId:
+          type: string
+        dishName:
+          type: string
+        quantity:
+          type: integer
+        price:
+          type: number
+      required: [dishId, dishName, quantity, price]
+
+    CreateOrderInput:
+      type: object
+      properties:
+        chefId:
+          type: string
+        occasion:
+          type: string
+        persons:
+          type: integer
+        budget:
+          type: string
+        notes:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+      required: [chefId]
+
+    Chat:
+      type: object
+      properties:
+        id:
+          type: string
+        chefId:
+          type: string
+        chefName:
+          type: string
+        chefSpecialty:
+          type: string
+        chefCoverColor:
+          type: string
+        lastMessage:
+          type: string
+        lastMessageAt:
+          type: string
+        unreadCount:
+          type: integer
+      required: [id, chefId, chefName, chefSpecialty, chefCoverColor, unreadCount]
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        chatId:
+          type: string
+        senderId:
+          type: string
+        text:
+          type: string
+        isMe:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, chatId, senderId, text, isMe, createdAt]
+
+    SendMessageInput:
+      type: object
+      properties:
+        text:
+          type: string
+        chefId:
+          type: string
+      required: [text]

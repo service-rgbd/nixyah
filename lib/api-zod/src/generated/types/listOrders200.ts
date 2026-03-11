@@ -5,7 +5,8 @@
  * Nixyah API - Food marketplace for Côte d'Ivoire
  * OpenAPI spec version: 0.2.0
  */
+import type { Order } from "./order";
 
-export interface HealthStatus {
-  status: string;
-}
+export type ListOrders200 = {
+  orders: Order[];
+};

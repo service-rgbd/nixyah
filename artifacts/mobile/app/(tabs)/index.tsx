@@ -1,10 +1,9 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useRef } from "react";
+import React from "react";
 import {
   Dimensions,
-  FlatList,
   Platform,
   Pressable,
   ScrollView,
@@ -22,7 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ChefCard } from "@/components/ChefCard";
 import Colors from "@/constants/colors";
-import { useApp } from "@/contexts/AppContext";
+import { useApp, Story } from "@/contexts/AppContext";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -35,37 +34,29 @@ const CATEGORIES = [
   { id: "desserts", label: "Desserts", icon: "heart" as const },
 ];
 
-const STORIES = [
-  { id: "s1", chefId: "1", color: "#C4522A" },
-  { id: "s2", chefId: "2", color: "#8B5CF6" },
-  { id: "s3", chefId: "3", color: "#059669" },
-  { id: "s4", chefId: "4", color: "#D97706" },
-  { id: "s5", chefId: "6", color: "#BE185D" },
-];
-
-function StoryItem({ chefId, color }: { chefId: string; color: string }) {
-  const { getChef } = useApp();
-  const chef = getChef(chefId);
+function StoryItem({ story }: { story: Story }) {
   const scale = useSharedValue(1);
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-
-  if (!chef) return null;
+  const initials = story.chefName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+  const bgColor = story.bgColor ?? story.chefCoverColor;
 
   return (
     <Pressable
       onPressIn={() => { scale.value = withSpring(0.92); }}
       onPressOut={() => { scale.value = withSpring(1); }}
-      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chefId } })}
+      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: story.chefId } })}
     >
       <Animated.View style={[styles.storyWrapper, animStyle]}>
-        <View style={[styles.storyRing, { borderColor: color }]}>
-          <View style={[styles.storyAvatar, { backgroundColor: color }]}>
-            <Text style={styles.storyInitials}>
-              {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-            </Text>
+        <View style={[styles.storyRing, { borderColor: bgColor }]}>
+          <View style={[styles.storyAvatar, { backgroundColor: bgColor }]}>
+            {story.emoji ? (
+              <Text style={styles.storyEmoji}>{story.emoji}</Text>
+            ) : (
+              <Text style={styles.storyInitials}>{initials}</Text>
+            )}
           </View>
         </View>
-        <Text style={styles.storyName} numberOfLines={1}>{chef.name.split(" ")[0]}</Text>
+        <Text style={styles.storyName} numberOfLines={1}>{story.chefName.split(" ")[0]}</Text>
       </Animated.View>
     </Pressable>
   );
@@ -73,7 +64,7 @@ function StoryItem({ chefId, color }: { chefId: string; color: string }) {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { chefs, favorites, toggleFavorite } = useApp();
+  const { chefs, stories, favorites, toggleFavorite, user } = useApp();
   const scrollY = useSharedValue(0);
   const [selectedCategory, setSelectedCategory] = React.useState("all");
 
@@ -88,7 +79,18 @@ export default function HomeScreen() {
   }));
 
   const popularChefs = chefs.slice(0, 4);
-  const nearbyChefs = chefs.filter((c) => c.isOnline);
+  const onlineChefs = chefs.filter((c) => c.isOnline);
+
+  const uniqueChefStories: Story[] = [];
+  const seen = new Set<string>();
+  for (const s of stories) {
+    if (!seen.has(s.chefId)) {
+      seen.add(s.chefId);
+      uniqueChefStories.push(s);
+    }
+  }
+
+  const greeting = user ? `Bonjour ${user.name.split(" ")[0]} 👋` : "Bonjour 👋";
 
   return (
     <View style={styles.container}>
@@ -109,11 +111,14 @@ export default function HomeScreen() {
           style={[styles.heroGradient, { paddingTop: topInset + 16 }]}
         >
           <View style={styles.heroTop}>
-            <View>
-              <Text style={styles.heroGreeting}>Bonjour </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroGreeting}>{greeting}</Text>
               <Text style={styles.heroTitle}>Que mangez-vous{"\n"}aujourd'hui ?</Text>
             </View>
-            <Pressable onPress={() => router.push("/chat/new")} style={styles.bellBtn}>
+            <Pressable
+              onPress={() => user ? router.push("/chat/new") : router.push("/auth/login")}
+              style={styles.bellBtn}
+            >
               <Ionicons name="notifications-outline" size={22} color="#fff" />
             </Pressable>
           </View>
@@ -130,13 +135,15 @@ export default function HomeScreen() {
           </Pressable>
         </LinearGradient>
 
-        <View style={styles.storiesSection}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storiesRow}>
-            {STORIES.map((s) => (
-              <StoryItem key={s.id} chefId={s.chefId} color={s.color} />
-            ))}
-          </ScrollView>
-        </View>
+        {uniqueChefStories.length > 0 && (
+          <View style={styles.storiesSection}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storiesRow}>
+              {uniqueChefStories.map((s) => (
+                <StoryItem key={s.id} story={s} />
+              ))}
+            </ScrollView>
+          </View>
+        )}
 
         <View style={styles.categoriesSection}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesRow}>
@@ -166,7 +173,7 @@ export default function HomeScreen() {
           </Pressable>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
-          {nearbyChefs.map((chef) => (
+          {onlineChefs.map((chef) => (
             <ChefCard
               key={chef.id}
               chef={chef}
@@ -317,6 +324,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  storyEmoji: { fontSize: 24 },
   storyInitials: {
     fontSize: 18,
     fontFamily: "Poppins_700Bold",
