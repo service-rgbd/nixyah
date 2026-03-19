@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import Gradient from "@/components/SafeGradient";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,6 +17,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
+
+const authUsersImage = require("../../assets/images/login-register-users.png");
 
 const ZONES = ["Cocody", "Yopougon", "Plateau", "Marcory", "Abobo", "Adjamé", "Treichville", "Koumassi", "Riviera", "Angré"];
 const PREFS = ["Ivoirien", "Sénégalais", "Grillades", "Snacks", "Desserts", "Traiteur", "Street food", "Végétarien"];
@@ -62,7 +65,7 @@ export default function RegisterClientScreen() {
     setLoading(true);
     setError("");
     try {
-      await registerClient({
+      const result = await registerClient({
         name: name.trim(),
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
@@ -70,7 +73,11 @@ export default function RegisterClientScreen() {
         location: selectedZone ? `${selectedZone}, ${location}` : location,
         preferences,
       });
-      router.replace("/(tabs)");
+      if (result.requiresEmailConfirmation && result.email) {
+        router.replace({ pathname: "/auth/confirm", params: { email: result.email } });
+      } else {
+        router.replace("/(tabs)");
+      }
     } catch (e: any) {
       setError(e.message ?? "Erreur lors de l'inscription");
     } finally {
@@ -80,27 +87,33 @@ export default function RegisterClientScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <LinearGradient
+      <Gradient
         colors={[Colors.light.tint, Colors.light.tintDark]}
         style={[styles.header, { paddingTop: insets.top + 16 }]}
       >
-        <View style={styles.headerTop}>
-          <Pressable style={styles.backBtn} onPress={() => step > 1 ? setStep(step - 1) : router.back()}>
-            <Feather name="arrow-left" size={20} color="#fff" />
-          </Pressable>
-          <View style={styles.steps}>
-            {[1, 2, 3].map((s) => (
-              <View key={s} style={[styles.stepDot, step >= s && styles.stepDotActive]} />
-            ))}
-          </View>
+        <View style={styles.headerMedia} pointerEvents="none">
+          <Image source={authUsersImage} style={styles.headerMediaImage} resizeMode="cover" />
+          <View style={styles.headerOverlay} />
         </View>
-        <Text style={styles.headerTitle}>
-          {step === 1 ? "Créer mon compte 🛒" : step === 2 ? "Sécurisez votre accès 🔒" : "Personnalisez votre expérience 🍽️"}
-        </Text>
-        <Text style={styles.headerSub}>
-          {step === 1 ? "Vos coordonnées pour commander facilement" : step === 2 ? "Choisissez un mot de passe sûr" : "Dites-nous ce que vous aimez manger"}
-        </Text>
-      </LinearGradient>
+        <View style={styles.headerContent}>
+          <View style={styles.headerTop}>
+            <Pressable style={styles.backBtn} onPress={() => step > 1 ? setStep(step - 1) : router.back()}>
+              <Feather name="arrow-left" size={20} color="#fff" />
+            </Pressable>
+            <View style={styles.steps}>
+              {[1, 2, 3].map((s) => (
+                <View key={s} style={[styles.stepDot, step >= s && styles.stepDotActive]} />
+              ))}
+            </View>
+          </View>
+          <Text style={styles.headerTitle}>
+            {step === 1 ? "Créer mon compte 🛒" : step === 2 ? "Sécurisez votre accès 🔒" : "Personnalisez votre expérience 🍽️"}
+          </Text>
+          <Text style={styles.headerSub}>
+            {step === 1 ? "Vos coordonnées pour commander facilement" : step === 2 ? "Choisissez un mot de passe sûr" : "Dites-nous ce que vous aimez manger"}
+          </Text>
+        </View>
+      </Gradient>
 
       <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 40 }}>
         <View style={styles.form}>
@@ -227,7 +240,8 @@ export default function RegisterClientScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { paddingBottom: 28, paddingHorizontal: 24 },
+  header: { paddingBottom: 24, overflow: "hidden", minHeight: 320 },
+  headerContent: { paddingHorizontal: 24, position: "relative", zIndex: 1 },
   headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
   steps: { flexDirection: "row", gap: 8 },
@@ -235,6 +249,17 @@ const styles = StyleSheet.create({
   stepDotActive: { backgroundColor: "#fff", width: 20, borderRadius: 4 },
   headerTitle: { fontSize: 24, fontFamily: "Poppins_700Bold", color: "#fff", marginBottom: 4 },
   headerSub: { fontSize: 13, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.85)" },
+  headerMedia: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  headerMediaImage: {
+    width: "100%",
+    height: "100%",
+  },
+  headerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(70, 32, 12, 0.42)",
+  },
   body: { flex: 1, backgroundColor: Colors.light.background },
   form: { padding: 24, gap: 16 },
   errorBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FEF2F2", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "#FCA5A5" },

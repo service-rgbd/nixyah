@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import Gradient from "@/components/SafeGradient";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -16,6 +17,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
+import { ApiError } from "@/constants/api";
+
+const authUsersImage = require("../../assets/images/login-register-users.png");
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
@@ -37,6 +41,14 @@ export default function LoginScreen() {
       await login(emailOrPhone.trim(), password);
       router.replace("/(tabs)");
     } catch (e: any) {
+      if (e instanceof ApiError && e.code === "EmailUnconfirmed") {
+        const email = typeof e.body?.email === "string" ? e.body.email : undefined;
+        router.replace({
+          pathname: "/auth/confirm",
+          params: email ? { email } : undefined,
+        });
+        return;
+      }
       setError(e.message ?? "Identifiants incorrects");
     } finally {
       setLoading(false);
@@ -45,16 +57,22 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <LinearGradient
+      <Gradient
         colors={[Colors.light.tint, Colors.light.tintDark]}
         style={[styles.header, { paddingTop: insets.top + 20 }]}
       >
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={20} color="#fff" />
-        </Pressable>
-        <Text style={styles.headerTitle}>Bon retour 👋</Text>
-        <Text style={styles.headerSub}>Connectez-vous à votre compte Nixyah</Text>
-      </LinearGradient>
+        <View style={styles.headerMedia} pointerEvents="none">
+          <Image source={authUsersImage} style={styles.headerMediaImage} resizeMode="cover" />
+          <View style={styles.headerOverlay} />
+        </View>
+        <View style={styles.headerContent}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Feather name="arrow-left" size={20} color="#fff" />
+          </Pressable>
+          <Text style={styles.headerTitle}>Bon retour 👋</Text>
+          <Text style={styles.headerSub}>Connectez-vous à votre compte Nixyah</Text>
+        </View>
+      </Gradient>
 
       <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 40 }}>
         <View style={styles.form}>
@@ -127,6 +145,13 @@ export default function LoginScreen() {
               <Text style={[styles.signupLink, { color: Colors.light.tintDark }]}>Inscription cuisinière</Text>
             </Pressable>
           </View>
+
+          <View style={[styles.signupRow, { marginTop: 12 }]}>
+            <Text style={styles.signupText}>Vous livrez ?</Text>
+            <Pressable onPress={() => router.push("/auth/register-courier")}>
+              <Text style={[styles.signupLink, { color: "#0F766E" }]}>Inscription livreur</Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -135,8 +160,14 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   header: {
-    paddingBottom: 32,
+    paddingBottom: 24,
+    overflow: "hidden",
+    minHeight: 320,
+  },
+  headerContent: {
     paddingHorizontal: 24,
+    position: "relative",
+    zIndex: 1,
   },
   backBtn: {
     width: 36,
@@ -157,6 +188,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Poppins_400Regular",
     color: "rgba(255,255,255,0.85)",
+  },
+  headerMedia: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  headerMediaImage: {
+    width: "100%",
+    height: "100%",
+  },
+  headerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(70, 32, 12, 0.42)",
   },
   body: {
     flex: 1,

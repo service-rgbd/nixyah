@@ -1,10 +1,11 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import Gradient from "@/components/SafeGradient";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -16,6 +17,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
+
+const guestProfileIllustration = require("../../assets/images/login-cashier-illustration.png");
 
 const MENU_ITEMS_CLIENT = [
   { icon: "heart" as const, label: "Mes favoris", sub: "Cuisinières sauvegardées" },
@@ -35,6 +38,13 @@ const MENU_ITEMS_CHEF = [
   { icon: "help-circle" as const, label: "Aide & Support", sub: "FAQ, Contact" },
 ];
 
+const MENU_ITEMS_COURIER = [
+  { icon: "truck" as const, label: "Mes missions", sub: "Livraisons disponibles et en cours" },
+  { icon: "map-pin" as const, label: "Zone de livraison", sub: "Disponibilite et zone active" },
+  { icon: "bell" as const, label: "Notifications", sub: "Missions et mises a jour" },
+  { icon: "help-circle" as const, label: "Aide & Support", sub: "FAQ, Contact" },
+];
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { chefs, favorites, orders, user, logout } = useApp();
@@ -43,7 +53,8 @@ export default function ProfileScreen() {
 
   const favoriteChefs = chefs.filter((c) => favorites.includes(c.id));
   const isChef = user?.type === "chef";
-  const menuItems = isChef ? MENU_ITEMS_CHEF : MENU_ITEMS_CLIENT;
+  const isCourier = user?.type === "courier";
+  const menuItems = isChef ? MENU_ITEMS_CHEF : isCourier ? MENU_ITEMS_COURIER : MENU_ITEMS_CLIENT;
 
   const initials = user
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
@@ -53,6 +64,16 @@ export default function ProfileScreen() {
   const handleMenuPress = (item: typeof MENU_ITEMS_CHEF[0]) => {
     if ((item as any).action === "story") {
       router.push("/chef/post-story");
+    } else if (item.label === "Mes plats") {
+      router.push("/chef/my-dishes");
+    } else if (item.label === "Statistiques") {
+      router.push("/chef/stats");
+    } else if (item.label === "Notifications") {
+      router.push("/chef/notifications");
+    } else if (item.label === "Mes missions") {
+      router.push("/(tabs)/orders");
+    } else if (item.label === "Aide & Support") {
+      router.push("/(tabs)/help");
     }
   };
 
@@ -73,16 +94,22 @@ export default function ProfileScreen() {
 
   if (!user) {
     return (
-      <View style={[styles.container, styles.guestContainer, { paddingTop: topInset }]}>
+      <ScrollView
+        style={[styles.container, { paddingTop: topInset }]}
+        contentContainerStyle={styles.guestScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.guestContent}>
-          <LinearGradient
-            colors={[Colors.light.tint, Colors.light.tintDark]}
-            style={styles.guestIcon}
-          >
-            <Ionicons name="person-outline" size={36} color="#fff" />
-          </LinearGradient>
-          <Text style={styles.guestTitle}>Connectez-vous</Text>
-          <Text style={styles.guestSub}>Accédez à vos commandes, favoris et profil</Text>
+          <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.guestHero}>
+            <View style={styles.guestHeroMedia} pointerEvents="none">
+              <Image source={guestProfileIllustration} style={styles.guestIllustration} resizeMode="cover" />
+              <View style={styles.guestHeroOverlay} />
+            </View>
+            <View style={styles.guestHeroContent}>
+              <Text style={styles.guestHeroTitle}>Connectez-vous</Text>
+              <Text style={styles.guestHeroSub}>Accédez à vos commandes, favoris et profil depuis un espace unifié.</Text>
+            </View>
+          </Gradient>
 
           <Pressable style={styles.loginBtn} onPress={() => router.push("/auth/login")}>
             <Text style={styles.loginBtnText}>Se connecter</Text>
@@ -102,8 +129,13 @@ export default function ProfileScreen() {
             <Ionicons name="restaurant-outline" size={18} color={Colors.light.tint} />
             <Text style={styles.chefBtnText}>Rejoindre comme cuisinière</Text>
           </Pressable>
+
+          <Pressable style={styles.courierBtn} onPress={() => router.push("/auth/register-courier")}>
+            <Ionicons name="bicycle-outline" size={18} color="#0F766E" />
+            <Text style={styles.courierBtnText}>Rejoindre comme livreur</Text>
+          </Pressable>
         </View>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -113,7 +145,7 @@ export default function ProfileScreen() {
         contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}
         showsVerticalScrollIndicator={false}
       >
-        <LinearGradient
+        <Gradient
           colors={[Colors.light.backgroundSecondary, Colors.light.background]}
           style={styles.profileHeader}
         >
@@ -144,10 +176,17 @@ export default function ProfileScreen() {
             </View>
           )}
 
+          {isCourier && (
+            <View style={styles.chefBadge}>
+              <Ionicons name="bicycle" size={12} color={Colors.light.tint} />
+              <Text style={styles.chefBadgeText}>Livreur Nixyah</Text>
+            </View>
+          )}
+
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
               <Text style={styles.statValue}>{orders.length}</Text>
-              <Text style={styles.statLabel}>Commandes</Text>
+              <Text style={styles.statLabel}>{isCourier ? "Missions vues" : "Commandes"}</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
@@ -160,32 +199,32 @@ export default function ProfileScreen() {
               <Text style={styles.statLabel}>{isChef ? "Avis" : "Avis donnés"}</Text>
             </View>
           </View>
-        </LinearGradient>
+        </Gradient>
 
         {isChef && (
           <View style={styles.chefActionsRow}>
             <Pressable style={styles.chefActionBtn} onPress={() => router.push("/chef/post-story")}>
-              <LinearGradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.chefActionGradient}>
+              <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.chefActionGradient}>
                 <Feather name="camera" size={18} color="#fff" />
-              </LinearGradient>
+              </Gradient>
               <Text style={styles.chefActionLabel}>Story</Text>
             </Pressable>
-            <Pressable style={styles.chefActionBtn}>
-              <LinearGradient colors={["#8B5CF6", "#6D28D9"]} style={styles.chefActionGradient}>
+            <Pressable style={styles.chefActionBtn} onPress={() => router.push("/chef/my-dishes")}>
+              <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.chefActionGradient}>
                 <Feather name="package" size={18} color="#fff" />
-              </LinearGradient>
+              </Gradient>
               <Text style={styles.chefActionLabel}>Mes plats</Text>
             </Pressable>
-            <Pressable style={styles.chefActionBtn}>
-              <LinearGradient colors={["#059669", "#047857"]} style={styles.chefActionGradient}>
+            <Pressable style={styles.chefActionBtn} onPress={() => router.push("/chef/stats")}>
+              <Gradient colors={["#059669", "#047857"]} style={styles.chefActionGradient}>
                 <Feather name="bar-chart-2" size={18} color="#fff" />
-              </LinearGradient>
+              </Gradient>
               <Text style={styles.chefActionLabel}>Stats</Text>
             </Pressable>
             <Pressable style={styles.chefActionBtn}>
-              <LinearGradient colors={["#D97706", "#B45309"]} style={styles.chefActionGradient}>
+              <Gradient colors={["#D97706", "#B45309"]} style={styles.chefActionGradient}>
                 <Feather name="toggle-right" size={18} color="#fff" />
-              </LinearGradient>
+              </Gradient>
               <Text style={styles.chefActionLabel}>Disponible</Text>
             </Pressable>
           </View>
@@ -234,7 +273,7 @@ export default function ProfileScreen() {
 
         {!isChef && (
           <View style={styles.becomeChefBanner}>
-            <LinearGradient
+            <Gradient
               colors={[Colors.light.tint, Colors.light.tintDark]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
@@ -250,7 +289,7 @@ export default function ProfileScreen() {
               <Pressable style={styles.becomeChefBtn} onPress={() => router.push("/auth/register-chef")}>
                 <Text style={styles.becomeChefBtnText}>S'inscrire</Text>
               </Pressable>
-            </LinearGradient>
+            </Gradient>
           </View>
         )}
 
@@ -271,11 +310,52 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
-  guestContainer: { justifyContent: "center", alignItems: "center" },
-  guestContent: { padding: 32, alignItems: "center", gap: 12, width: "100%" },
-  guestIcon: { width: 80, height: 80, borderRadius: 40, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  guestTitle: { fontSize: 22, fontFamily: "Poppins_700Bold", color: Colors.light.text, textAlign: "center" },
-  guestSub: { fontSize: 14, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, textAlign: "center", lineHeight: 20, marginBottom: 12 },
+  guestScrollContent: { paddingBottom: Platform.OS === "web" ? 120 : 100 },
+  guestContent: { padding: 16, alignItems: "center", gap: 12, width: "100%", maxWidth: 520, alignSelf: "center" },
+  guestHero: {
+    width: "100%",
+    minHeight: 340,
+    borderRadius: 28,
+    overflow: "hidden",
+    justifyContent: "flex-end",
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    marginBottom: 12,
+  },
+  guestHeroMedia: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  guestHeroOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(70, 32, 12, 0.18)",
+  },
+  guestHeroContent: {
+    position: "relative",
+    zIndex: 1,
+    gap: 8,
+    width: "100%",
+    paddingHorizontal: 22,
+    paddingVertical: 20,
+    backgroundColor: "rgba(18, 18, 18, 0.26)",
+  },
+  guestHeroTitle: {
+    fontSize: 28,
+    fontFamily: "Poppins_700Bold",
+    color: "#fff",
+  },
+  guestHeroSub: {
+    fontSize: 14,
+    fontFamily: "Poppins_400Regular",
+    color: "rgba(255,255,255,0.9)",
+    lineHeight: 21,
+  },
+  guestIllustration: {
+    width: "124%",
+    height: "124%",
+  },
   loginBtn: { width: "100%", backgroundColor: Colors.light.tint, borderRadius: 16, paddingVertical: 15, alignItems: "center", shadowColor: Colors.light.tint, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   loginBtnText: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   registerBtn: { width: "100%", borderWidth: 1.5, borderColor: Colors.light.tint, borderRadius: 16, paddingVertical: 14, alignItems: "center" },
@@ -285,6 +365,8 @@ const styles = StyleSheet.create({
   dividerText: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   chefBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: Colors.light.cardBorder },
   chefBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
+  courierBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#ECFDF5", borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: "#A7F3D0" },
+  courierBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
   profileHeader: { alignItems: "center", paddingBottom: 24, paddingTop: 12 },
   avatarWrapper: { position: "relative", marginBottom: 14 },
   avatar: { width: 88, height: 88, borderRadius: 44, alignItems: "center", justifyContent: "center" },

@@ -1,19 +1,35 @@
-import app from "./app";
+import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const rawPort = process.env["PORT"];
+// Load env files from workspace root BEFORE any other imports.
+// `.env` provides the base configuration and `.env.local` only fills missing values.
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const workspaceRoot = path.resolve(__dirname, "../../..");
 
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+const localPath = path.join(workspaceRoot, ".env.local");
+const envPath = path.join(workspaceRoot, ".env");
+
+const loaded: string[] = [];
+
+if (fs.existsSync(envPath)) {
+	dotenv.config({ path: envPath });
+	loaded.push(".env");
 }
 
-const port = Number(rawPort);
-
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
+if (fs.existsSync(localPath)) {
+	dotenv.config({ path: localPath });
+	loaded.push(".env.local");
 }
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+if (loaded.length > 0) {
+	console.log(`[env] loaded ${loaded.join(" + ")}`);
+} else {
+	console.warn("[env] no .env or .env.local found in workspace root");
+}
+
+// Now that env vars are loaded, import and run the server
+import("./server.js");
+

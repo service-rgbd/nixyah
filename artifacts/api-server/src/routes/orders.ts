@@ -1,12 +1,12 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { ordersTable, orderItemsTable, chefProfilesTable, usersTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
-import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
+import { ordersTable, orderItemsTable, chefProfilesTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable } from "@workspace/db/schema";
+import { eq, inArray } from "drizzle-orm";
+import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 
 const router: IRouter = Router();
 
-router.get("/orders", requireAuth, async (req: AuthRequest, res) => {
+router.get("/orders", requireClient, async (req: AuthRequest, res) => {
   try {
     const orders = await db
       .select()
@@ -18,6 +18,14 @@ router.get("/orders", requireAuth, async (req: AuthRequest, res) => {
     const result = await Promise.all(
       orders.map(async ({ orders: o, users: u }) => {
         const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, o.id));
+        const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, o.id)).limit(1);
+        const [latestLocation] = deliveryJob
+          ? await db
+              .select()
+              .from(deliveryLocationUpdatesTable)
+              .where(eq(deliveryLocationUpdatesTable.deliveryJobId, deliveryJob.id))
+              .limit(1)
+          : [];
         return {
           id: String(o.id),
           clientId: String(o.clientId),
@@ -29,6 +37,25 @@ router.get("/orders", requireAuth, async (req: AuthRequest, res) => {
           persons: o.persons,
           notes: o.notes,
           createdAt: o.createdAt.toISOString(),
+          delivery: deliveryJob
+            ? {
+                id: String(deliveryJob.id),
+                status: deliveryJob.status,
+                courierUserId: deliveryJob.courierUserId ? String(deliveryJob.courierUserId) : null,
+                deliveryAddress: deliveryJob.deliveryAddress,
+                restaurantAddress: deliveryJob.restaurantAddress,
+                latestLocation: latestLocation
+                  ? {
+                      latitude: latestLocation.latitude,
+                      longitude: latestLocation.longitude,
+                      accuracy: latestLocation.accuracy,
+                      heading: latestLocation.heading,
+                      speed: latestLocation.speed,
+                      createdAt: latestLocation.createdAt.toISOString(),
+                    }
+                  : null,
+              }
+            : null,
           items: items.map((i) => ({
             dishId: String(i.dishId ?? ""),
             dishName: i.dishName,
@@ -46,18 +73,69 @@ router.get("/orders", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-router.post("/orders", requireAuth, async (req: AuthRequest, res) => {
+router.post("/orders", requireClient, async (req: AuthRequest, res) => {
   try {
     const { chefId, occasion, persons, budget, notes, items } = req.body;
+    const parsedChefId = Number(chefId);
+    const normalizedItems = Array.isArray(items) ? items : [];
 
-    const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, parseInt(chefId)));
+    if (!Number.isInteger(parsedChefId) || parsedChefId <= 0) {
+      res.status(400).json({ error: "BadRequest", message: "Cuisinière invalide" });
+      return;
+    }
+    if (normalizedItems.length === 0) {
+      res.status(400).json({ error: "BadRequest", message: "La commande doit contenir au moins un plat" });
+      return;
+    }
+
+    const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, parsedChefId));
     if (!cp) {
       res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
       return;
     }
 
+    const requestedDishIds = normalizedItems
+      .map((item: any) => Number(item?.dishId))
+      .filter((dishId: number) => Number.isInteger(dishId) && dishId > 0);
+
+    if (requestedDishIds.length !== normalizedItems.length) {
+      res.status(400).json({ error: "BadRequest", message: "Les plats de la commande sont invalides" });
+      return;
+    }
+
+    const dishes = await db.select().from(dishesTable).where(inArray(dishesTable.id, requestedDishIds));
+    if (dishes.length !== requestedDishIds.length) {
+      res.status(400).json({ error: "BadRequest", message: "Un ou plusieurs plats sont introuvables" });
+      return;
+    }
+
+    const dishesById = new Map(dishes.map((dish) => [dish.id, dish]));
+    const invalidChefDish = dishes.some((dish) => dish.chefProfileId !== cp.id);
+    if (invalidChefDish) {
+      res.status(400).json({ error: "BadRequest", message: "Tous les plats doivent appartenir à la même cuisinière" });
+      return;
+    }
+
     const [u] = await db.select().from(usersTable).where(eq(usersTable.id, cp.userId));
-    const total = items ? items.reduce((sum: number, i: any) => sum + i.price * i.quantity, 0) : 0;
+    const safeItems = normalizedItems.map((item: any) => {
+      const dish = dishesById.get(Number(item.dishId));
+      const quantity = Number(item.quantity);
+      if (!dish || !Number.isInteger(quantity) || quantity <= 0) {
+        return null;
+      }
+      return {
+        dishId: dish.id,
+        dishName: dish.name,
+        quantity,
+        price: dish.price,
+      };
+    });
+    if (safeItems.some((item) => item === null)) {
+      res.status(400).json({ error: "BadRequest", message: "Les quantités de commande sont invalides" });
+      return;
+    }
+    const finalItems = safeItems.filter((item): item is NonNullable<typeof item> => item !== null);
+    const total = finalItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
     const [order] = await db.insert(ordersTable).values({
       clientId: req.userId!,
@@ -65,18 +143,19 @@ router.post("/orders", requireAuth, async (req: AuthRequest, res) => {
       status: "pending",
       total,
       occasion: occasion || null,
-      persons: persons || null,
+      persons: persons ? Number(persons) : null,
       budget: budget || null,
       notes: notes || null,
     }).returning();
 
-    if (items && items.length > 0) {
+    if (finalItems.length > 0) {
       await db.insert(orderItemsTable).values(
-        items.map((i: any) => ({
+        finalItems.map((item) => ({
           orderId: order.id,
-          dishName: i.dishName,
-          quantity: i.quantity,
-          price: i.price,
+          dishId: item.dishId,
+          dishName: item.dishName,
+          quantity: item.quantity,
+          price: item.price,
         }))
       );
     }
@@ -92,7 +171,7 @@ router.post("/orders", requireAuth, async (req: AuthRequest, res) => {
       persons: order.persons,
       notes: order.notes,
       createdAt: order.createdAt.toISOString(),
-      items: items || [],
+      items: finalItems,
     });
   } catch (err) {
     console.error("create order error:", err);

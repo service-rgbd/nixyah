@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
+import Gradient from "@/components/SafeGradient";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -33,7 +33,7 @@ const STEPS = [
 export default function OrderScreen() {
   const { chefId } = useLocalSearchParams<{ chefId: string }>();
   const insets = useSafeAreaInsets();
-  const { getChef, addOrder } = useApp();
+  const { getChef, addOrder, user } = useApp();
   const chef = getChef(chefId ?? "");
 
   const [step, setStep] = useState(0);
@@ -46,6 +46,25 @@ export default function OrderScreen() {
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const bottomInset = Platform.OS === "web" ? 34 : insets.bottom;
+
+  if (user?.type === "courier") {
+    return (
+      <View style={[styles.container, { paddingTop: topInset }]}>
+        <View style={styles.successContent}>
+          <Gradient colors={["#0F766E", "#115E59"]} style={styles.successIcon}>
+            <Feather name="truck" size={40} color="#fff" />
+          </Gradient>
+          <Text style={styles.successTitle}>Espace livreur</Text>
+          <Text style={styles.successDesc}>
+            Les livreurs ne peuvent pas créer ni passer de commande.
+          </Text>
+          <Pressable style={styles.successBtn} onPress={() => router.replace("/(tabs)/orders")}>
+            <Text style={styles.successBtnText}>Voir les missions</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   const canProceed = () => {
     if (step === 0) return !!occasion;
@@ -84,12 +103,12 @@ export default function OrderScreen() {
     return (
       <View style={[styles.container, { paddingTop: topInset }]}>
         <View style={styles.successContent}>
-          <LinearGradient
-            colors={[Colors.light.tint, Colors.light.tintDark]}
-            style={styles.successIcon}
-          >
-            <Feather name="check" size={40} color="#fff" />
-          </LinearGradient>
+            <Gradient
+              colors={[Colors.light.tint, Colors.light.tintDark]}
+              style={styles.successIcon}
+            >
+              <Feather name="check" size={40} color="#fff" />
+            </Gradient>
           <Text style={styles.successTitle}>Demande envoyée !</Text>
           <Text style={styles.successDesc}>
             {chef?.name} a reçu votre demande et vous répondra dans {chef?.responseTime}.
@@ -101,7 +120,7 @@ export default function OrderScreen() {
           >
             <Text style={styles.successBtnText}>Voir mes commandes</Text>
           </Pressable>
-          <Pressable onPress={() => router.push("/(tabs)/index")}>
+          <Pressable onPress={() => router.push("/") }>
             <Text style={styles.homeLink}>Retour à l'accueil</Text>
           </Pressable>
         </View>
@@ -246,7 +265,7 @@ export default function OrderScreen() {
           onPress={handleNext}
           disabled={!canProceed()}
         >
-          <LinearGradient
+          <Gradient
             colors={canProceed() ? [Colors.light.tint, Colors.light.tintDark] : [Colors.light.tabIconDefault, Colors.light.tabIconDefault]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
@@ -256,7 +275,7 @@ export default function OrderScreen() {
               {step < STEPS.length - 1 ? "Continuer" : "Envoyer la demande"}
             </Text>
             <Feather name={step < STEPS.length - 1 ? "arrow-right" : "send"} size={18} color="#fff" />
-          </LinearGradient>
+          </Gradient>
         </Pressable>
         {step === 3 && (
           <Pressable onPress={handleNext}>

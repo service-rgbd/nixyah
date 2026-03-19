@@ -1,9 +1,9 @@
-import { Feather } from "@expo/vector-icons";
+import { Feather, Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Dimensions,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -17,44 +17,79 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp, Chef } from "@/contexts/AppContext";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const CARD_GAP = 14;
-const CARD_H_PADDING = 20;
-const CARD_WIDTH = (SCREEN_WIDTH - CARD_H_PADDING * 2 - CARD_GAP) / 2;
-
 const FILTERS = ["Toutes", "Ivoirien", "Grillades", "Événements", "Snacks", "Desserts", "Dioula"];
-const SORT = ["Popularité", "Note", "Prix"];
 
-function ChefGridCard({ chef, isFavorite, onFavoriteToggle }: { chef: Chef; isFavorite: boolean; onFavoriteToggle: () => void }) {
+function ChefShowcaseCard({ chef, isFavorite, onFavoriteToggle }: { chef: Chef; isFavorite: boolean; onFavoriteToggle: () => void }) {
   const initials = chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2);
+  const specialties = chef.dishes.slice(0, 3).map((dish) => dish.name).filter(Boolean);
   return (
     <Pressable
-      style={[styles.card, { width: CARD_WIDTH }]}
+      style={styles.showcaseCard}
       onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
     >
-      <View style={[styles.cardBg, { backgroundColor: chef.coverColor }]}>
-        <Text style={styles.cardInitials}>{initials}</Text>
-        <Pressable style={styles.heartBtn} onPress={onFavoriteToggle} hitSlop={12}>
-          <Feather name="heart" size={14} color={isFavorite ? "#fff" : "rgba(255,255,255,0.7)"} />
-        </Pressable>
+      <View style={[styles.showcaseHero, { backgroundColor: chef.coverColor }]}>
+        <View style={styles.showcaseHeroTop}>
+          <View style={styles.showcasePill}>
+            <Ionicons name="star" size={12} color="#F7C27B" />
+            <Text style={styles.showcasePillText}>{chef.rating.toFixed(1)} · {chef.reviewCount} avis</Text>
+          </View>
+          <Pressable style={styles.showcaseHeartBtn} onPress={onFavoriteToggle} hitSlop={12}>
+            <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={16} color="#fff" />
+          </Pressable>
+        </View>
+
+        <View style={styles.showcaseHeroBottom}>
+          {chef.avatarUrl ? (
+            <Image source={{ uri: chef.avatarUrl as string }} style={styles.showcaseAvatarImage} />
+          ) : (
+            <View style={styles.showcaseAvatarFallback}>
+              <Text style={styles.showcaseInitials}>{initials}</Text>
+            </View>
+          )}
+          <View style={styles.showcaseHeroText}>
+            <Text style={styles.showcaseName}>{chef.name}</Text>
+            <Text style={styles.showcaseSpecialty}>{chef.specialty}</Text>
+          </View>
+        </View>
+
         {chef.isOnline && (
-          <View style={styles.onlineBadge}>
-            <View style={styles.onlineDot} />
-            <Text style={styles.onlineText}>En ligne</Text>
+          <View style={styles.showcaseOnlineBadge}>
+            <View style={styles.showcaseOnlineDot} />
+            <Text style={styles.showcaseOnlineText}>Disponible maintenant</Text>
           </View>
         )}
       </View>
-      <View style={styles.cardInfo}>
-        <Text style={styles.cardName} numberOfLines={1}>{chef.name}</Text>
-        <Text style={styles.cardSpecialty} numberOfLines={1}>{chef.specialty}</Text>
-        <View style={styles.cardMeta}>
-          <Feather name="star" size={11} color="#F59E0B" />
-          <Text style={styles.cardRating}>{chef.rating.toFixed(1)}</Text>
-          <Text style={styles.cardDot}>·</Text>
-          <Feather name="map-pin" size={10} color={Colors.light.textTertiary} />
-          <Text style={styles.cardLocation} numberOfLines={1}>{chef.location.split(",")[0]}</Text>
+      <View style={styles.showcaseContent}>
+        <View style={styles.showcaseMetaRow}>
+          <View style={styles.showcaseMetaItem}>
+            <Feather name="map-pin" size={12} color={Colors.light.textTertiary} />
+            <Text style={styles.showcaseMetaText}>{chef.location.split(",")[0]}</Text>
+          </View>
+          <View style={styles.showcaseMetaItem}>
+            <Feather name="clock" size={12} color={Colors.light.textTertiary} />
+            <Text style={styles.showcaseMetaText}>{chef.responseTime}</Text>
+          </View>
+          <Text style={styles.showcasePrice}>{chef.priceRange || "Tarif sur demande"}</Text>
         </View>
-        <Text style={styles.cardPrice} numberOfLines={1}>{chef.priceRange}</Text>
+
+        {specialties.length > 0 ? (
+          <View style={styles.specialtiesRow}>
+            {specialties.map((label) => (
+              <View key={label} style={styles.specialtyChip}>
+                <Text style={styles.specialtyChipText} numberOfLines={1}>{label}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.showcaseFooter}>
+          <Text style={styles.showcaseBio} numberOfLines={2}>
+            {chef.bio || "Cuisine maison, service soigne et saveurs pensees pour votre moment."}
+          </Text>
+          <View style={styles.showcaseArrow}>
+            <Feather name="arrow-right" size={16} color={Colors.light.tint} />
+          </View>
+        </View>
       </View>
     </Pressable>
   );
@@ -65,7 +100,6 @@ export default function SearchScreen() {
   const { chefs, favorites, toggleFavorite, isLoadingChefs } = useApp();
   const [query, setQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("Toutes");
-  const [selectedSort, setSelectedSort] = useState("Popularité");
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
 
@@ -81,17 +115,20 @@ export default function SearchScreen() {
         chef.specialty.toLowerCase().includes(selectedFilter.toLowerCase());
       return matchQuery && matchFilter;
     })
-    .sort((a, b) => {
-      if (selectedSort === "Note") return b.rating - a.rating;
-      if (selectedSort === "Popularité") return b.reviewCount - a.reviewCount;
-      return 0;
-    });
+    .sort((a, b) => b.reviewCount - a.reviewCount || b.rating - a.rating);
+  const featuredChef = filtered[0] ?? null;
+  const secondaryChefs = featuredChef ? filtered.slice(1) : filtered;
 
   return (
     <View style={[styles.container, { paddingTop: topInset }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Découvrir</Text>
-        <Text style={styles.subtitle}>{chefs.length} cuisinières disponibles</Text>
+        <View style={styles.titleRow}>
+          <View style={styles.titleIcon}>
+            <Feather name="search" size={17} color={Colors.light.tint} />
+          </View>
+          <Text style={styles.title}>Découvrir</Text>
+        </View>
+        <Text style={styles.subtitle}>{chefs.length} cuisinières sélectionnées pour vous</Text>
         <View style={styles.searchBox}>
           <Feather name="search" size={16} color={Colors.light.textTertiary} />
           <TextInput
@@ -127,28 +164,7 @@ export default function SearchScreen() {
         ))}
       </ScrollView>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.sortRow}
-        style={styles.sortBar}
-      >
-        {SORT.map((s) => (
-          <Pressable
-            key={s}
-            style={[styles.sortChip, selectedSort === s && styles.sortChipActive]}
-            onPress={() => setSelectedSort(s)}
-          >
-            {selectedSort === s && <Feather name="check" size={11} color={Colors.light.tint} />}
-            <Text style={[styles.sortText, selectedSort === s && styles.sortTextActive]}>{s}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      <ScrollView
-        contentContainerStyle={[styles.results, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={[styles.results, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]} showsVerticalScrollIndicator={false}>
         {isLoadingChefs ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={Colors.light.tint} size="large" />
@@ -161,9 +177,19 @@ export default function SearchScreen() {
             <Text style={styles.emptyDesc}>Essayez un autre mot-clé ou quartier</Text>
           </View>
         ) : (
-          <View style={styles.grid}>
-            {filtered.map((chef) => (
-              <ChefGridCard
+          <View style={styles.showcaseList}>
+            {featuredChef ? (
+              <View style={styles.featuredProfileWrap}>
+                <Text style={styles.sectionCaption}>Profil mis en avant</Text>
+                <ChefShowcaseCard
+                  chef={featuredChef}
+                  isFavorite={favorites.includes(featuredChef.id)}
+                  onFavoriteToggle={() => toggleFavorite(featuredChef.id)}
+                />
+              </View>
+            ) : null}
+            {secondaryChefs.map((chef) => (
+              <ChefShowcaseCard
                 key={chef.id}
                 chef={chef}
                 isFavorite={favorites.includes(chef.id)}
@@ -180,11 +206,26 @@ export default function SearchScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
   header: { paddingHorizontal: 20, paddingBottom: 12 },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 4,
+  },
+  titleIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.light.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   title: {
     fontSize: 26,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.text,
-    marginBottom: 2,
   },
   subtitle: {
     fontSize: 13,
@@ -210,8 +251,8 @@ const styles = StyleSheet.create({
     color: Colors.light.text,
     padding: 0,
   },
-  filtersBar: { maxHeight: 52 },
-  filtersRow: { paddingHorizontal: 20, gap: 8, alignItems: "center", paddingVertical: 8 },
+  filtersBar: { maxHeight: 48 },
+  filtersRow: { paddingHorizontal: 20, gap: 8, alignItems: "center", paddingVertical: 6 },
   filterChip: {
     paddingHorizontal: 14,
     paddingVertical: 7,
@@ -227,79 +268,182 @@ const styles = StyleSheet.create({
     color: Colors.light.textSecondary,
   },
   filterTextActive: { color: "#fff" },
-  sortBar: { maxHeight: 44 },
-  sortRow: { paddingHorizontal: 20, gap: 8, alignItems: "center", paddingVertical: 4 },
-  sortChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    backgroundColor: "transparent",
+  results: { paddingHorizontal: 20, paddingTop: 8 },
+  showcaseList: { gap: 16 },
+  featuredProfileWrap: {
+    gap: 10,
   },
-  sortChipActive: { backgroundColor: Colors.light.backgroundSecondary },
-  sortText: {
+  sectionCaption: {
     fontSize: 12,
-    fontFamily: "Poppins_400Regular",
+    fontFamily: "Poppins_700Bold",
     color: Colors.light.textTertiary,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
-  sortTextActive: { color: Colors.light.tint, fontFamily: "Poppins_600SemiBold" },
-  results: { paddingHorizontal: CARD_H_PADDING, paddingTop: 8 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: CARD_GAP },
   loadingState: { alignItems: "center", paddingTop: 60, gap: 12 },
   loadingText: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   emptyState: { alignItems: "center", paddingTop: 60, gap: 10 },
   emptyTitle: { fontSize: 17, fontFamily: "Poppins_600SemiBold", color: Colors.light.textSecondary },
   emptyDesc: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, textAlign: "center" },
-  card: {
-    borderRadius: 16,
+  showcaseCard: {
+    borderRadius: 24,
     backgroundColor: Colors.light.card,
-    overflow: "hidden",
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
+    overflow: "hidden",
+    shadowColor: Colors.light.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    elevation: 4,
   },
-  cardBg: {
-    height: 110,
+  showcaseHero: {
+    minHeight: 156,
+    padding: 16,
+    justifyContent: "space-between",
+  },
+  showcaseHeroTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  showcasePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  showcasePillText: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#fff",
+  },
+  showcaseHeartBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(0,0,0,0.16)",
     alignItems: "center",
     justifyContent: "center",
   },
-  cardInitials: {
-    fontSize: 30,
+  showcaseHeroBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  showcaseAvatarImage: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.45)",
+  },
+  showcaseAvatarFallback: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  showcaseInitials: {
+    fontSize: 24,
     fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.9)",
+    color: "#fff",
   },
-  heartBtn: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.2)",
+  showcaseHeroText: {
+    flex: 1,
+    gap: 2,
+  },
+  showcaseName: {
+    fontSize: 20,
+    fontFamily: "Poppins_700Bold",
+    color: "#fff",
+  },
+  showcaseSpecialty: {
+    fontSize: 13,
+    fontFamily: "Poppins_500Medium",
+    color: "rgba(255,255,255,0.88)",
+  },
+  showcaseOnlineBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "rgba(0,0,0,0.22)",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
-  onlineBadge: {
-    position: "absolute",
-    bottom: 8,
-    left: 8,
+  showcaseOnlineDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#4ADE80" },
+  showcaseOnlineText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  showcaseContent: {
+    padding: 16,
+    gap: 12,
+  },
+  showcaseMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  showcaseMetaItem: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    borderRadius: 10,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
   },
-  onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#4ADE80" },
-  onlineText: { fontSize: 9, fontFamily: "Poppins_500Medium", color: "#fff" },
-  cardInfo: { padding: 10 },
-  cardName: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
-  cardSpecialty: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, marginTop: 1 },
-  cardMeta: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 5 },
-  cardRating: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
-  cardDot: { fontSize: 11, color: Colors.light.textTertiary },
-  cardLocation: { fontSize: 10, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, flex: 1 },
-  cardPrice: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint, marginTop: 4 },
+  showcaseMetaText: {
+    fontSize: 12,
+    fontFamily: "Poppins_500Medium",
+    color: Colors.light.textSecondary,
+  },
+  showcasePrice: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tint,
+  },
+  specialtiesRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  specialtyChip: {
+    backgroundColor: Colors.light.backgroundSecondary,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  specialtyChipText: {
+    maxWidth: 120,
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.text,
+  },
+  showcaseFooter: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  showcaseBio: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 19,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  showcaseArrow: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.light.backgroundSecondary,
+  },
 });

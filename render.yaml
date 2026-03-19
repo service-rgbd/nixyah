@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ivory-diaspora-api
+    runtime: node
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile
+    startCommand: pnpm --filter @workspace/api-server start
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 10000
+      - key: API_PUBLIC_URL
+        value: https://api.nixyah.com/api
+      - key: EXPO_PUBLIC_API_URL
+        value: https://api.nixyah.com/api
+      - key: EXPO_PUBLIC_APP_URL
+        value: mobile://

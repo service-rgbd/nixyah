@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
+import Gradient from "@/components/SafeGradient";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { Dish, useApp } from "@/contexts/AppContext";
 
-const TABS = ["Plats rapides", "Menus", "À propos"];
+const TABS = ["Plats rapides", "Menus", "Stories", "À propos"];
 
 function DishCard({
   dish,
@@ -72,12 +72,13 @@ function DishCard({
 export default function ChefDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { getChef, favorites, toggleFavorite } = useApp();
+  const { getChef, favorites, toggleFavorite, stories, user } = useApp();
   const [activeTab, setActiveTab] = useState(0);
   const [cart, setCart] = useState<Record<string, number>>({});
 
   const chef = getChef(id ?? "");
   const isFav = favorites.includes(id ?? "");
+  const isCourier = user?.type === "courier";
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const bottomInset = Platform.OS === "web" ? 34 : insets.bottom;
@@ -106,7 +107,7 @@ export default function ChefDetailScreen() {
   return (
     <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: totalItems > 0 ? 120 : 60 }}>
-        <LinearGradient
+        <Gradient
           colors={[chef.coverColor, chef.coverColor + "CC"]}
           style={[styles.hero, { paddingTop: topInset }]}
         >
@@ -165,7 +166,7 @@ export default function ChefDetailScreen() {
               </View>
             </View>
           </View>
-        </LinearGradient>
+        </Gradient>
 
         <View style={styles.tabs}>
           {TABS.map((tab, i) => (
@@ -185,8 +186,11 @@ export default function ChefDetailScreen() {
               <DishCard
                 key={dish.id}
                 dish={dish}
-                quantity={cart[dish.id] || 0}
-                onAdd={() => addToCart(dish.id)}
+                quantity={isCourier ? 0 : (cart[dish.id] || 0)}
+                onAdd={() => {
+                  if (isCourier) return;
+                  addToCart(dish.id);
+                }}
               />
             ))}
           </View>
@@ -199,31 +203,62 @@ export default function ChefDetailScreen() {
               <Text style={styles.menuCardDesc}>
                 Demandez un menu sur-mesure pour votre occasion spéciale. {chef.name} s'adapte à vos besoins.
               </Text>
-              <Pressable
-                style={styles.menuOrderBtn}
-                onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
-              >
-                <Text style={styles.menuOrderBtnText}>Créer ma demande</Text>
-                <Feather name="arrow-right" size={16} color="#fff" />
-              </Pressable>
+              {!isCourier ? (
+                <Pressable
+                  style={styles.menuOrderBtn}
+                  onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
+                >
+                  <Text style={styles.menuOrderBtnText}>Créer ma demande</Text>
+                  <Feather name="arrow-right" size={16} color="#fff" />
+                </Pressable>
+              ) : null}
             </View>
             <View style={styles.menuCard}>
               <Text style={styles.menuCardTitle}>Chef à domicile</Text>
               <Text style={styles.menuCardDesc}>
                 Invitez {chef.name.split(" ")[0]} chez vous pour cuisiner en direct pour votre événement.
               </Text>
-              <Pressable
-                style={[styles.menuOrderBtn, { backgroundColor: Colors.light.tintDark }]}
-                onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
-              >
-                <Text style={styles.menuOrderBtnText}>Réserver un chef</Text>
-                <Feather name="arrow-right" size={16} color="#fff" />
-              </Pressable>
+              {!isCourier ? (
+                <Pressable
+                  style={[styles.menuOrderBtn, { backgroundColor: Colors.light.tintDark }]}
+                  onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
+                >
+                  <Text style={styles.menuOrderBtnText}>Réserver un chef</Text>
+                  <Feather name="arrow-right" size={16} color="#fff" />
+                </Pressable>
+              ) : null}
             </View>
           </View>
         )}
 
         {activeTab === 2 && (
+          <View style={styles.storiesSection}>
+            {(chef.stories && chef.stories.length > 0) ? (
+              chef.stories.map((story) => (
+                <Pressable key={story.id} style={[styles.storyCard, { backgroundColor: story.bgColor || Colors.light.card }]}>
+                  <View style={styles.storyHeader}>
+                    <Text style={styles.storyCaption} numberOfLines={3}>{story.caption}</Text>
+                    {story.emoji && <Text style={styles.storyEmoji}>{story.emoji}</Text>}
+                  </View>
+                  {story.dishName && (
+                    <View style={styles.storyDish}>
+                      <Text style={styles.storyDishName}>{story.dishName}</Text>
+                      {story.price && <Text style={styles.storyDishPrice}>{story.price.toLocaleString()} FCFA</Text>}
+                    </View>
+                  )}
+                  <Text style={styles.storyTime}>{new Date(story.createdAt).toLocaleDateString('fr-FR')}</Text>
+                </Pressable>
+              ))
+            ) : (
+              <View style={styles.emptyState}>
+                <Feather name="image" size={48} color={Colors.light.textTertiary} />
+                <Text style={styles.emptyStateText}>Aucune story pour le moment</Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {activeTab === 3 && (
           <View style={styles.aboutSection}>
             <View style={styles.aboutCard}>
               <Text style={styles.aboutLabel}>À propos</Text>
@@ -257,7 +292,7 @@ export default function ChefDetailScreen() {
 
       {totalItems > 0 && (
         <View style={[styles.cartBar, { paddingBottom: bottomInset + 12 }]}>
-          <LinearGradient
+          <Gradient
             colors={[Colors.light.tint, Colors.light.tintDark]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
@@ -268,7 +303,7 @@ export default function ChefDetailScreen() {
             </View>
             <Text style={styles.cartText}>Voir mon panier</Text>
             <Text style={styles.cartPrice}>{totalPrice.toLocaleString()} FCFA</Text>
-          </LinearGradient>
+          </Gradient>
         </View>
       )}
 
@@ -419,4 +454,20 @@ const styles = StyleSheet.create({
     paddingVertical: 13, alignItems: "center", justifyContent: "center",
   },
   orderBtnText: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  storiesSection: { padding: 20, gap: 12 },
+  storyCard: {
+    borderRadius: 16, padding: 18,
+    borderWidth: 1, borderColor: Colors.light.cardBorder,
+    shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 1, shadowRadius: 8, elevation: 2, gap: 10,
+  },
+  storyHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12, justifyContent: "space-between" },
+  storyCaption: { flex: 1, fontSize: 15, fontFamily: "Poppins_500Medium", color: Colors.light.text, lineHeight: 22 },
+  storyEmoji: { fontSize: 36 },
+  storyDish: { backgroundColor: "rgba(0,0,0,0.05)", borderRadius: 12, padding: 12, gap: 4 },
+  storyDishName: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  storyDishPrice: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
+  storyTime: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
+  emptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 60, gap: 8 },
+  emptyStateText: { fontSize: 14, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
 });

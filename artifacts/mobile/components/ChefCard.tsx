@@ -6,30 +6,19 @@ import {
   StyleSheet,
   Text,
   View,
+  Image,
 } from "react-native";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from "react-native-reanimated";
 
 import Colors from "@/constants/colors";
-import { Chef } from "@/contexts/AppContext";
 
 interface ChefCardProps {
-  chef: Chef;
+  chef: any;
   variant?: "default" | "compact" | "featured";
   isFavorite?: boolean;
   onFavoriteToggle?: () => void;
 }
 
 export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteToggle }: ChefCardProps) {
-  const scale = useSharedValue(1);
-
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
   const handlePress = () => {
     router.push({ pathname: "/chef/[id]", params: { id: chef.id } });
   };
@@ -38,14 +27,18 @@ export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteTogg
     return (
       <Pressable
         onPress={handlePress}
-        onPressIn={() => { scale.value = withSpring(0.97); }}
-        onPressOut={() => { scale.value = withSpring(1); }}
       >
-        <Animated.View style={[styles.compactCard, animStyle]}>
-          <View style={[styles.compactAvatar, { backgroundColor: chef.coverColor }]}>
-            <Text style={styles.avatarInitials}>
-              {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-            </Text>
+        <View style={styles.compactCard}>
+          <View style={styles.compactAvatarWrapper}>
+            {chef.avatarUrl ? (
+              <Image source={{ uri: chef.avatarUrl as string }} style={styles.compactAvatarImage} />
+            ) : (
+              <View style={[styles.compactAvatar, { backgroundColor: chef.coverColor }]}> 
+                <Text style={styles.avatarInitials}>
+                  {chef.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+                </Text>
+              </View>
+            )}
             {chef.isOnline && <View style={styles.onlineDot} />}
           </View>
           <Text style={styles.compactName} numberOfLines={1}>{chef.name.split(" ")[0]}</Text>
@@ -53,7 +46,7 @@ export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteTogg
             <Ionicons name="star" size={10} color="#F7C27B" />
             <Text style={styles.compactRatingText}>{chef.rating}</Text>
           </View>
-        </Animated.View>
+        </View>
       </Pressable>
     );
   }
@@ -62,14 +55,16 @@ export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteTogg
     return (
       <Pressable
         onPress={handlePress}
-        onPressIn={() => { scale.value = withSpring(0.98); }}
-        onPressOut={() => { scale.value = withSpring(1); }}
       >
-        <Animated.View style={[styles.featuredCard, animStyle]}>
+        <View style={styles.featuredCard}>
           <View style={[styles.featuredBanner, { backgroundColor: chef.coverColor }]}>
-            <Text style={styles.featuredAvatarText}>
-              {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-            </Text>
+            {chef.avatarUrl ? (
+              <Image source={{ uri: chef.avatarUrl as string }} style={styles.featuredAvatarImage} />
+            ) : (
+              <Text style={styles.featuredAvatarText}>
+                {chef.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+              </Text>
+            )}
             {chef.isVerified && (
               <View style={styles.verifiedBadge}>
                 <Ionicons name="checkmark-circle" size={16} color="#fff" />
@@ -113,7 +108,7 @@ export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteTogg
             </View>
             <Text style={styles.priceRange}>{chef.priceRange}</Text>
           </View>
-        </Animated.View>
+        </View>
       </Pressable>
     );
   }
@@ -121,14 +116,16 @@ export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteTogg
   return (
     <Pressable
       onPress={handlePress}
-      onPressIn={() => { scale.value = withSpring(0.98); }}
-      onPressOut={() => { scale.value = withSpring(1); }}
     >
-      <Animated.View style={[styles.card, animStyle]}>
-        <View style={[styles.cardBanner, { backgroundColor: chef.coverColor }]}>
-          <Text style={styles.cardAvatarText}>
-            {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-          </Text>
+      <View style={styles.card}>
+          <View style={[styles.cardBanner, { backgroundColor: chef.coverColor }]}>
+          {chef.avatarUrl ? (
+            <Image source={{ uri: chef.avatarUrl as string }} style={styles.cardAvatarImage} />
+          ) : (
+            <Text style={styles.cardAvatarText}>
+              {chef.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
+            </Text>
+          )}
           {chef.isVerified && (
             <View style={styles.verifiedBadge}>
               <Ionicons name="checkmark-circle" size={14} color="#fff" />
@@ -144,7 +141,7 @@ export function ChefCard({ chef, variant = "default", isFavorite, onFavoriteTogg
             <Text style={styles.reviewText}>• {chef.priceRange}</Text>
           </View>
         </View>
-      </Animated.View>
+      </View>
     </Pressable>
   );
 }
@@ -167,6 +164,11 @@ const styles = StyleSheet.create({
     height: 80,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cardAvatarImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
   },
   cardAvatarText: {
     fontSize: 28,
@@ -203,6 +205,18 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontFamily: "Poppins_700Bold",
     color: "rgba(255,255,255,0.9)",
+  },
+  compactAvatarWrapper: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  compactAvatarImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   onlineDot: {
     position: "absolute",
@@ -254,6 +268,11 @@ const styles = StyleSheet.create({
     fontSize: 44,
     fontFamily: "Poppins_700Bold",
     color: "rgba(255,255,255,0.9)",
+  },
+  featuredAvatarImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
   },
   verifiedBadge: {
     position: "absolute",

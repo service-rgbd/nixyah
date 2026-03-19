@@ -47,3 +47,11 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# environment secrets
+.env
+.env.local
+.env.*.local
+
+# local temp artifacts
+_tmp_*

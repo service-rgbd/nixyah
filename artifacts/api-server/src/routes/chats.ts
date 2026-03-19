@@ -1,19 +1,50 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { chatsTable, messagesTable, chefProfilesTable, usersTable } from "@workspace/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 
 const router: IRouter = Router();
 
+async function getChatForUser(chatId: number, req: AuthRequest) {
+  if (!Number.isInteger(chatId) || chatId <= 0 || !req.userId || !req.userType) {
+    return null;
+  }
+
+  const chatRows = await db
+    .select()
+    .from(chatsTable)
+    .innerJoin(chefProfilesTable, eq(chatsTable.chefProfileId, chefProfilesTable.id))
+    .where(eq(chatsTable.id, chatId))
+    .limit(1);
+
+  const row = chatRows[0];
+  if (!row) {
+    return null;
+  }
+
+  const { chats: chat, chef_profiles: chefProfile } = row;
+  const isClientMember = req.userType === "client" && chat.clientId === req.userId;
+  const isChefMember = req.userType === "chef" && chefProfile.userId === req.userId;
+
+  if (!isClientMember && !isChefMember) {
+    return null;
+  }
+
+  return { chat, chefProfile };
+}
+
 router.get("/chats", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const rows = await db
+    const baseQuery = db
       .select()
       .from(chatsTable)
       .innerJoin(chefProfilesTable, eq(chatsTable.chefProfileId, chefProfilesTable.id))
-      .innerJoin(usersTable, eq(chefProfilesTable.userId, usersTable.id))
-      .where(eq(chatsTable.clientId, req.userId!))
+      .innerJoin(usersTable, eq(chefProfilesTable.userId, usersTable.id));
+
+    const rows = await (req.userType === "chef"
+      ? baseQuery.where(eq(chefProfilesTable.userId, req.userId!))
+      : baseQuery.where(eq(chatsTable.clientId, req.userId!)))
       .orderBy(desc(chatsTable.updatedAt));
 
     const chats = await Promise.all(
@@ -31,8 +62,16 @@ router.get("/chats", requireAuth, async (req: AuthRequest, res) => {
           .where(eq(messagesTable.chatId, c.id));
         const unread = allMsgs.filter((m) => m.senderId !== req.userId).length;
 
+        let clientName = null;
+        if (req.userType === "chef") {
+          const [client] = await db.select().from(usersTable).where(eq(usersTable.id, c.clientId)).limit(1);
+          clientName = client?.name ?? null;
+        }
+
         return {
           id: String(c.id),
+          clientId: String(c.clientId),
+          clientName,
           chefId: String(cp.id),
           chefName: u.name,
           chefSpecialty: cp.specialty,
@@ -53,7 +92,13 @@ router.get("/chats", requireAuth, async (req: AuthRequest, res) => {
 
 router.get("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const chatId = parseInt(req.params.chatId);
+    const chatId = parseInt(String(req.params.chatId));
+    const authorizedChat = await getChatForUser(chatId, req);
+    if (!authorizedChat) {
+      res.status(403).json({ error: "Forbidden", message: "Accès refusé à cette conversation" });
+      return;
+    }
+
     const messages = await db
       .select()
       .from(messagesTable)
@@ -85,14 +130,18 @@ router.post("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res
     }
 
     let chatId: number;
-    const rawChatId = req.params.chatId;
+    const rawChatId = String(req.params.chatId ?? "");
 
     if (rawChatId === "new" || isNaN(parseInt(rawChatId))) {
+      if (req.userType !== "client") {
+        res.status(403).json({ error: "Forbidden", message: "Seules les clientes peuvent initier un nouveau chat" });
+        return;
+      }
       if (!chefId) {
         res.status(400).json({ error: "BadRequest", message: "chefId requis pour nouveau chat" });
         return;
       }
-      const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, parseInt(chefId)));
+      const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, parseInt(String(chefId))));
       if (!cp) {
         res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
         return;
@@ -101,8 +150,9 @@ router.post("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res
       const existing = await db
         .select()
         .from(chatsTable)
-        .where(eq(chatsTable.clientId, req.userId!));
-      const existingChat = existing.find((c) => c.chefProfileId === cp.id);
+        .where(and(eq(chatsTable.clientId, req.userId!), eq(chatsTable.chefProfileId, cp.id)))
+        .limit(1);
+      const existingChat = existing[0];
 
       if (existingChat) {
         chatId = existingChat.id;
@@ -115,6 +165,11 @@ router.post("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res
       }
     } else {
       chatId = parseInt(rawChatId);
+      const authorizedChat = await getChatForUser(chatId, req);
+      if (!authorizedChat) {
+        res.status(403).json({ error: "Forbidden", message: "Accès refusé à cette conversation" });
+        return;
+      }
     }
 
     const [message] = await db.insert(messagesTable).values({

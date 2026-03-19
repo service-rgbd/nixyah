@@ -11,10 +11,13 @@ import {
   Text,
   TextInput,
   View,
+  Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
+import * as ImagePicker from "expo-image-picker";
+import { uploadFile } from "@/constants/api";
 
 const EMOJIS = ["🍲", "🍗", "🐟", "🌶️", "🎂", "🥘", "🍛", "🥩", "🍜", "🥗", "🍤", "🫕", "🌽", "🥦", "🍌"];
 const BG_COLORS = [
@@ -24,7 +27,7 @@ const BG_COLORS = [
 
 export default function PostStoryScreen() {
   const insets = useSafeAreaInsets();
-  const { postStory, user } = useApp();
+  const { postStory, user, token } = useApp();
   const [caption, setCaption] = useState("");
   const [dishName, setDishName] = useState("");
   const [price, setPrice] = useState("");
@@ -32,6 +35,8 @@ export default function PostStoryScreen() {
   const [selectedColor, setSelectedColor] = useState(user?.coverColor ?? "#C4522A");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const handlePost = async () => {
     if (!caption.trim()) {
@@ -47,12 +52,40 @@ export default function PostStoryScreen() {
         price: price ? parseFloat(price) : undefined,
         emoji: selectedEmoji,
         bgColor: selectedColor,
+        imageUrl: imageUri ?? undefined,
       });
       router.back();
     } catch (e: any) {
       setError(e.message ?? "Erreur lors de la publication");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const pickImage = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return setError("Autorisez l'accès aux photos pour ajouter une image");
+      const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8 });
+      if (res.canceled) return;
+      const uri = Array.isArray(res.assets) && res.assets.length > 0 ? res.assets[0].uri : undefined;
+      if (!uri) return;
+      setUploadingImage(true);
+      const filename = uri.split('/').pop() ?? `story-${Date.now()}.jpg`;
+      const contentType = 'image/jpeg';
+      const { publicUrl } = await uploadFile({
+        fileUri: uri,
+        filename,
+        contentType,
+        purpose: "story",
+        token: token ?? undefined,
+      });
+      setImageUri(publicUrl ?? null);
+    } catch (err) {
+      console.warn('story image upload failed', err);
+      setError('Impossible d\'uploader l\'image');
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -79,6 +112,9 @@ export default function PostStoryScreen() {
       <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 40 }}>
         <View style={styles.preview}>
           <View style={[styles.previewCard, { backgroundColor: selectedColor }]}>
+            {imageUri ? (
+              <Image source={{ uri: imageUri }} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 200, borderTopLeftRadius: 24, borderTopRightRadius: 24 }} />
+            ) : null}
             <Text style={styles.previewEmoji}>{selectedEmoji}</Text>
             <Text style={styles.previewCaption} numberOfLines={3}>
               {caption || "Votre description ici..."}
@@ -181,6 +217,11 @@ export default function PostStoryScreen() {
                   {selectedColor === c && <Feather name="check" size={12} color="#fff" />}
                 </Pressable>
               ))}
+            </View>
+            <View style={{ marginTop: 8 }}>
+              <Pressable style={[styles.publishBtn, { backgroundColor: uploadingImage ? '#ccc' : Colors.light.backgroundSecondary }]} onPress={pickImage}>
+                {uploadingImage ? <ActivityIndicator color="#fff" /> : <Text style={{ color: Colors.light.text }}>{imageUri ? 'Modifier l\'image' : 'Ajouter une image'}</Text>}
+              </Pressable>
             </View>
           </View>
         </View>

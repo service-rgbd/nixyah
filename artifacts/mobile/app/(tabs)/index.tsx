@@ -1,9 +1,9 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Dimensions,
+  Image,
+  type ImageSourcePropType,
   Platform,
   Pressable,
   ScrollView,
@@ -11,425 +11,517 @@ import {
   Text,
   View,
 } from "react-native";
-import Animated, {
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ChefCard } from "@/components/ChefCard";
+import Gradient from "@/components/SafeGradient";
+import { apiFetch } from "@/constants/api";
 import Colors from "@/constants/colors";
 import { useApp, Story } from "@/contexts/AppContext";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const storiesDuJourIcon = require("@/assets/images/icon-storiesdujour.png") as ImageSourcePropType;
+const gateauxMaisonIcon = require("@/assets/images/icon-maisongateaux.png") as ImageSourcePropType;
+const courierIllustration = require("@/assets/images/courier-delivery-illustration.png") as ImageSourcePropType;
 
-const CATEGORIES = [
-  { id: "all", label: "Tout", icon: "grid" as const },
-  { id: "ivoirien", label: "Ivoirien", icon: "flag" as const },
-  { id: "grillades", label: "Grillades", icon: "zap" as const },
-  { id: "events", label: "Événements", icon: "star" as const },
-  { id: "snacks", label: "Snacks", icon: "coffee" as const },
-  { id: "desserts", label: "Desserts", icon: "heart" as const },
+const SERVICE_GROUPS = [
+  [
+    { id: "restaurants", title: "Restaurants", emoji: "🍔", action: () => router.push("/(tabs)/search") },
+    { id: "courses", title: "Courses", emoji: "🛒", action: () => router.push("/(tabs)/search") },
+  ],
+  [
+    { id: "faq", title: "FAQ", emoji: "❓", action: () => router.push("/(tabs)/help") },
+    { id: "support", title: "Support", emoji: "💬", action: () => router.push("/(tabs)/help") },
+    { id: "courier", title: "Livraison", emoji: "🛵", action: () => router.push("/(tabs)/orders?mode=delivery") },
+  ],
 ];
 
-function StoryItem({ story }: { story: Story }) {
-  const scale = useSharedValue(1);
-  const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
-  const initials = story.chefName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+const CURATED_ITEMS = [
+  { id: "express", title: "Stories du jour", emoji: "📹", imageSource: storiesDuJourIcon, action: () => router.push("/(tabs)/stories") },
+  { id: "verified", title: "Cheffes verifiees", emoji: "✅", action: () => router.push("/(tabs)/search") },
+  { id: "desserts", title: "Gateaux maison", emoji: "🧁", imageSource: gateauxMaisonIcon, action: () => router.push("/(tabs)/search") },
+  { id: "promos", title: "Promotions", emoji: "🏷️", action: () => router.push("/(tabs)/search") },
+];
+
+function StoryCircle({ story }: { story: Story }) {
+  const initials = story.chefName
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
   const bgColor = story.bgColor ?? story.chefCoverColor;
 
   return (
     <Pressable
-      onPressIn={() => { scale.value = withSpring(0.92); }}
-      onPressOut={() => { scale.value = withSpring(1); }}
-      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: story.chefId } })}
+      style={styles.storyCircleItem}
+      onPress={() => router.push({ pathname: "/story/[id]", params: { id: story.id } })}
     >
-      <Animated.View style={[styles.storyWrapper, animStyle]}>
-        <View style={[styles.storyRing, { borderColor: bgColor }]}>
-          <View style={[styles.storyAvatar, { backgroundColor: bgColor }]}>
-            {story.emoji ? (
-              <Text style={styles.storyEmoji}>{story.emoji}</Text>
-            ) : (
-              <Text style={styles.storyInitials}>{initials}</Text>
-            )}
-          </View>
+      <View style={[styles.storyCircleRing, { borderColor: bgColor }]}>
+        <View style={[styles.storyCircleAvatar, { backgroundColor: bgColor }]}>
+          {story.imageUrl ? (
+            <Image source={{ uri: story.imageUrl }} style={styles.storyCircleImage} />
+          ) : story.emoji ? (
+            <Text style={styles.storyCircleEmoji}>{story.emoji}</Text>
+          ) : (
+            <Text style={styles.storyCircleInitials}>{initials}</Text>
+          )}
         </View>
-        <Text style={styles.storyName} numberOfLines={1}>{story.chefName.split(" ")[0]}</Text>
-      </Animated.View>
+      </View>
+      <Text style={styles.storyCircleLabel} numberOfLines={1}>
+        {story.chefName.split(" ")[0]}
+      </Text>
     </Pressable>
   );
 }
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { chefs, stories, favorites, toggleFavorite, user } = useApp();
-  const scrollY = useSharedValue(0);
-  const [selectedCategory, setSelectedCategory] = React.useState("all");
-
+  const { chefs, stories, favorites, toggleFavorite, user, token } = useApp();
   const topInset = Platform.OS === "web" ? 67 : insets.top;
-
-  const scrollHandler = useAnimatedScrollHandler((event) => {
-    scrollY.value = event.contentOffset.y;
-  });
-
-  const headerStyle = useAnimatedStyle(() => ({
-    opacity: scrollY.value > 60 ? 1 : 0,
-  }));
-
-  const popularChefs = chefs.slice(0, 4);
-  const onlineChefs = chefs.filter((c) => c.isOnline);
-
-  const uniqueChefStories: Story[] = [];
+  const isCourier = user?.type === "courier";
+  const locationLabel = user?.location || "Abidjan";
+  const recommendedChefs = chefs.slice(0, 4);
+  const onlineChefs = chefs.filter((chef) => chef.isOnline).slice(0, 8);
+  const uniqueStories: Story[] = [];
   const seen = new Set<string>();
-  for (const s of stories) {
-    if (!seen.has(s.chefId)) {
-      seen.add(s.chefId);
-      uniqueChefStories.push(s);
+
+  for (const story of stories) {
+    if (!seen.has(story.chefId)) {
+      seen.add(story.chefId);
+      uniqueStories.push(story);
     }
   }
 
-  const greeting = user ? `Bonjour ${user.name.split(" ")[0]} 👋` : "Bonjour 👋";
+  const [courierStats, setCourierStats] = useState({ current: 0, available: 0 });
+
+  useEffect(() => {
+    if (!isCourier || !token) return;
+    (async () => {
+      try {
+        const [available, current] = await Promise.all([
+          apiFetch<{ jobs: any[] }>("/delivery/jobs/available", { token }),
+          apiFetch<{ jobs: any[] }>("/delivery/jobs/current", { token }),
+        ]);
+        setCourierStats({ current: current.jobs?.length ?? 0, available: available.jobs?.length ?? 0 });
+      } catch (error) {
+        console.warn("Failed to load courier dashboard:", error);
+      }
+    })();
+  }, [isCourier, token]);
+
+  if (isCourier) {
+    return (
+      <View style={styles.container}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 110 }}>
+          <Gradient colors={["#0F766E", "#115E59", "#134E4A"]} style={[styles.heroSection, { paddingTop: topInset + 10 }]}>
+            <View style={styles.courierHeroCard}>
+              <View style={styles.courierHeroText}>
+                <Text style={styles.courierEyebrow}>Dashboard livreur</Text>
+                <Text style={styles.courierTitle}>Prenez une mission et suivez la course en direct.</Text>
+                <Text style={styles.courierSubtitle}>{user?.courierProfile?.isAvailable ? "Disponible pour recevoir des missions" : "Indisponible actuellement"}</Text>
+              </View>
+              <Image source={courierIllustration} style={styles.courierHeroImage} resizeMode="contain" />
+            </View>
+          </Gradient>
+
+          <View style={styles.mainContent}>
+            <View style={styles.courierStatsRow}>
+              <View style={styles.courierStatCard}>
+                <Text style={styles.courierStatValue}>{courierStats.current}</Text>
+                <Text style={styles.courierStatLabel}>Mission en cours</Text>
+              </View>
+              <View style={styles.courierStatCard}>
+                <Text style={styles.courierStatValue}>{courierStats.available}</Text>
+                <Text style={styles.courierStatLabel}>Missions disponibles</Text>
+              </View>
+            </View>
+
+            <Pressable style={styles.courierPrimaryBtn} onPress={() => router.push("/(tabs)/orders")}>
+              <Feather name="truck" size={18} color="#fff" />
+              <Text style={styles.courierPrimaryBtnText}>Voir les missions</Text>
+            </Pressable>
+
+            <Pressable style={styles.courierSecondaryBtn} onPress={() => router.push("/(tabs)/profile")}>
+              <Feather name="user" size={18} color="#0F766E" />
+              <Text style={styles.courierSecondaryBtnText}>Mon profil livreur</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.stickyHeader, headerStyle, { paddingTop: topInset + 8 }]}>
-        <Text style={styles.stickyLogo}>nixyah</Text>
-      </Animated.View>
-
-      <Animated.ScrollView
-        onScroll={scrollHandler}
-        scrollEventThrottle={16}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}
+        contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 110 }}
       >
-        <LinearGradient
-          colors={["#D4611A", "#B5501A", "#8B3A12"]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.heroGradient, { paddingTop: topInset + 16 }]}
+        <Gradient
+          colors={[Colors.light.tint, Colors.light.terracotta, Colors.light.tintDark]}
+          style={[styles.heroSection, { paddingTop: topInset + 10 }]}
         >
-          <View style={styles.heroTop}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.heroGreeting}>{greeting}</Text>
-              <Text style={styles.heroTitle}>Que mangez-vous{"\n"}aujourd'hui ?</Text>
-            </View>
-            <Pressable
-              onPress={() => user ? router.push("/chat/new") : router.push("/auth/login")}
-              style={styles.bellBtn}
-            >
-              <Ionicons name="notifications-outline" size={22} color="#fff" />
+          <Pressable style={styles.locationPill} onPress={() => router.push("/(tabs)/search")}>
+            <Ionicons name="location-outline" size={15} color={Colors.light.text} />
+            <Text style={styles.locationText} numberOfLines={1}>
+              {locationLabel}
+            </Text>
+            <Feather name="chevron-down" size={16} color={Colors.light.text} />
+          </Pressable>
+
+          <View style={styles.heroGrid}>
+            {SERVICE_GROUPS.map((row, rowIndex) => (
+              <View key={`row-${rowIndex}`} style={styles.heroGridRow}>
+                {row.map((item) => (
+                  <Pressable key={item.id} style={styles.serviceCard} onPress={item.action}>
+                    <View style={styles.serviceIconWrap}>
+                      <Text style={styles.serviceEmoji}>{item.emoji}</Text>
+                    </View>
+                    <Text style={styles.serviceLabel}>{item.title}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </View>
+        </Gradient>
+
+        <View style={styles.mainContent}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Ceci est pour vous</Text>
+            <Pressable onPress={() => router.push("/(tabs)/stories")}>
+              <Feather name="info" size={18} color={Colors.light.textTertiary} />
             </Pressable>
           </View>
 
-          <Pressable
-            style={styles.searchBar}
-            onPress={() => router.push("/(tabs)/search")}
-          >
-            <Feather name="search" size={16} color={Colors.light.textTertiary} />
-            <Text style={styles.searchPlaceholder}>Cuisinière, plat, quartier…</Text>
-            <View style={styles.filterBtn}>
-              <Feather name="sliders" size={14} color={Colors.light.tint} />
-            </View>
-          </Pressable>
-        </LinearGradient>
-
-        {uniqueChefStories.length > 0 && (
-          <View style={styles.storiesSection}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storiesRow}>
-              {uniqueChefStories.map((s) => (
-                <StoryItem key={s.id} story={s} />
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        <View style={styles.categoriesSection}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoriesRow}>
-            {CATEGORIES.map((cat) => (
-              <Pressable
-                key={cat.id}
-                style={[styles.categoryChip, selectedCategory === cat.id && styles.categoryChipActive]}
-                onPress={() => setSelectedCategory(cat.id)}
-              >
-                <Feather
-                  name={cat.icon}
-                  size={13}
-                  color={selectedCategory === cat.id ? "#fff" : Colors.light.textSecondary}
-                />
-                <Text style={[styles.categoryLabel, selectedCategory === cat.id && styles.categoryLabelActive]}>
-                  {cat.label}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.curatedRow}>
+            {CURATED_ITEMS.map((item) => (
+              <Pressable key={item.id} style={styles.curatedCard} onPress={item.action}>
+                <View style={styles.curatedIcon}>
+                  {item.imageSource ? (
+                    <Image source={item.imageSource} style={styles.curatedImage} resizeMode="contain" />
+                  ) : (
+                    <Text style={styles.curatedEmoji}>{item.emoji}</Text>
+                  )}
+                </View>
+                <Text style={styles.curatedTitle} numberOfLines={2}>
+                  {item.title}
                 </Text>
               </Pressable>
             ))}
           </ScrollView>
-        </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>En ligne maintenant</Text>
-          <Pressable onPress={() => router.push("/(tabs)/search")}>
-            <Text style={styles.seeAll}>Voir tout</Text>
-          </Pressable>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
-          {onlineChefs.map((chef) => (
-            <ChefCard
-              key={chef.id}
-              chef={chef}
-              variant="featured"
-              isFavorite={favorites.includes(chef.id)}
-              onFavoriteToggle={() => toggleFavorite(chef.id)}
-            />
-          ))}
-        </ScrollView>
+          {uniqueStories.length > 0 && (
+            <>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Stories du moment</Text>
+                <Pressable onPress={() => router.push("/(tabs)/stories")}>
+                  <Text style={styles.sectionLink}>Voir tout</Text>
+                </Pressable>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storyRow}>
+                {uniqueStories.map((story) => (
+                  <StoryCircle key={story.id} story={story} />
+                ))}
+              </ScrollView>
+            </>
+          )}
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Populaires près de vous</Text>
-          <Pressable onPress={() => router.push("/(tabs)/search")}>
-            <Text style={styles.seeAll}>Voir tout</Text>
-          </Pressable>
-        </View>
-        <View style={styles.gridSection}>
-          {popularChefs.map((chef) => (
-            <ChefCard
-              key={chef.id}
-              chef={chef}
-              variant="default"
-              isFavorite={favorites.includes(chef.id)}
-              onFavoriteToggle={() => toggleFavorite(chef.id)}
-            />
-          ))}
-        </View>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>En ligne maintenant</Text>
+            <Pressable onPress={() => router.push("/(tabs)/search")}>
+              <Text style={styles.sectionLink}>Voir tout</Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.onlineRow}>
+            {onlineChefs.map((chef) => (
+              <ChefCard
+                key={chef.id}
+                chef={chef}
+                variant="compact"
+                isFavorite={favorites.includes(chef.id)}
+                onFavoriteToggle={() => toggleFavorite(chef.id)}
+              />
+            ))}
+          </ScrollView>
 
-        <View style={styles.bannerSection}>
-          <LinearGradient
-            colors={["#F7C27B", "#D4611A"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.promoBanner}
-          >
-            <View style={styles.promoContent}>
-              <Text style={styles.promoLabel}>Nouveau</Text>
-              <Text style={styles.promoTitle}>Chef à domicile</Text>
-              <Text style={styles.promoDesc}>Réservez une cuisinière pour votre événement privé</Text>
-              <Pressable
-                style={styles.promoBtn}
-                onPress={() => router.push("/(tabs)/search")}
-              >
-                <Text style={styles.promoBtnText}>Découvrir</Text>
-                <Feather name="arrow-right" size={14} color={Colors.light.tint} />
-              </Pressable>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Cuisinieres recommandees</Text>
+            <Pressable onPress={() => router.push("/(tabs)/search")}>
+              <Text style={styles.sectionLink}>Explorer</Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recommendedRow}>
+            {recommendedChefs.map((chef) => (
+              <ChefCard
+                key={chef.id}
+                chef={chef}
+                variant="default"
+                isFavorite={favorites.includes(chef.id)}
+                onFavoriteToggle={() => toggleFavorite(chef.id)}
+              />
+            ))}
+          </ScrollView>
+
+          <Gradient colors={[Colors.light.backgroundSecondary, Colors.light.background]} style={styles.promoCard}>
+            <View style={styles.promoTimer}>
+              <Text style={styles.promoTimerBox}>19</Text>
+              <Text style={styles.promoTimerSeparator}>:</Text>
+              <Text style={styles.promoTimerBox}>51</Text>
             </View>
-            <View style={styles.promoDecor}>
-              <Text style={styles.promoEmojiBig}>🍲</Text>
+            <View style={styles.promoBody}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.promoTitle}>Duree limitee : nouvelles adresses a -30 %</Text>
+                <Text style={styles.promoText}>Retrouve des cheffes, des snacks et des plats du jour dans un format plus clair et plus rapide.</Text>
+              </View>
+              <View style={styles.promoVisual}>
+                <Text style={styles.promoVisualEmoji}>🏷️</Text>
+              </View>
             </View>
-          </LinearGradient>
+          </Gradient>
         </View>
-      </Animated.ScrollView>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
-  stickyHeader: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 100,
-    backgroundColor: Colors.light.card,
-    paddingHorizontal: 20,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.light.divider,
+  heroSection: {
+    paddingHorizontal: 18,
+    paddingBottom: 26,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    overflow: "hidden",
   },
-  stickyLogo: {
-    fontFamily: "Poppins_700Bold",
-    fontSize: 22,
-    color: Colors.light.tint,
-    letterSpacing: -0.5,
-  },
-  heroGradient: {
-    paddingHorizontal: 20,
-    paddingBottom: 32,
-  },
-  heroTop: {
+  locationPill: {
+    alignSelf: "center",
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 20,
-  },
-  heroGreeting: {
-    fontSize: 14,
-    fontFamily: "Poppins_400Regular",
-    color: "rgba(255,255,255,0.75)",
-  },
-  heroTitle: {
-    fontSize: 26,
-    fontFamily: "Poppins_700Bold",
-    color: "#fff",
-    lineHeight: 34,
-    marginTop: 2,
-  },
-  bellBtn: {
-    width: 40,
-    height: 40,
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(255,255,255,0.82)",
     borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    minWidth: 220,
     justifyContent: "center",
-    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.45)",
   },
-  searchBar: {
+  locationText: {
+    maxWidth: 170,
+    fontSize: 14,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.text,
+  },
+  heroGrid: {
+    marginTop: 22,
+    gap: 12,
+  },
+  heroGridRow: {
     flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+  },
+  serviceCard: {
     alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 10,
+    width: 100,
+    gap: 7,
   },
-  searchPlaceholder: {
-    flex: 1,
-    fontFamily: "Poppins_400Regular",
-    fontSize: 13,
-    color: Colors.light.textTertiary,
-  },
-  filterBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: Colors.light.backgroundSecondary,
+  serviceIconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: Colors.light.card,
+    borderWidth: 2,
+    borderColor: "rgba(212,97,26,0.14)",
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: Colors.light.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 3,
   },
-  storiesSection: { paddingVertical: 16 },
-  storiesRow: { paddingHorizontal: 20, gap: 14 },
-  storyWrapper: { alignItems: "center", gap: 5, width: 64 },
-  storyRing: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    borderWidth: 2.5,
-    padding: 2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  storyAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  storyEmoji: { fontSize: 24 },
-  storyInitials: {
-    fontSize: 18,
-    fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.9)",
-  },
-  storyName: {
-    fontSize: 10,
+  serviceEmoji: { fontSize: 34 },
+  serviceLabel: {
+    fontSize: 12,
+    lineHeight: 16,
     fontFamily: "Poppins_500Medium",
-    color: Colors.light.textSecondary,
+    color: Colors.light.text,
     textAlign: "center",
   },
-  categoriesSection: { marginBottom: 8 },
-  categoriesRow: { paddingHorizontal: 20, gap: 8 },
-  categoryChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+  mainContent: {
+    marginTop: -10,
+    paddingTop: 18,
+    backgroundColor: Colors.light.background,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
   },
-  categoryChipActive: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
-  },
-  categoryLabel: {
-    fontSize: 12,
-    fontFamily: "Poppins_500Medium",
-    color: Colors.light.textSecondary,
-  },
-  categoryLabelActive: { color: "#fff" },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.text,
   },
-  seeAll: {
+  sectionLink: {
     fontSize: 13,
     fontFamily: "Poppins_500Medium",
     color: Colors.light.tint,
   },
-  horizontalList: { paddingHorizontal: 20, gap: 14, paddingBottom: 4 },
-  gridSection: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    paddingHorizontal: 20,
-    gap: 14,
-    marginBottom: 8,
-  },
-  bannerSection: { paddingHorizontal: 20, marginTop: 8 },
-  promoBanner: {
+  curatedRow: { paddingHorizontal: 20, gap: 10, paddingBottom: 18 },
+  curatedCard: {
+    width: 92,
+    backgroundColor: Colors.light.card,
     borderRadius: 20,
-    flexDirection: "row",
-    overflow: "hidden",
-    minHeight: 130,
-  },
-  promoContent: { flex: 1, padding: 18, justifyContent: "center", gap: 4 },
-  promoLabel: {
-    fontSize: 10,
-    fontFamily: "Poppins_600SemiBold",
-    color: "rgba(255,255,255,0.8)",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  promoTitle: {
-    fontSize: 18,
-    fontFamily: "Poppins_700Bold",
-    color: "#fff",
-  },
-  promoDesc: {
-    fontSize: 12,
-    fontFamily: "Poppins_400Regular",
-    color: "rgba(255,255,255,0.85)",
-    lineHeight: 17,
-  },
-  promoBtn: {
-    flexDirection: "row",
+    paddingHorizontal: 10,
+    paddingVertical: 13,
     alignItems: "center",
-    gap: 6,
-    marginTop: 8,
-    backgroundColor: "#fff",
-    alignSelf: "flex-start",
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
+    gap: 9,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    shadowColor: Colors.light.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 2,
   },
-  promoBtnText: {
-    fontSize: 12,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.tint,
-  },
-  promoDecor: {
-    width: 90,
+  curatedIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: Colors.light.backgroundSecondary,
     alignItems: "center",
     justifyContent: "center",
   },
-  promoEmojiBig: { fontSize: 56 },
+  curatedImage: {
+    width: 32,
+    height: 32,
+  },
+  curatedEmoji: { fontSize: 22 },
+  curatedTitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    textAlign: "center",
+    fontFamily: "Poppins_500Medium",
+    color: Colors.light.text,
+  },
+  storyRow: { paddingHorizontal: 20, gap: 14, paddingBottom: 10 },
+  storyCircleItem: { width: 72, alignItems: "center", gap: 6 },
+  storyCircleRing: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 2.5,
+    padding: 3,
+    backgroundColor: Colors.light.card,
+  },
+  storyCircleAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  storyCircleImage: { width: 56, height: 56, borderRadius: 28 },
+  storyCircleEmoji: { fontSize: 25 },
+  storyCircleInitials: { fontSize: 17, fontFamily: "Poppins_700Bold", color: "#fff" },
+  storyCircleLabel: {
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+    color: Colors.light.textSecondary,
+    textAlign: "center",
+  },
+  onlineRow: { paddingHorizontal: 20, gap: 14, paddingBottom: 12 },
+  recommendedRow: { paddingHorizontal: 20, gap: 12, paddingBottom: 12 },
+  promoCard: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  courierHeroCard: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderRadius: 28,
+    paddingLeft: 18,
+    paddingRight: 10,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  courierHeroText: {
+    flex: 1,
+    gap: 8,
+    alignItems: "flex-start",
+  },
+  courierHeroImage: {
+    width: 170,
+    height: 140,
+  },
+  courierEyebrow: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.8)", textTransform: "uppercase" },
+  courierTitle: { fontSize: 28, lineHeight: 34, fontFamily: "Poppins_700Bold", color: "#fff", marginTop: 6 },
+  courierSubtitle: { fontSize: 14, lineHeight: 21, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.88)" },
+  courierStatsRow: { flexDirection: "row", gap: 12 },
+  courierStatCard: { flex: 1, backgroundColor: Colors.light.card, borderRadius: 20, padding: 18, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  courierStatValue: { fontSize: 28, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  courierStatLabel: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, marginTop: 4 },
+  courierPrimaryBtn: { marginTop: 20, backgroundColor: "#0F766E", borderRadius: 18, paddingVertical: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
+  courierPrimaryBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  courierSecondaryBtn: { marginTop: 12, borderRadius: 18, paddingVertical: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, borderWidth: 1, borderColor: "#0F766E", backgroundColor: "#ECFDF5" },
+  courierSecondaryBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
+  promoTimer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 14,
+  },
+  promoTimerBox: {
+    backgroundColor: Colors.light.text,
+    color: "#fff",
+    fontSize: 18,
+    fontFamily: "Poppins_700Bold",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  promoTimerSeparator: {
+    fontSize: 16,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.text,
+  },
+  promoBody: { flexDirection: "row", alignItems: "center", gap: 14 },
+  promoTitle: {
+    fontSize: 24,
+    lineHeight: 30,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.text,
+  },
+  promoText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  promoVisual: {
+    width: 84,
+    height: 84,
+    borderRadius: 24,
+    backgroundColor: "rgba(212,97,26,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  promoVisualEmoji: { fontSize: 40 },
 });

@@ -219,6 +219,9 @@ const styles = StyleSheet.create({
   bubbleMe: {
     backgroundColor: Colors.light.tint, borderColor: Colors.light.tint, borderBottomLeftRadius: 18, borderBottomRightRadius: 4,
   },
+  bubbleThem: {
+    backgroundColor: Colors.light.card, borderColor: Colors.light.cardBorder, borderBottomLeftRadius: 4, borderBottomRightRadius: 18,
+  },
   bubbleText: { fontSize: 14, fontFamily: "Poppins_400Regular", color: Colors.light.text, lineHeight: 20 },
   bubbleTextMe: { color: "#fff" },
   bubbleTime: { fontSize: 10, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, marginTop: 4, textAlign: "right" },

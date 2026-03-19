@@ -1,10 +1,9 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Dimensions,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,11 +13,14 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { SvgUri } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
 
-const { width: W } = Dimensions.get("window");
+const chefIllustrationUri = Image.resolveAssetSource(
+  require("../../assets/images/register-chef-illustration.svg"),
+).uri;
 
 const SPECIALTIES = [
   "Cuisine Ivoirienne", "Cuisine Sénégalaise", "Traiteur & Événements",
@@ -111,7 +113,7 @@ export default function RegisterChefScreen() {
     setLoading(true);
     setError("");
     try {
-      await registerChef({
+      const result = await registerChef({
         name: name.trim(),
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
@@ -124,7 +126,11 @@ export default function RegisterChefScreen() {
         coverColor,
         specialties: [specialty],
       });
-      router.replace("/(tabs)");
+      if (result.requiresEmailConfirmation && result.email) {
+        router.replace({ pathname: "/auth/confirm", params: { email: result.email } });
+      } else {
+        router.replace("/(tabs)");
+      }
     } catch (e: any) {
       setError(e.message ?? "Erreur lors de l'inscription");
     } finally {
@@ -137,19 +143,25 @@ export default function RegisterChefScreen() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <View style={styles.headerTop}>
-          <Pressable style={styles.backBtn} onPress={() => step > 0 ? setStep(step - 1) : router.back()}>
-            <Feather name="arrow-left" size={20} color="#fff" />
-          </Pressable>
-          <Text style={styles.stepCounter}>{step + 1} / {TOTAL_STEPS}</Text>
+        <View style={styles.headerMedia} pointerEvents="none">
+          <SvgUri width="100%" height="100%" uri={chefIllustrationUri} />
+          <View style={styles.headerOverlay} />
         </View>
+        <View style={styles.headerContent}>
+          <View style={styles.headerTop}>
+            <Pressable style={styles.backBtn} onPress={() => step > 0 ? setStep(step - 1) : router.back()}>
+              <Feather name="arrow-left" size={20} color="#fff" />
+            </Pressable>
+            <Text style={styles.stepCounter}>{step + 1} / {TOTAL_STEPS}</Text>
+          </View>
 
-        <View style={styles.progressBar}>
-          <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+          <View style={styles.progressBar}>
+            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+          </View>
+
+          <Text style={styles.headerTitle}>{STEPS[step].title}</Text>
+          <Text style={styles.headerSub}>{STEPS[step].sub}</Text>
         </View>
-
-        <Text style={styles.headerTitle}>{STEPS[step].title}</Text>
-        <Text style={styles.headerSub}>{STEPS[step].sub}</Text>
       </View>
 
       <ScrollView style={styles.body} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 40 }}>
@@ -357,7 +369,13 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: Colors.light.tint,
     paddingBottom: 24,
+    overflow: "hidden",
+    minHeight: 320,
+  },
+  headerContent: {
     paddingHorizontal: 24,
+    position: "relative",
+    zIndex: 1,
   },
   headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
@@ -366,6 +384,14 @@ const styles = StyleSheet.create({
   progressFill: { height: "100%", backgroundColor: "#fff", borderRadius: 2 },
   headerTitle: { fontSize: 22, fontFamily: "Poppins_700Bold", color: "#fff", marginBottom: 4 },
   headerSub: { fontSize: 13, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.85)" },
+  headerMedia: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#F2DAA2",
+  },
+  headerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(70, 32, 12, 0.28)",
+  },
   body: { flex: 1, backgroundColor: Colors.light.background },
   form: { padding: 24, gap: 16 },
   errorBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FEF2F2", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "#FCA5A5" },
