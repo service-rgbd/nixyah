@@ -205,6 +205,9 @@ importers:
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
+      tsx:
+        specifier: 'catalog:'
+        version: 4.21.0
       web-push:
         specifier: ^3.5.0
         version: 3.6.7
@@ -230,9 +233,6 @@ importers:
       esbuild:
         specifier: 0.27.3
         version: 0.27.3
-      tsx:
-        specifier: 'catalog:'
-        version: 4.21.0
 
   artifacts/mobile:
     dependencies:
