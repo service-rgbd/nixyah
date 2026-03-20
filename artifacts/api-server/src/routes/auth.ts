@@ -534,6 +534,22 @@ router.post("/auth/resend-confirmation", async (req, res) => {
   }
 });
 
+router.get("/auth/confirmation-status", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.query.email);
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis" });
+      return;
+    }
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+    res.json({ confirmed: Boolean(user?.emailConfirmed) });
+  } catch (err) {
+    console.error("confirmation status error", err);
+    res.status(500).json({ error: "InternalError" });
+  }
+});
+
 // POST /auth/change-email { email, password, newEmail }
 router.post("/auth/change-email", async (req, res) => {
   try {
@@ -624,8 +640,22 @@ router.patch("/auth/me", requireAuth, async (req: AuthRequest, res) => {
 
     await db.update(usersTable).set(updates).where(eq(usersTable.id, userId));
     const [u] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+    let chefProfile = null;
+    let courierProfile = null;
+    if (u.type === "chef") {
+      const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, u.id));
+      if (cp) {
+        chefProfile = buildChefProfile(u, cp);
+      }
+    }
+    if (u.type === "courier") {
+      const [cp] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, u.id));
+      if (cp) {
+        courierProfile = buildCourierProfile(cp);
+      }
+    }
     res.json({
-      ...toSafeUser(u),
+      ...toSafeUser(u, { chefProfile, courierProfile }),
     });
   } catch (err) {
     console.error("update me error:", err);

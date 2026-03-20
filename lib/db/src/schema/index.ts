@@ -91,6 +91,7 @@ export const dishesTable = pgTable("dishes", {
   prepTime: text("prep_time").notNull().default("30 min"),
   isPopular: boolean("is_popular").notNull().default(false),
   imageUrl: text("image_url"),
+  imageUrls: text("image_urls").array().notNull().default([]),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

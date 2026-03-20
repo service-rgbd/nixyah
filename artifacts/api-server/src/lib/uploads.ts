@@ -4,7 +4,27 @@ const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
 const R2_ENDPOINT = process.env.R2_ENDPOINT;
 const R2_BUCKET = process.env.R2_BUCKET;
-const R2_PUBLIC_BASE_URL = process.env.R2_PUBLIC_BASE_URL;
+
+function normalizePublicBaseUrl(rawValue: string | undefined): string | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  const trimmedValue = rawValue.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const withProtocol = /^https?:\/\//i.test(trimmedValue)
+    ? trimmedValue
+    : `https://${trimmedValue.replace(/^\/+/, "")}`;
+
+  return withProtocol.replace(/\/$/, "");
+}
+
+const R2_PUBLIC_BASE_URL = normalizePublicBaseUrl(
+  process.env.R2_PUBLIC_BASE_URL ?? process.env.R2_PUBLIC_URL,
+);
 
 export type UploadPurpose = "avatar" | "story" | "dish";
 
