@@ -10,7 +10,35 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM ?? "no-reply@example.com";
 const RESEND_USER_AGENT = "Ivory-Diaspora/1.0";
 const MOBILE_APP_URL = process.env.EXPO_PUBLIC_APP_URL ?? "mobile://";
-const API_BASE_URL = process.env.API_PUBLIC_URL ?? process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3333/api";
+
+function normalizeApiBaseUrl(rawValue: string | undefined): string | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  const trimmedValue = rawValue.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const withProtocol = /^https?:\/\//i.test(trimmedValue)
+    ? trimmedValue
+    : `https://${trimmedValue}`;
+
+  try {
+    const url = new URL(withProtocol);
+    const normalizedPath = url.pathname.replace(/\/+$/, "");
+    url.pathname = normalizedPath.endsWith("/api") ? normalizedPath : `${normalizedPath}/api`;
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+const API_BASE_URL =
+  normalizeApiBaseUrl(process.env.API_PUBLIC_URL) ??
+  normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_URL) ??
+  "http://localhost:3333/api";
 
 function joinUrl(base: string, path: string) {
   const normalizedPath = path.replace(/^\/+/, "");

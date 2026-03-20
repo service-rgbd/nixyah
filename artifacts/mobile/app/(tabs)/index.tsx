@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
   Image,
   type ImageSourcePropType,
@@ -15,13 +15,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ChefCard } from "@/components/ChefCard";
 import Gradient from "@/components/SafeGradient";
-import { apiFetch } from "@/constants/api";
 import Colors from "@/constants/colors";
 import { useApp, Story } from "@/contexts/AppContext";
 
 const storiesDuJourIcon = require("@/assets/images/icon-storiesdujour.png") as ImageSourcePropType;
 const gateauxMaisonIcon = require("@/assets/images/icon-maisongateaux.png") as ImageSourcePropType;
-const courierIllustration = require("@/assets/images/courier-delivery-illustration.png") as ImageSourcePropType;
 
 const SERVICE_GROUPS = [
   [
@@ -76,9 +74,8 @@ function StoryCircle({ story }: { story: Story }) {
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { chefs, stories, favorites, toggleFavorite, user, token } = useApp();
+  const { chefs, stories, favorites, toggleFavorite, user } = useApp();
   const topInset = Platform.OS === "web" ? 67 : insets.top;
-  const isCourier = user?.type === "courier";
   const locationLabel = user?.location || "Abidjan";
   const recommendedChefs = chefs.slice(0, 4);
   const onlineChefs = chefs.filter((chef) => chef.isOnline).slice(0, 8);
@@ -90,65 +87,6 @@ export default function HomeScreen() {
       seen.add(story.chefId);
       uniqueStories.push(story);
     }
-  }
-
-  const [courierStats, setCourierStats] = useState({ current: 0, available: 0 });
-
-  useEffect(() => {
-    if (!isCourier || !token) return;
-    (async () => {
-      try {
-        const [available, current] = await Promise.all([
-          apiFetch<{ jobs: any[] }>("/delivery/jobs/available", { token }),
-          apiFetch<{ jobs: any[] }>("/delivery/jobs/current", { token }),
-        ]);
-        setCourierStats({ current: current.jobs?.length ?? 0, available: available.jobs?.length ?? 0 });
-      } catch (error) {
-        console.warn("Failed to load courier dashboard:", error);
-      }
-    })();
-  }, [isCourier, token]);
-
-  if (isCourier) {
-    return (
-      <View style={styles.container}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 110 }}>
-          <Gradient colors={["#0F766E", "#115E59", "#134E4A"]} style={[styles.heroSection, { paddingTop: topInset + 10 }]}>
-            <View style={styles.courierHeroCard}>
-              <View style={styles.courierHeroText}>
-                <Text style={styles.courierEyebrow}>Dashboard livreur</Text>
-                <Text style={styles.courierTitle}>Prenez une mission et suivez la course en direct.</Text>
-                <Text style={styles.courierSubtitle}>{user?.courierProfile?.isAvailable ? "Disponible pour recevoir des missions" : "Indisponible actuellement"}</Text>
-              </View>
-              <Image source={courierIllustration} style={styles.courierHeroImage} resizeMode="contain" />
-            </View>
-          </Gradient>
-
-          <View style={styles.mainContent}>
-            <View style={styles.courierStatsRow}>
-              <View style={styles.courierStatCard}>
-                <Text style={styles.courierStatValue}>{courierStats.current}</Text>
-                <Text style={styles.courierStatLabel}>Mission en cours</Text>
-              </View>
-              <View style={styles.courierStatCard}>
-                <Text style={styles.courierStatValue}>{courierStats.available}</Text>
-                <Text style={styles.courierStatLabel}>Missions disponibles</Text>
-              </View>
-            </View>
-
-            <Pressable style={styles.courierPrimaryBtn} onPress={() => router.push("/(tabs)/orders")}>
-              <Feather name="truck" size={18} color="#fff" />
-              <Text style={styles.courierPrimaryBtnText}>Voir les missions</Text>
-            </Pressable>
-
-            <Pressable style={styles.courierSecondaryBtn} onPress={() => router.push("/(tabs)/profile")}>
-              <Feather name="user" size={18} color="#0F766E" />
-              <Text style={styles.courierSecondaryBtnText}>Mon profil livreur</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </View>
-    );
   }
 
   return (
@@ -448,38 +386,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
-  courierHeroCard: {
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderRadius: 28,
-    paddingLeft: 18,
-    paddingRight: 10,
-    paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  courierHeroText: {
-    flex: 1,
-    gap: 8,
-    alignItems: "flex-start",
-  },
-  courierHeroImage: {
-    width: 170,
-    height: 140,
-  },
-  courierEyebrow: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.8)", textTransform: "uppercase" },
-  courierTitle: { fontSize: 28, lineHeight: 34, fontFamily: "Poppins_700Bold", color: "#fff", marginTop: 6 },
-  courierSubtitle: { fontSize: 14, lineHeight: 21, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.88)" },
-  courierStatsRow: { flexDirection: "row", gap: 12 },
-  courierStatCard: { flex: 1, backgroundColor: Colors.light.card, borderRadius: 20, padding: 18, borderWidth: 1, borderColor: Colors.light.cardBorder },
-  courierStatValue: { fontSize: 28, fontFamily: "Poppins_700Bold", color: Colors.light.text },
-  courierStatLabel: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, marginTop: 4 },
-  courierPrimaryBtn: { marginTop: 20, backgroundColor: "#0F766E", borderRadius: 18, paddingVertical: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8 },
-  courierPrimaryBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#fff" },
-  courierSecondaryBtn: { marginTop: 12, borderRadius: 18, paddingVertical: 16, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, borderWidth: 1, borderColor: "#0F766E", backgroundColor: "#ECFDF5" },
-  courierSecondaryBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
   promoTimer: {
     flexDirection: "row",
     alignItems: "center",
