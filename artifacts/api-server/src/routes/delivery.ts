@@ -10,8 +10,9 @@ import {
   usersTable,
 } from "@workspace/db/schema";
 import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { geocodeAddress } from "../lib/geocoding.js";
 import { notifyUsers } from "../lib/notifications.js";
-import { requireAuth, requireChef, requireCourier, type AuthRequest } from "../middlewares/auth.js";
+import { requireAuth, requireChef, requireClient, requireCourier, type AuthRequest } from "../middlewares/auth.js";
 
 const router = express.Router();
 
@@ -108,12 +109,17 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
       return res.status(404).json({ error: "NotFound", message: "Commande introuvable" });
     }
 
-    await db.update(ordersTable).set({ status: "ready" }).where(eq(ordersTable.id, order.id));
-
     const [existingJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
     if (existingJob) {
+      if (order.status !== "ready") {
+        await db.update(ordersTable).set({ status: "ready" }).where(eq(ordersTable.id, order.id));
+      }
       const payload = await getDeliveryJobPayload(existingJob.id);
       return res.json({ job: payload, reused: true });
+    }
+
+    if (order.status !== "ready") {
+      await db.update(ordersTable).set({ status: "ready" }).where(eq(ordersTable.id, order.id));
     }
 
     const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, order.chefProfileId)).limit(1);
@@ -123,17 +129,50 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
       return res.status(400).json({ error: "BadRequest", message: "Participants de livraison introuvables" });
     }
 
-    const [job] = await db.insert(deliveryJobsTable).values({
-      orderId: order.id,
-      chefProfileId: order.chefProfileId,
-      clientId: order.clientId,
-      status: "available",
-      restaurantName: chefUser.name,
-      restaurantAddress: chefProfile.location,
-      clientName: clientUser.name,
-      deliveryAddress: clientUser.location,
-      notes: order.notes ?? null,
-    }).returning();
+    const restaurantPoint = await geocodeAddress(chefProfile.location);
+    const clientPoint =
+      order.deliveryLatitude != null && order.deliveryLongitude != null
+        ? { latitude: order.deliveryLatitude, longitude: order.deliveryLongitude }
+        : await geocodeAddress(order.deliveryAddress || clientUser.location);
+
+    if (
+      clientPoint &&
+      (order.deliveryLatitude == null || order.deliveryLongitude == null)
+    ) {
+      await db
+        .update(ordersTable)
+        .set({
+          deliveryLatitude: clientPoint.latitude,
+          deliveryLongitude: clientPoint.longitude,
+        })
+        .where(eq(ordersTable.id, order.id));
+    }
+
+    let job;
+    try {
+      [job] = await db.insert(deliveryJobsTable).values({
+        orderId: order.id,
+        chefProfileId: order.chefProfileId,
+        clientId: order.clientId,
+        status: "available",
+        restaurantName: chefUser.name,
+        restaurantAddress: chefProfile.location,
+        restaurantLatitude: restaurantPoint?.latitude ?? null,
+        restaurantLongitude: restaurantPoint?.longitude ?? null,
+        clientName: clientUser.name,
+        deliveryAddress: order.deliveryAddress || clientUser.location,
+        deliveryLatitude: clientPoint?.latitude ?? order.deliveryLatitude ?? null,
+        deliveryLongitude: clientPoint?.longitude ?? order.deliveryLongitude ?? null,
+        notes: order.notes ?? null,
+      }).returning();
+    } catch (error) {
+      const [raceJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
+      if (raceJob) {
+        const payload = await getDeliveryJobPayload(raceJob.id);
+        return res.json({ job: payload, reused: true, raced: true });
+      }
+      throw error;
+    }
 
     const couriers = await db
       .select()
@@ -422,6 +461,59 @@ router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRe
     return res.json({ ok: true });
   } catch (error) {
     console.error("delivery location update error", error);
+    return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/delivery/jobs/:jobId/client-location", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const jobId = Number(req.params.jobId);
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+    const deliveryAddress = typeof req.body.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : "";
+
+    if (!Number.isInteger(jobId) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return res.status(400).json({ error: "BadRequest", message: "Coordonnees invalides" });
+    }
+
+    const [job] = await db
+      .select()
+      .from(deliveryJobsTable)
+      .where(and(eq(deliveryJobsTable.id, jobId), eq(deliveryJobsTable.clientId, req.userId!)))
+      .limit(1);
+
+    if (!job) {
+      return res.status(404).json({ error: "NotFound", message: "Mission introuvable" });
+    }
+
+    if (["delivered", "cancelled"].includes(job.status)) {
+      return res.status(409).json({ error: "Conflict", message: "Cette mission ne peut plus etre mise a jour" });
+    }
+
+    const nextAddress = deliveryAddress || job.deliveryAddress;
+
+    await db
+      .update(deliveryJobsTable)
+      .set({
+        deliveryAddress: nextAddress,
+        deliveryLatitude: latitude,
+        deliveryLongitude: longitude,
+      })
+      .where(eq(deliveryJobsTable.id, job.id));
+
+    await db
+      .update(ordersTable)
+      .set({
+        deliveryAddress: nextAddress,
+        deliveryLatitude: latitude,
+        deliveryLongitude: longitude,
+      })
+      .where(eq(ordersTable.id, job.orderId));
+
+    const payload = await getDeliveryJobPayload(job.id);
+    return res.json({ job: payload });
+  } catch (error) {
+    console.error("client delivery location update error", error);
     return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });

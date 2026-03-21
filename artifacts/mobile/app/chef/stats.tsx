@@ -33,12 +33,15 @@ export default function StatsScreen() {
     totalRevenue: 0,
     averageRating: 0,
     completionRate: 0,
+    activeOrders: 0,
+    averageBasket: 0,
+    breakdown: { pending: 0, accepted: 0, preparing: 0, ready: 0, delivered: 0 },
     thisMonth: { orders: 0, revenue: 0 },
     reviews: 0,
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topInset }]}>
+    <View style={[styles.container, { paddingTop: topInset }]}> 
       <View style={styles.header}>
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.light.text} />
@@ -53,82 +56,101 @@ export default function StatsScreen() {
             <ActivityIndicator size="large" color={Colors.light.tint} />
           </View>
         ) : (
-          <View>
-        <View style={styles.statsGrid}>
-          <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.statCard}>
-            <Feather name="shopping-bag" size={24} color="#fff" />
-            <Text style={styles.statValue}>{stats.totalOrders}</Text>
-            <Text style={styles.statLabel}>Commandes au total</Text>
-          </Gradient>
-
-          <Gradient colors={["#10B981", "#059669"]} style={styles.statCard}>
-            <Feather name="trending-up" size={24} color="#fff" />
-            <Text style={styles.statValue}>{stats.totalRevenue.toLocaleString()}</Text>
-            <Text style={styles.statLabel}>FCFA gagnés</Text>
-          </Gradient>
-
-          <Gradient colors={["#F59E0B", "#D97706"]} style={styles.statCard}>
-            <Ionicons name="star" size={24} color="#fff" />
-            <Text style={styles.statValue}>{stats.averageRating.toFixed(1)}</Text>
-            <Text style={styles.statLabel}>Note moyenne</Text>
-          </Gradient>
-
-          <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.statCard}>
-            <Feather name="check-circle" size={24} color="#fff" />
-            <Text style={styles.statValue}>{stats.completionRate}%</Text>
-            <Text style={styles.statLabel}>Taux completion</Text>
-          </Gradient>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Ce mois-ci</Text>
-          <View style={styles.monthCard}>
-            <View style={styles.monthItem}>
-              <View style={styles.monthIcon}>
-                <Feather name="shopping-bag" size={18} color={Colors.light.tint} />
+          <>
+            <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.overviewCard}>
+              <Text style={styles.overviewEyebrow}>Vue d'ensemble</Text>
+              <Text style={styles.overviewValue}>{stats.totalRevenue.toLocaleString()} FCFA</Text>
+              <Text style={styles.overviewSub}>revenu cumulé sur {stats.totalOrders} commande{stats.totalOrders !== 1 ? "s" : ""}</Text>
+              <View style={styles.overviewMiniRow}>
+                <View style={styles.overviewMiniItem}>
+                  <Text style={styles.overviewMiniValue}>{stats.averageBasket.toLocaleString()}</Text>
+                  <Text style={styles.overviewMiniLabel}>Panier moyen</Text>
+                </View>
+                <View style={styles.overviewMiniDivider} />
+                <View style={styles.overviewMiniItem}>
+                  <Text style={styles.overviewMiniValue}>{stats.activeOrders}</Text>
+                  <Text style={styles.overviewMiniLabel}>Actives</Text>
+                </View>
+                <View style={styles.overviewMiniDivider} />
+                <View style={styles.overviewMiniItem}>
+                  <Text style={styles.overviewMiniValue}>{stats.reviews}</Text>
+                  <Text style={styles.overviewMiniLabel}>Avis</Text>
+                </View>
               </View>
-              <View style={styles.monthInfo}>
-                <Text style={styles.monthLabel}>Commandes</Text>
-                <Text style={styles.monthValue}>{stats.thisMonth.orders}</Text>
+            </Gradient>
+
+            <View style={styles.statsGrid}>
+              <Gradient colors={["#10B981", "#059669"]} style={styles.statCard}>
+                <Feather name="shopping-bag" size={22} color="#fff" />
+                <Text style={styles.statValue}>{stats.thisMonth.orders}</Text>
+                <Text style={styles.statLabel}>Commandes ce mois-ci</Text>
+              </Gradient>
+
+              <Gradient colors={["#F59E0B", "#D97706"]} style={styles.statCard}>
+                <Ionicons name="star" size={22} color="#fff" />
+                <Text style={styles.statValue}>{stats.averageRating.toFixed(1)}</Text>
+                <Text style={styles.statLabel}>Note moyenne</Text>
+              </Gradient>
+
+              <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.statCard}>
+                <Feather name="check-circle" size={22} color="#fff" />
+                <Text style={styles.statValue}>{stats.completionRate}%</Text>
+                <Text style={styles.statLabel}>Taux de complétion</Text>
+              </Gradient>
+
+              <Gradient colors={["#2563EB", "#1D4ED8"]} style={styles.statCard}>
+                <Feather name="activity" size={22} color="#fff" />
+                <Text style={styles.statValue}>{stats.activeOrders}</Text>
+                <Text style={styles.statLabel}>En cours de service</Text>
+              </Gradient>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Ce mois-ci</Text>
+              <View style={styles.monthCard}>
+                <View style={styles.monthItem}>
+                  <View style={styles.monthIcon}>
+                    <Feather name="shopping-bag" size={18} color={Colors.light.tint} />
+                  </View>
+                  <View style={styles.monthInfo}>
+                    <Text style={styles.monthLabel}>Commandes</Text>
+                    <Text style={styles.monthValue}>{stats.thisMonth.orders}</Text>
+                  </View>
+                </View>
+                <View style={styles.monthDivider} />
+                <View style={styles.monthItem}>
+                  <View style={styles.monthIcon}>
+                    <Feather name="dollar-sign" size={18} color="#10B981" />
+                  </View>
+                  <View style={styles.monthInfo}>
+                    <Text style={styles.monthLabel}>Chiffre d'affaires</Text>
+                    <Text style={styles.monthValue}>{stats.thisMonth.revenue.toLocaleString()} FCFA</Text>
+                  </View>
+                </View>
               </View>
             </View>
-            <View style={styles.monthDivider} />
-            <View style={styles.monthItem}>
-              <View style={styles.monthIcon}>
-                <Feather name="dollar-sign" size={18} color="#10B981" />
-              </View>
-              <View style={styles.monthInfo}>
-                <Text style={styles.monthLabel}>Chiffre d'affaires</Text>
-                <Text style={styles.monthValue}>{stats.thisMonth.revenue.toLocaleString()} FCFA</Text>
-              </View>
-            </View>
-          </View>
-        </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Détails des commandes</Text>
-          {[
-            { status: "Livrées", count: 40, color: "#059669" },
-            { status: "En cours", count: 2, color: "#F59E0B" },
-            { status: "Annulées", count: 0, color: "#EF4444" },
-          ].map((item) => (
-            <View key={item.status} style={styles.detailRow}>
-              <View style={styles.detailLeft}>
-                <View style={[styles.detailDot, { backgroundColor: item.color }]} />
-                <Text style={styles.detailLabel}>{item.status}</Text>
-              </View>
-              <View style={styles.detailPill}>
-                <Text style={styles.detailCount}>{item.count}</Text>
-              </View>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Flux des commandes</Text>
+              {[
+                { status: "En attente", count: stats.breakdown.pending, color: "#F39C12" },
+                { status: "Acceptées", count: stats.breakdown.accepted, color: Colors.light.tint },
+                { status: "En préparation", count: stats.breakdown.preparing, color: "#8B5CF6" },
+                { status: "Prêtes", count: stats.breakdown.ready, color: "#059669" },
+                { status: "Finalisées", count: stats.breakdown.delivered, color: "#374151" },
+              ].map((item) => (
+                <View key={item.status} style={styles.detailRow}>
+                  <View style={styles.detailLeft}>
+                    <View style={[styles.detailDot, { backgroundColor: item.color }]} />
+                    <Text style={styles.detailLabel}>{item.status}</Text>
+                  </View>
+                  <View style={styles.detailPill}>
+                    <Text style={styles.detailCount}>{item.count}</Text>
+                  </View>
+                </View>
+              ))}
             </View>
-          ))}
-        </View>
-
-        <Pressable style={styles.downloadBtn}>
-          <Feather name="download" size={18} color="#fff" />
-          <Text style={styles.downloadBtnText}>Télécharger le rapport</Text>
-        </Pressable>
-        </View>
+          </>
         )}
       </ScrollView>
     </View>
@@ -141,13 +163,22 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 18, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, flex: 1, textAlign: "center" },
   spacer: { width: 40 },
-  content: { paddingHorizontal: 20, paddingTop: 20 },
+  content: { paddingHorizontal: 20, paddingTop: 20, gap: 18 },
   loadingContainer: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 20 },
-  statCard: { flex: 1, minWidth: "45%", borderRadius: 16, padding: 16, alignItems: "center", justifyContent: "center", gap: 8 },
+  overviewCard: { borderRadius: 22, padding: 18, gap: 8 },
+  overviewEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.72)", textTransform: "uppercase" },
+  overviewValue: { fontSize: 28, fontFamily: "Poppins_700Bold", color: "#fff" },
+  overviewSub: { fontSize: 13, lineHeight: 19, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.86)" },
+  overviewMiniRow: { marginTop: 8, flexDirection: "row", alignItems: "center", backgroundColor: "rgba(255,255,255,0.14)", borderRadius: 18, paddingVertical: 10, paddingHorizontal: 8 },
+  overviewMiniItem: { flex: 1, alignItems: "center", gap: 3 },
+  overviewMiniValue: { fontSize: 16, fontFamily: "Poppins_700Bold", color: "#fff" },
+  overviewMiniLabel: { fontSize: 10, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.76)", textAlign: "center" },
+  overviewMiniDivider: { width: 1, height: 28, backgroundColor: "rgba(255,255,255,0.18)" },
+  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  statCard: { width: "47%", borderRadius: 16, padding: 16, alignItems: "center", justifyContent: "center", gap: 8 },
   statValue: { fontSize: 18, fontFamily: "Poppins_700Bold", color: "#fff" },
   statLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.85)", textAlign: "center" },
-  section: { marginBottom: 20, gap: 12 },
+  section: { gap: 12 },
   sectionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   monthCard: { backgroundColor: Colors.light.card, borderRadius: 14, padding: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, flexDirection: "row", alignItems: "center" },
   monthItem: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12 },
@@ -156,12 +187,10 @@ const styles = StyleSheet.create({
   monthLabel: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   monthValue: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   monthDivider: { width: 1, height: 40, backgroundColor: Colors.light.divider, marginHorizontal: 12 },
-  detailRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: Colors.light.card, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: Colors.light.cardBorder, marginBottom: 8 },
+  detailRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: Colors.light.card, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: Colors.light.cardBorder },
   detailLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   detailDot: { width: 10, height: 10, borderRadius: 5 },
   detailLabel: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.text },
   detailPill: { backgroundColor: Colors.light.backgroundSecondary, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
   detailCount: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
-  downloadBtn: { backgroundColor: Colors.light.tint, borderRadius: 14, paddingVertical: 14, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 8, marginTop: 20 },
-  downloadBtnText: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: "#fff" },
 });

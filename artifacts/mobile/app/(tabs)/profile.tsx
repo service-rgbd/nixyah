@@ -1,7 +1,8 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import Gradient from "@/components/SafeGradient";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import * as ImagePicker from "expo-image-picker";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,64 +17,133 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
+import { uploadFile } from "@/constants/api";
 import { useApp } from "@/contexts/AppContext";
 
 const guestProfileIllustration = require("../../assets/images/login-cashier-illustration.png");
 
 const MENU_ITEMS_CLIENT = [
-  { icon: "heart" as const, label: "Mes favoris", sub: "Cuisinières sauvegardées" },
-  { icon: "map-pin" as const, label: "Mes adresses", sub: "Abidjan, Cocody..." },
-  { icon: "credit-card" as const, label: "Paiement", sub: "Wave, Mobile Money, Espèces" },
-  { icon: "bell" as const, label: "Notifications", sub: "Gérer les alertes" },
-  { icon: "shield" as const, label: "Confidentialité", sub: "Données et sécurité" },
+  { icon: "shopping-bag" as const, label: "Mes commandes", sub: "Suivre mes commandes en cours" },
+  { icon: "map-pin" as const, label: "Mes adresses", sub: "Enregistrer ma dernière position" },
+  { icon: "search" as const, label: "Restaurants", sub: "Voir les restaurants et leurs plats" },
+  { icon: "gift" as const, label: "Offres du moment", sub: "Profiter des offres et stories" },
   { icon: "help-circle" as const, label: "Aide & Support", sub: "FAQ, Contact" },
 ];
 
 const MENU_ITEMS_CHEF = [
-  { icon: "camera" as const, label: "Publier une story", sub: "Montrez vos plats du jour", action: "story" },
-  { icon: "package" as const, label: "Mes plats", sub: "Gérer mon menu" },
-  { icon: "bar-chart-2" as const, label: "Statistiques", sub: "Ventes et avis clients" },
-  { icon: "credit-card" as const, label: "Paiements reçus", sub: "Wave, Mobile Money" },
-  { icon: "bell" as const, label: "Notifications", sub: "Nouvelles commandes" },
+  { icon: "shopping-bag" as const, label: "Commandes reçues", sub: "Pilotage cuisine et livraison" },
+  { icon: "package" as const, label: "Mes plats", sub: "Créer, modifier ou supprimer" },
+  { icon: "camera" as const, label: "Publier une story", sub: "Montrer le service du jour" },
+  { icon: "bar-chart-2" as const, label: "Statistiques", sub: "Ventes, panier moyen, avis" },
+  { icon: "bell" as const, label: "Notifications", sub: "Nouvelles commandes et retours" },
   { icon: "help-circle" as const, label: "Aide & Support", sub: "FAQ, Contact" },
 ];
 
 const MENU_ITEMS_COURIER = [
   { icon: "truck" as const, label: "Mes missions", sub: "Livraisons disponibles et en cours" },
-  { icon: "map-pin" as const, label: "Zone de livraison", sub: "Disponibilite et zone active" },
-  { icon: "bell" as const, label: "Notifications", sub: "Missions et mises a jour" },
+  { icon: "map-pin" as const, label: "Zone de livraison", sub: "Disponibilité et zone active" },
+  { icon: "bell" as const, label: "Notifications", sub: "Missions et mises à jour" },
   { icon: "help-circle" as const, label: "Aide & Support", sub: "FAQ, Contact" },
 ];
 
+type MenuItem =
+  | (typeof MENU_ITEMS_CLIENT)[number]
+  | (typeof MENU_ITEMS_CHEF)[number]
+  | (typeof MENU_ITEMS_COURIER)[number];
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
-  const { chefs, favorites, orders, user, logout } = useApp();
+  const {
+    chefs,
+    favorites,
+    orders,
+    chefOrders,
+    user,
+    token,
+    logout,
+    updateCurrentUser,
+  } = useApp();
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const [loggingOut, setLoggingOut] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const favoriteChefs = chefs.filter((c) => favorites.includes(c.id));
   const isChef = user?.type === "chef";
   const isCourier = user?.type === "courier";
+  const isClient = user?.type === "client";
   const menuItems = isChef ? MENU_ITEMS_CHEF : isCourier ? MENU_ITEMS_COURIER : MENU_ITEMS_CLIENT;
 
   const initials = user
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
     : "?";
   const avatarColor = user?.coverColor ?? Colors.light.tint;
+  const chefSummary = useMemo(() => ({
+    totalOrders: chefOrders.length,
+    pendingOrders: chefOrders.filter((order) => order.status === "pending").length,
+    readyOrders: chefOrders.filter((order) => order.status === "ready").length,
+    deliveredOrders: chefOrders.filter((order) => order.status === "delivered").length,
+  }), [chefOrders]);
 
-  const handleMenuPress = (item: typeof MENU_ITEMS_CHEF[0]) => {
-    if ((item as any).action === "story") {
+  const handleMenuPress = (item: MenuItem) => {
+    if (item.label === "Publier une story") {
       router.push("/chef/post-story");
+    } else if (item.label === "Mes commandes") {
+      router.push("/(tabs)/orders");
+    } else if (item.label === "Mes adresses") {
+      router.push("/client/addresses");
+    } else if (item.label === "Restaurants") {
+      router.push("/(tabs)/search");
+    } else if (item.label === "Offres du moment") {
+      router.push("/stories");
     } else if (item.label === "Mes plats") {
       router.push("/chef/my-dishes");
     } else if (item.label === "Statistiques") {
       router.push("/chef/stats");
     } else if (item.label === "Notifications") {
       router.push("/chef/notifications");
-    } else if (item.label === "Mes missions") {
+    } else if (item.label === "Commandes reçues" || item.label === "Mes missions") {
       router.push("/(tabs)/orders");
     } else if (item.label === "Aide & Support") {
       router.push("/(tabs)/help");
+    }
+  };
+
+  const handleAvatarUpload = async () => {
+    if (!user) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission requise", "Autorisez l'accès aux photos pour ajouter une vitrine à votre restaurant.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.82,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+      if (res.canceled || !res.assets?.[0]?.uri) return;
+
+      const asset = res.assets[0];
+      const filename = asset.fileName ?? asset.uri.split("/").pop() ?? `restaurant-${Date.now()}.jpg`;
+      const contentType = asset.mimeType ?? "image/jpeg";
+
+      setUploadingAvatar(true);
+      const { publicUrl } = await uploadFile({
+        fileUri: asset.uri,
+        filename,
+        contentType,
+        purpose: "avatar",
+        token: token ?? undefined,
+      });
+      if (!publicUrl) {
+        throw new Error("URL d'image invalide");
+      }
+      await updateCurrentUser({ avatarUrl: publicUrl });
+    } catch (error: any) {
+      Alert.alert("Erreur", error?.message ?? "Impossible de mettre à jour la photo du restaurant");
+    } finally {
+      setUploadingAvatar(false);
     }
   };
 
@@ -139,8 +209,127 @@ export default function ProfileScreen() {
     );
   }
 
+  if (isClient) {
+    const clientSections = [
+      {
+        title: "Compte",
+        items: [
+          { icon: "shopping-bag" as const, label: "Historique des commandes", sub: `${orders.length} commande${orders.length > 1 ? "s" : ""}`, onPress: () => router.push("/(tabs)/orders") },
+          { icon: "map-pin" as const, label: "Mes adresses", sub: "Enregistrer votre derniere position", onPress: () => router.push("/client/addresses") },
+        ],
+      },
+      {
+        title: "Preferences",
+        items: [
+          { icon: "search" as const, label: "Explorer les restaurants", sub: "Voir les plats disponibles", onPress: () => router.push("/(tabs)/search") },
+          { icon: "gift" as const, label: "Offres et stories", sub: "Promotions et plats du moment", onPress: () => router.push("/stories") },
+          { icon: "help-circle" as const, label: "Centre d'aide", sub: "Commandes, support et boite de reception", onPress: () => router.push("/(tabs)/help") },
+        ],
+      },
+    ];
+
+    return (
+      <View style={[styles.clientContainer, { paddingTop: topInset }]}> 
+        <ScrollView contentContainerStyle={styles.clientContent} showsVerticalScrollIndicator={false}>
+          <Gradient colors={[Colors.light.tint, Colors.light.terracotta, Colors.light.tintDark]} style={styles.clientHeroCard}>
+            <View style={styles.clientHeroTopRow}>
+              <View style={styles.clientHeroBadge}>
+                <Feather name="user" size={14} color="#fff" />
+                <Text style={styles.clientHeroBadgeText}>Compte</Text>
+              </View>
+              <Pressable style={styles.clientHelpBtn} onPress={() => router.push("/(tabs)/help")}>
+                <Text style={styles.clientHelpText}>Aide</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.clientHeroIdentity}>
+              <View style={[styles.clientAvatar, { backgroundColor: avatarColor }]}> 
+                <Text style={styles.clientAvatarText}>{initials}</Text>
+              </View>
+              <View style={styles.clientIdentityTextWrap}>
+                <Text style={styles.clientName}>{user.name}</Text>
+                <Text style={styles.clientSubtitle}>Commandez, suivez et recevez simplement</Text>
+                <Text style={styles.clientHeroLocation}>📍 {user.location || "Abidjan"}</Text>
+              </View>
+            </View>
+
+            <View style={styles.clientMiniStats}>
+              <View style={styles.clientMiniStatItem}>
+                <Text style={styles.clientMiniStatValue}>{orders.length}</Text>
+                <Text style={styles.clientMiniStatLabel}>Commandes</Text>
+              </View>
+              <View style={styles.clientMiniStatDivider} />
+              <View style={styles.clientMiniStatItem}>
+                <Text style={styles.clientMiniStatValue}>{favorites.length}</Text>
+                <Text style={styles.clientMiniStatLabel}>Favoris</Text>
+              </View>
+            </View>
+          </Gradient>
+
+          {clientSections.map((section) => (
+            <View key={section.title} style={styles.clientSectionBlock}>
+              <Text style={styles.clientSectionHeading}>{section.title}</Text>
+              <View style={styles.clientSectionCard}>
+                {section.items.map((item, index) => (
+                  <Pressable
+                    key={item.label}
+                    style={[styles.clientMenuItem, index === section.items.length - 1 && styles.clientMenuItemLast]}
+                    onPress={item.onPress}
+                  >
+                    <View style={styles.clientMenuLeft}>
+                      <View style={styles.clientMenuIconWrap}>
+                        <Feather name={item.icon} size={18} color={Colors.light.tint} />
+                      </View>
+                      <View style={styles.clientMenuTextWrap}>
+                        <Text style={styles.clientMenuLabel}>{item.label}</Text>
+                        <Text style={styles.clientMenuSub}>{item.sub}</Text>
+                      </View>
+                    </View>
+                    <Feather name="chevron-right" size={18} color={Colors.light.textTertiary} />
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ))}
+
+          <View style={styles.clientMetaCard}>
+            <Text style={styles.clientMetaLabel}>Adresse actuelle</Text>
+            <Text style={styles.clientMetaValue}>{user.location || "Aucune adresse enregistree"}</Text>
+          </View>
+
+          {favoriteChefs.length > 0 ? (
+            <View style={styles.clientSectionBlock}>
+              <Text style={styles.clientSectionHeading}>Favoris</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.clientFavoritesRow}>
+                {favoriteChefs.map((chef) => (
+                  <Pressable
+                    key={chef.id}
+                    style={styles.clientFavoriteChip}
+                    onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
+                  >
+                    <View style={[styles.clientFavoriteAvatar, { backgroundColor: chef.coverColor }]}> 
+                      <Text style={styles.clientFavoriteAvatarText}>{chef.name.slice(0, 2).toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.clientFavoriteName} numberOfLines={1}>{chef.name}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          ) : null}
+
+          <Pressable style={styles.clientLogoutBtn} onPress={handleLogout} disabled={loggingOut}>
+            {loggingOut ? <ActivityIndicator color="#fff" size="small" /> : <>
+              <Feather name="log-out" size={18} color="#fff" />
+              <Text style={styles.clientLogoutText}>Confirmer la deconnexion</Text>
+            </>}
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
-    <View style={[styles.container, { paddingTop: topInset }]}>
+    <View style={[styles.container, { paddingTop: topInset }]}> 
       <ScrollView
         contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}
         showsVerticalScrollIndicator={false}
@@ -149,44 +338,82 @@ export default function ProfileScreen() {
           colors={[Colors.light.backgroundSecondary, Colors.light.background]}
           style={styles.profileHeader}
         >
-          <View style={styles.avatarWrapper}>
-            <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-              <Text style={styles.avatarText}>{initials}</Text>
-            </View>
-            <View style={styles.editAvatarBtn}>
-              <Feather name="edit-2" size={12} color="#fff" />
+          <View style={styles.heroTopRow}>
+            {isChef ? (
+              <Pressable style={styles.avatarWrapper} onPress={handleAvatarUpload} disabled={uploadingAvatar}>
+                {user.avatarUrl ? (
+                  <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
+                ) : (
+                  <View style={[styles.avatar, { backgroundColor: avatarColor }]}> 
+                    <Text style={styles.avatarText}>{initials}</Text>
+                  </View>
+                )}
+                <View style={styles.editAvatarBtn}>
+                  {uploadingAvatar ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="camera" size={12} color="#fff" />}
+                </View>
+              </Pressable>
+            ) : user.avatarUrl ? (
+              <View style={styles.avatarWrapper}>
+                <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
+              </View>
+            ) : (
+              <View style={styles.avatarWrapper}>
+                <View style={[styles.avatar, { backgroundColor: avatarColor }]}> 
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.identityBlock}>
+              <Text style={styles.profileName}>{user.name}</Text>
+              <Text style={styles.profileEmail}>{user.email ?? user.phone ?? "Compte Nixyah"}</Text>
+              <Text style={styles.profileLocation}>📍 {user.location}</Text>
+              <Text style={styles.profilePhotoHint}>
+                {isChef
+                  ? "Ajoutez la photo de votre restaurant pour inspirer confiance dès la première vue."
+                  : "Votre espace client est limité aux commandes, adresses, offres et support."}
+              </Text>
             </View>
           </View>
-          <Text style={styles.profileName}>{user.name}</Text>
-          {user.email && <Text style={styles.profileEmail}>{user.email}</Text>}
-          {user.phone && !user.email && <Text style={styles.profileEmail}>{user.phone}</Text>}
-          <Text style={styles.profileLocation}>
-            📍 {user.location}
-          </Text>
 
-          {isChef && (
-            <View style={styles.chefBadge}>
-              <Ionicons name="restaurant" size={12} color={Colors.light.tint} />
-              <Text style={styles.chefBadgeText}>Cuisinière Nixyah</Text>
-              {user.chefProfile?.isVerified && (
-                <View style={styles.verifiedDot}>
-                  <Feather name="check" size={9} color="#fff" />
+          {isChef ? (
+            <View style={styles.chefHeroCard}>
+              <View style={styles.chefHeroHead}>
+                <View>
+                  <Text style={styles.chefHeroEyebrow}>Espace restaurant</Text>
+                  <Text style={styles.chefHeroTitle}>{user.chefProfile?.specialty ?? "Votre cuisine"}</Text>
                 </View>
-              )}
-            </View>
-          )}
+                <View style={styles.verifiedBadge}>
+                  <Ionicons name="restaurant" size={14} color={Colors.light.tint} />
+                  <Text style={styles.verifiedBadgeText}>{user.chefProfile?.isVerified ? "Vérifiée" : "En construction"}</Text>
+                </View>
+              </View>
 
-          {isCourier && (
-            <View style={styles.chefBadge}>
-              <Ionicons name="bicycle" size={12} color={Colors.light.tint} />
-              <Text style={styles.chefBadgeText}>Livreur Nixyah</Text>
+              <Text style={styles.chefHeroDescription} numberOfLines={3}>
+                {user.chefProfile?.bio || "Présentez votre univers culinaire, vos spécialités et votre rythme de service pour rassurer vos clientes."}
+              </Text>
+
+              <View style={styles.chefMetricRow}>
+                <View style={styles.chefMetricCard}>
+                  <Text style={styles.chefMetricValue}>{chefSummary.pendingOrders}</Text>
+                  <Text style={styles.chefMetricLabel}>En attente</Text>
+                </View>
+                <View style={styles.chefMetricCard}>
+                  <Text style={styles.chefMetricValue}>{chefSummary.readyOrders}</Text>
+                  <Text style={styles.chefMetricLabel}>Prêtes</Text>
+                </View>
+                <View style={styles.chefMetricCard}>
+                  <Text style={styles.chefMetricValue}>{user.chefProfile?.reviewCount ?? 0}</Text>
+                  <Text style={styles.chefMetricLabel}>Avis</Text>
+                </View>
+              </View>
             </View>
-          )}
+          ) : null}
 
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{orders.length}</Text>
-              <Text style={styles.statLabel}>{isCourier ? "Missions vues" : "Commandes"}</Text>
+              <Text style={styles.statValue}>{isChef ? chefSummary.totalOrders : orders.length}</Text>
+              <Text style={styles.statLabel}>{isChef ? "Commandes" : isCourier ? "Missions" : "Commandes"}</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
@@ -195,40 +422,81 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{isChef ? (user.chefProfile?.reviewCount ?? 0) : "0"}</Text>
-              <Text style={styles.statLabel}>{isChef ? "Avis" : "Avis donnés"}</Text>
+              <Text style={styles.statValue}>{isChef ? chefSummary.deliveredOrders : 0}</Text>
+              <Text style={styles.statLabel}>{isChef ? "Finalisées" : "Avis"}</Text>
             </View>
           </View>
         </Gradient>
 
-        {isChef && (
-          <View style={styles.chefActionsRow}>
-            <Pressable style={styles.chefActionBtn} onPress={() => router.push("/chef/post-story")}>
-              <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.chefActionGradient}>
-                <Feather name="camera" size={18} color="#fff" />
+        {isChef ? (
+          <View style={styles.actionPanel}>
+            <Pressable style={styles.actionCard} onPress={() => router.push("/(tabs)/orders")}>
+              <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.actionIconWrap}>
+                <Feather name="shopping-bag" size={18} color="#fff" />
               </Gradient>
-              <Text style={styles.chefActionLabel}>Story</Text>
+              <Text style={styles.actionTitle}>Commandes</Text>
+              <Text style={styles.actionSub}>Priorités, statuts et livraison</Text>
             </Pressable>
-            <Pressable style={styles.chefActionBtn} onPress={() => router.push("/chef/my-dishes")}>
-              <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.chefActionGradient}>
+
+            <Pressable style={styles.actionCard} onPress={() => router.push("/chef/my-dishes")}>
+              <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.actionIconWrap}>
                 <Feather name="package" size={18} color="#fff" />
               </Gradient>
-              <Text style={styles.chefActionLabel}>Mes plats</Text>
+              <Text style={styles.actionTitle}>Mon menu</Text>
+              <Text style={styles.actionSub}>Ajouter, modifier ou retirer un plat</Text>
             </Pressable>
-            <Pressable style={styles.chefActionBtn} onPress={() => router.push("/chef/stats")}>
-              <Gradient colors={["#059669", "#047857"]} style={styles.chefActionGradient}>
+
+            <Pressable style={styles.actionCard} onPress={() => router.push("/chef/post-story")}>
+              <Gradient colors={["#D97706", "#B45309"]} style={styles.actionIconWrap}>
+                <Feather name="camera" size={18} color="#fff" />
+              </Gradient>
+              <Text style={styles.actionTitle}>Story du jour</Text>
+              <Text style={styles.actionSub}>Mettre en avant l'instant présent</Text>
+            </Pressable>
+
+            <Pressable style={styles.actionCard} onPress={() => router.push("/chef/stats")}>
+              <Gradient colors={["#059669", "#047857"]} style={styles.actionIconWrap}>
                 <Feather name="bar-chart-2" size={18} color="#fff" />
               </Gradient>
-              <Text style={styles.chefActionLabel}>Stats</Text>
-            </Pressable>
-            <Pressable style={styles.chefActionBtn}>
-              <Gradient colors={["#D97706", "#B45309"]} style={styles.chefActionGradient}>
-                <Feather name="toggle-right" size={18} color="#fff" />
-              </Gradient>
-              <Text style={styles.chefActionLabel}>Disponible</Text>
+              <Text style={styles.actionTitle}>Performance</Text>
+              <Text style={styles.actionSub}>Chiffres, panier moyen, avis</Text>
             </Pressable>
           </View>
-        )}
+        ) : !isCourier ? (
+          <View style={styles.actionPanel}>
+            <Pressable style={styles.actionCard} onPress={() => router.push("/(tabs)/search") }>
+              <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.actionIconWrap}>
+                <Feather name="search" size={18} color="#fff" />
+              </Gradient>
+              <Text style={styles.actionTitle}>Restaurants</Text>
+              <Text style={styles.actionSub}>Voir les restaurants et leurs plats</Text>
+            </Pressable>
+
+            <Pressable style={styles.actionCard} onPress={() => router.push("/(tabs)/orders") }>
+              <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.actionIconWrap}>
+                <Feather name="shopping-bag" size={18} color="#fff" />
+              </Gradient>
+              <Text style={styles.actionTitle}>Mes commandes</Text>
+              <Text style={styles.actionSub}>Suivre les commandes déjà passées</Text>
+            </Pressable>
+
+            <Pressable style={styles.actionCard} onPress={() => router.push("/client/addresses") }>
+              <Gradient colors={["#059669", "#047857"]} style={styles.actionIconWrap}>
+                <Feather name="map-pin" size={18} color="#fff" />
+              </Gradient>
+              <Text style={styles.actionTitle}>Mes adresses</Text>
+              <Text style={styles.actionSub}>Enregistrer ma position de livraison</Text>
+            </Pressable>
+
+            <Pressable style={styles.actionCard} onPress={() => router.push("/stories") }>
+              <Gradient colors={["#D97706", "#B45309"]} style={styles.actionIconWrap}>
+                <Feather name="gift" size={18} color="#fff" />
+              </Gradient>
+              <Text style={styles.actionTitle}>Offres</Text>
+              <Text style={styles.actionSub}>Profiter des stories et offres du moment</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {!isChef && favoriteChefs.length > 0 && (
           <View style={styles.section}>
@@ -240,11 +508,15 @@ export default function ProfileScreen() {
                   style={styles.favoriteChip}
                   onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
                 >
-                  <View style={[styles.favoriteAvatar, { backgroundColor: chef.coverColor }]}>
-                    <Text style={styles.favoriteAvatarText}>
-                      {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-                    </Text>
-                  </View>
+                  {chef.avatarUrl ? (
+                    <Image source={{ uri: chef.avatarUrl }} style={styles.favoriteAvatarImage} />
+                  ) : (
+                    <View style={[styles.favoriteAvatar, { backgroundColor: chef.coverColor }]}> 
+                      <Text style={styles.favoriteAvatarText}>
+                        {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                      </Text>
+                    </View>
+                  )}
                   <Text style={styles.favoriteName} numberOfLines={1}>{chef.name.split(" ")[0]}</Text>
                 </Pressable>
               ))}
@@ -257,7 +529,7 @@ export default function ProfileScreen() {
             <Pressable
               key={idx}
               style={[styles.menuItem, idx === menuItems.length - 1 && { borderBottomWidth: 0 }]}
-              onPress={() => handleMenuPress(item as any)}
+              onPress={() => handleMenuPress(item)}
             >
               <View style={styles.menuIconWrapper}>
                 <Feather name={item.icon} size={18} color={Colors.light.tint} />
@@ -270,28 +542,6 @@ export default function ProfileScreen() {
             </Pressable>
           ))}
         </View>
-
-        {!isChef && (
-          <View style={styles.becomeChefBanner}>
-            <Gradient
-              colors={[Colors.light.tint, Colors.light.tintDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.becomeChefGradient}
-            >
-              <View style={styles.becomeChefContent}>
-                <Ionicons name="restaurant-outline" size={24} color="#fff" />
-                <View style={styles.becomeChefText}>
-                  <Text style={styles.becomeChefTitle}>Vous cuisinez ?</Text>
-                  <Text style={styles.becomeChefDesc}>Rejoignez Nixyah et monétisez votre talent</Text>
-                </View>
-              </View>
-              <Pressable style={styles.becomeChefBtn} onPress={() => router.push("/auth/register-chef")}>
-                <Text style={styles.becomeChefBtnText}>S'inscrire</Text>
-              </Pressable>
-            </Gradient>
-          </View>
-        )}
 
         <Pressable style={styles.logoutBtn} onPress={handleLogout} disabled={loggingOut}>
           {loggingOut ? (
@@ -310,52 +560,112 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
-  guestScrollContent: { paddingBottom: Platform.OS === "web" ? 120 : 100 },
-  guestContent: { padding: 16, alignItems: "center", gap: 12, width: "100%", maxWidth: 520, alignSelf: "center" },
-  guestHero: {
-    width: "100%",
-    minHeight: 340,
+  clientContainer: { flex: 1, backgroundColor: Colors.light.background },
+  clientContent: { paddingBottom: Platform.OS === "web" ? 120 : 100 },
+  clientHeroCard: {
+    marginHorizontal: 20,
+    marginTop: 10,
     borderRadius: 28,
-    overflow: "hidden",
-    justifyContent: "flex-end",
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 0,
-    marginBottom: 12,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
   },
-  guestHeroMedia: {
-    ...StyleSheet.absoluteFillObject,
+  clientHeroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  clientHeroBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  clientHeroBadgeText: { color: "#fff", fontFamily: "Poppins_600SemiBold", fontSize: 12 },
+  clientHelpBtn: {
+    backgroundColor: "rgba(255,255,255,0.16)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+  },
+  clientHelpText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 16 },
+  clientHeroIdentity: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 18 },
+  clientAvatar: { width: 76, height: 76, borderRadius: 38, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "rgba(255,255,255,0.18)" },
+  clientAvatarText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 28 },
+  clientIdentityTextWrap: { flex: 1 },
+  clientName: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 20 },
+  clientSubtitle: { color: "rgba(255,255,255,0.9)", fontFamily: "Poppins_400Regular", fontSize: 13, marginTop: 2 },
+  clientHeroLocation: { color: "rgba(255,255,255,0.76)", fontFamily: "Poppins_400Regular", fontSize: 12, marginTop: 6 },
+  clientMiniStats: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderRadius: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  clientMiniStatItem: { flex: 1, alignItems: "center", gap: 2 },
+  clientMiniStatDivider: { width: 1, height: 28, backgroundColor: "rgba(255,255,255,0.18)" },
+  clientMiniStatValue: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 18 },
+  clientMiniStatLabel: { color: "rgba(255,255,255,0.78)", fontFamily: "Poppins_400Regular", fontSize: 11 },
+  clientSectionBlock: { marginTop: 20, paddingHorizontal: 20 },
+  clientSectionHeading: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 18, marginBottom: 10 },
+  clientSectionCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    overflow: "hidden",
+  },
+  clientMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.divider,
+  },
+  clientMenuItemLast: { borderBottomWidth: 0 },
+  clientMenuLeft: { flexDirection: "row", alignItems: "center", gap: 16, flex: 1 },
+  clientMenuIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: Colors.light.backgroundSecondary,
   },
-  guestHeroOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(70, 32, 12, 0.18)",
+  clientMenuTextWrap: { flex: 1 },
+  clientMenuLabel: { color: Colors.light.text, fontFamily: "Poppins_500Medium", fontSize: 15 },
+  clientMenuSub: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12, marginTop: 2 },
+  clientMetaCard: {
+    marginTop: 20,
+    marginHorizontal: 20,
+    backgroundColor: Colors.light.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    padding: 16,
   },
-  guestHeroContent: {
-    position: "relative",
-    zIndex: 1,
-    gap: 8,
-    width: "100%",
-    paddingHorizontal: 22,
-    paddingVertical: 20,
-    backgroundColor: "rgba(18, 18, 18, 0.26)",
-  },
-  guestHeroTitle: {
-    fontSize: 28,
-    fontFamily: "Poppins_700Bold",
-    color: "#fff",
-  },
-  guestHeroSub: {
-    fontSize: 14,
-    fontFamily: "Poppins_400Regular",
-    color: "rgba(255,255,255,0.9)",
-    lineHeight: 21,
-  },
-  guestIllustration: {
-    width: "124%",
-    height: "124%",
-  },
+  clientMetaLabel: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12 },
+  clientMetaValue: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 15, marginTop: 6 },
+  clientFavoritesRow: { gap: 12 },
+  clientFavoriteChip: { width: 112, gap: 10, backgroundColor: Colors.light.card, borderRadius: 18, padding: 12, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  clientFavoriteAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center" },
+  clientFavoriteAvatarText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 16 },
+  clientFavoriteName: { color: Colors.light.text, fontFamily: "Poppins_400Regular", fontSize: 12 },
+  clientLogoutBtn: { marginTop: 20, marginHorizontal: 20, backgroundColor: Colors.light.tint, borderRadius: 16, minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  clientLogoutText: { color: "#FFFFFF", fontFamily: "Poppins_600SemiBold", fontSize: 15 },
+  guestScrollContent: { paddingBottom: Platform.OS === "web" ? 120 : 100 },
+  guestContent: { padding: 16, alignItems: "center", gap: 12, width: "100%", maxWidth: 520, alignSelf: "center" },
+  guestHero: { width: "100%", minHeight: 340, borderRadius: 28, overflow: "hidden", justifyContent: "flex-end", marginBottom: 12 },
+  guestHeroMedia: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  guestHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(70, 32, 12, 0.18)" },
+  guestHeroContent: { position: "relative", zIndex: 1, gap: 8, width: "100%", paddingHorizontal: 22, paddingVertical: 20, backgroundColor: "rgba(18, 18, 18, 0.26)" },
+  guestHeroTitle: { fontSize: 28, fontFamily: "Poppins_700Bold", color: "#fff" },
+  guestHeroSub: { fontSize: 14, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.9)", lineHeight: 21 },
+  guestIllustration: { width: "124%", height: "124%" },
   loginBtn: { width: "100%", backgroundColor: Colors.light.tint, borderRadius: 16, paddingVertical: 15, alignItems: "center", shadowColor: Colors.light.tint, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
   loginBtnText: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   registerBtn: { width: "100%", borderWidth: 1.5, borderColor: Colors.light.tint, borderRadius: 16, paddingVertical: 14, alignItems: "center" },
@@ -367,31 +677,45 @@ const styles = StyleSheet.create({
   chefBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   courierBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#ECFDF5", borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: "#A7F3D0" },
   courierBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
-  profileHeader: { alignItems: "center", paddingBottom: 24, paddingTop: 12 },
-  avatarWrapper: { position: "relative", marginBottom: 14 },
-  avatar: { width: 88, height: 88, borderRadius: 44, alignItems: "center", justifyContent: "center" },
+  profileHeader: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 22, gap: 18 },
+  heroTopRow: { flexDirection: "row", gap: 16, alignItems: "center" },
+  avatarWrapper: { position: "relative" },
+  avatar: { width: 90, height: 90, borderRadius: 45, alignItems: "center", justifyContent: "center" },
+  avatarImage: { width: 90, height: 90, borderRadius: 45, backgroundColor: Colors.light.backgroundSecondary },
   avatarText: { fontSize: 32, fontFamily: "Poppins_700Bold", color: "#fff" },
-  editAvatarBtn: { position: "absolute", bottom: 0, right: 0, backgroundColor: Colors.light.text, width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
-  profileName: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
-  profileEmail: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, marginTop: 2 },
-  profileLocation: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, marginTop: 4 },
-  chefBadge: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginTop: 8, borderWidth: 1, borderColor: Colors.light.cardBorder },
-  chefBadgeText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
-  verifiedDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#059669", alignItems: "center", justifyContent: "center" },
-  statsRow: { flexDirection: "row", alignItems: "center", marginTop: 20, backgroundColor: Colors.light.card, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 24, marginHorizontal: 20, borderWidth: 1, borderColor: Colors.light.cardBorder, shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 2 },
+  editAvatarBtn: { position: "absolute", bottom: 0, right: 0, backgroundColor: Colors.light.text, width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
+  identityBlock: { flex: 1, gap: 4 },
+  profileName: { fontSize: 21, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  profileEmail: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  profileLocation: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
+  profilePhotoHint: { marginTop: 4, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  chefHeroCard: { backgroundColor: Colors.light.card, borderRadius: 22, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, gap: 12 },
+  chefHeroHead: { flexDirection: "row", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
+  chefHeroEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint, textTransform: "uppercase" },
+  chefHeroTitle: { fontSize: 18, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  chefHeroDescription: { fontSize: 13, lineHeight: 20, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  verifiedBadge: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  verifiedBadgeText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
+  chefMetricRow: { flexDirection: "row", gap: 10 },
+  chefMetricCard: { flex: 1, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12, gap: 4 },
+  chefMetricValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  chefMetricLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  statsRow: { flexDirection: "row", alignItems: "center", backgroundColor: Colors.light.card, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18, borderWidth: 1, borderColor: Colors.light.cardBorder },
   statItem: { flex: 1, alignItems: "center", gap: 3 },
   statValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
-  statLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
+  statLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, textAlign: "center" },
   statDivider: { width: 1, height: 32, backgroundColor: Colors.light.divider },
-  chefActionsRow: { flexDirection: "row", paddingHorizontal: 20, paddingVertical: 16, gap: 12 },
-  chefActionBtn: { flex: 1, alignItems: "center", gap: 6 },
-  chefActionGradient: { width: 52, height: 52, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  chefActionLabel: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
+  actionPanel: { paddingHorizontal: 20, paddingTop: 18, gap: 12 },
+  actionCard: { backgroundColor: Colors.light.card, borderRadius: 18, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 14, gap: 10 },
+  actionIconWrap: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  actionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  actionSub: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   section: { paddingTop: 20 },
   sectionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, paddingHorizontal: 20, marginBottom: 12 },
   favoritesRow: { paddingHorizontal: 20, gap: 12 },
-  favoriteChip: { alignItems: "center", gap: 5, width: 64 },
-  favoriteAvatar: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
+  favoriteChip: { alignItems: "center", gap: 5, width: 70 },
+  favoriteAvatar: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
+  favoriteAvatarImage: { width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.light.backgroundSecondary },
   favoriteAvatarText: { fontSize: 18, fontFamily: "Poppins_700Bold", color: "rgba(255,255,255,0.9)" },
   favoriteName: { fontSize: 10, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary, textAlign: "center" },
   menuSection: { backgroundColor: Colors.light.card, borderRadius: 20, marginHorizontal: 20, marginTop: 20, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden" },

@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
@@ -7,6 +8,40 @@ export class ApiError extends Error {
 }
 
 const EXPO_PUBLIC_API_URL = process.env.EXPO_PUBLIC_API_URL;
+const DEFAULT_PRODUCTION_API_URL = "https://api.nixyah.com/api";
+
+function normalizeApiBaseUrl(value?: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed.replace(/^\/+/, "")}`;
+  const parsed = new URL(withProtocol);
+  const normalizedPath = parsed.pathname === "/" ? "/api" : parsed.pathname.replace(/\/$/, "");
+  parsed.pathname = normalizedPath.endsWith("/api") ? normalizedPath : `${normalizedPath}/api`.replace(/\/api\/api$/, "/api");
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString().replace(/\/$/, "");
+}
+
+function isLocalApiUrl(value?: string | null): boolean {
+  const normalized = normalizeApiBaseUrl(value);
+  if (!normalized) return false;
+  try {
+    const parsed = new URL(normalized);
+    return /^(localhost|127\.0\.0\.1|192\.168\.|10\.)/i.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeRemoteUrl(value?: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^(https?:|file:|data:)/i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("//")) return `https:${trimmed}`;
+  return `https://${trimmed.replace(/^\/+/, "")}`;
+}
 
 function hostFromExpoConstants(): string | null {
   const manifest: any = (Constants as any).manifest || (Constants as any).expoConfig || null;
@@ -17,16 +52,24 @@ function hostFromExpoConstants(): string | null {
 }
 
 const API_BASE_URL = (() => {
-  if (EXPO_PUBLIC_API_URL) return EXPO_PUBLIC_API_URL;
+  const explicitApiUrl = normalizeApiBaseUrl(EXPO_PUBLIC_API_URL);
+  const allowLocalApi = process.env.EXPO_PUBLIC_USE_LOCAL_API === "1";
+
+  if (explicitApiUrl) {
+    if (Platform.OS !== "web" && isLocalApiUrl(explicitApiUrl) && !allowLocalApi) {
+      return DEFAULT_PRODUCTION_API_URL;
+    }
+    return explicitApiUrl;
+  }
   if (Platform.OS === "web") return "/api";
 
   const envDomain = process.env.EXPO_PUBLIC_DOMAIN;
-  if (envDomain && envDomain !== "localhost") return `http://${envDomain}:3333/api`;
+  if (envDomain && envDomain !== "localhost" && allowLocalApi) return `http://${envDomain}:3333/api`;
 
   const constantHost = hostFromExpoConstants();
-  if (constantHost) return `http://${constantHost}:3333/api`;
+  if (constantHost && allowLocalApi) return `http://${constantHost}:3333/api`;
 
-  return `http://localhost:3333/api`;
+  return DEFAULT_PRODUCTION_API_URL;
 })();
 
 export { API_BASE_URL };
@@ -44,8 +87,19 @@ export async function apiFetch<T>(
 
   const res = await fetch(`${API_BASE_URL}${path}`, { ...rest, headers });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ message: "Erreur réseau" }));
-    const error = new ApiError(body.message ?? `HTTP ${res.status}`);
+    const rawBody = await res.text().catch(() => "");
+    let body: any = null;
+    try {
+      body = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      body = rawBody ? { message: rawBody } : null;
+    }
+
+    const fallbackMessage = res.status === 0
+      ? "Erreur réseau"
+      : body?.message ?? body?.error ?? `${res.status} ${res.statusText}`.trim();
+
+    const error = new ApiError(fallbackMessage || `HTTP ${res.status}`);
     error.code = body.error;
     error.body = body;
     throw error;
@@ -71,10 +125,11 @@ export async function uploadFile({
   let presign;
   const fileRes = await fetch(fileUri);
   const blob = await fileRes.blob();
+  const authToken = token ?? (await AsyncStorage.getItem("nixyah_token")) ?? undefined;
   try {
     presign = await apiFetch<{ url: string; key: string; publicUrl?: string }>("/uploads/presign", {
       method: "POST",
-      token,
+      token: authToken,
       body: JSON.stringify({ filename, contentType, purpose, fileSize: blob.size }),
     });
   } catch (err: any) {
@@ -94,5 +149,5 @@ export async function uploadFile({
   }
 
   // 4) return public URL (preferred) or key
-  return { key: presign.key, publicUrl: presign.publicUrl ?? null };
+  return { key: presign.key, publicUrl: normalizeRemoteUrl(presign.publicUrl) };
 }

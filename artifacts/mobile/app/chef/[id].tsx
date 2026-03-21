@@ -1,9 +1,13 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import Gradient from "@/components/SafeGradient";
-import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
+import { apiFetch } from "@/constants/api";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useState } from "react";
 import {
+  Alert,
+  Image,
+  ImageBackground,
   Platform,
   Pressable,
   ScrollView,
@@ -18,17 +22,30 @@ import { Dish, useApp } from "@/contexts/AppContext";
 
 const TABS = ["Plats rapides", "Menus", "Stories", "À propos"];
 
+function getDishImage(dish: Dish) {
+  return dish.imageUrls?.[0] ?? dish.imageUrl ?? null;
+}
+
 function DishCard({
   dish,
   onAdd,
+  onRemove,
   quantity,
+  isLoading,
 }: {
   dish: Dish;
   onAdd: () => void;
+  onRemove: () => void;
   quantity: number;
+  isLoading?: boolean;
 }) {
+  const dishImage = getDishImage(dish);
+
   return (
     <View style={styles.dishCard}>
+      {dishImage ? (
+        <Image source={{ uri: dishImage }} style={styles.dishImage} />
+      ) : null}
       <View style={styles.dishInfo}>
         {dish.isPopular && (
           <View style={styles.popularBadge}>
@@ -50,17 +67,18 @@ function DishCard({
           <View style={styles.qtyControl}>
             <Pressable
               style={styles.qtyBtn}
-              onPress={() => {}}
+              onPress={onRemove}
+              disabled={isLoading}
             >
               <Feather name="minus" size={14} color={Colors.light.tint} />
             </Pressable>
             <Text style={styles.qtyText}>{quantity}</Text>
-            <Pressable style={styles.qtyBtn} onPress={onAdd}>
+            <Pressable style={styles.qtyBtn} onPress={onAdd} disabled={isLoading}>
               <Feather name="plus" size={14} color={Colors.light.tint} />
             </Pressable>
           </View>
         ) : (
-          <Pressable style={styles.addBtn} onPress={onAdd}>
+          <Pressable style={styles.addBtn} onPress={onAdd} disabled={isLoading}>
             <Feather name="plus" size={18} color="#fff" />
           </Pressable>
         )}
@@ -72,9 +90,10 @@ function DishCard({
 export default function ChefDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
-  const { getChef, favorites, toggleFavorite, stories, user } = useApp();
+  const { getChef, favorites, toggleFavorite, user, token } = useApp();
   const [activeTab, setActiveTab] = useState(0);
-  const [cart, setCart] = useState<Record<string, number>>({});
+  const [cart, setCart] = useState<Record<string, { itemId: number; quantity: number }>>({});
+  const [changingDishId, setChangingDishId] = useState<string | null>(null);
 
   const chef = getChef(id ?? "");
   const isFav = favorites.includes(id ?? "");
@@ -93,16 +112,104 @@ export default function ChefDetailScreen() {
     );
   }
 
-  const totalItems = Object.values(cart).reduce((a, b) => a + b, 0);
+  const heroImage =
+    chef.heroImageUrl ??
+    chef.dishes.find((dish) => dish.imageUrls?.[0])?.imageUrls?.[0] ??
+    chef.dishes.find((dish) => dish.imageUrl)?.imageUrl ??
+    chef.stories?.find((story) => story.imageUrl)?.imageUrl ??
+    null;
+  const initials = chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2);
+
+  const totalItems = Object.values(cart).reduce((sum, item) => sum + item.quantity, 0);
   const totalPrice = chef.dishes.reduce(
-    (sum, dish) => sum + (cart[dish.id] || 0) * dish.price,
+    (sum, dish) => sum + (cart[dish.id]?.quantity || 0) * dish.price,
     0
   );
 
-  const addToCart = (dishId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setCart((prev) => ({ ...prev, [dishId]: (prev[dishId] || 0) + 1 }));
-  };
+  const loadCart = useCallback(async () => {
+    if (!user || user.type !== "client" || !token) {
+      setCart({});
+      return;
+    }
+
+    try {
+      const data = await apiFetch<{ cart?: { items?: Array<{ id: number; dishId?: number | null; quantity: number }> } }>("/cart", { token });
+      const nextCart = Object.fromEntries(
+        (data.cart?.items ?? [])
+          .filter((item) => typeof item.dishId === "number")
+          .map((item) => [String(item.dishId), { itemId: item.id, quantity: item.quantity }]),
+      );
+      setCart(nextCart);
+    } catch (error) {
+      console.warn("Failed to load restaurant cart", error);
+    }
+  }, [token, user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadCart();
+    }, [loadCart]),
+  );
+
+  const addToCart = useCallback(async (dishId: string) => {
+    if (!user) {
+      router.push("/auth/login");
+      return;
+    }
+    if (user.type !== "client" || !token) {
+      return;
+    }
+
+    const numericDishId = Number(dishId);
+    if (!Number.isInteger(numericDishId)) {
+      Alert.alert("Erreur", "Plat invalide");
+      return;
+    }
+
+    try {
+      setChangingDishId(dishId);
+      await apiFetch("/cart/items", {
+        method: "POST",
+        token,
+        body: JSON.stringify({ dishId: numericDishId, quantity: 1 }),
+      });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await loadCart();
+    } catch (error: any) {
+      Alert.alert("Erreur", error?.message ?? "Impossible d'ajouter ce plat au panier");
+    } finally {
+      setChangingDishId(null);
+    }
+  }, [loadCart, token, user]);
+
+  const removeFromCart = useCallback(async (dishId: string) => {
+    const currentItem = cart[dishId];
+    if (!currentItem || !token) {
+      return;
+    }
+
+    try {
+      setChangingDishId(dishId);
+      if (currentItem.quantity <= 1) {
+        await apiFetch(`/cart/items/${currentItem.itemId}`, {
+          method: "DELETE",
+          token,
+        });
+      } else {
+        await apiFetch(`/cart/items/${currentItem.itemId}`, {
+          method: "PUT",
+          token,
+          body: JSON.stringify({ quantity: currentItem.quantity - 1 }),
+        });
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await loadCart();
+    } catch (error: any) {
+      Alert.alert("Erreur", error?.message ?? "Impossible de mettre à jour le panier");
+    } finally {
+      setChangingDishId(null);
+    }
+  }, [cart, loadCart, token]);
 
   return (
     <View style={styles.container}>
@@ -111,6 +218,11 @@ export default function ChefDetailScreen() {
           colors={[chef.coverColor, chef.coverColor + "CC"]}
           style={[styles.hero, { paddingTop: topInset }]}
         >
+          {heroImage ? (
+            <ImageBackground source={{ uri: heroImage }} style={styles.heroImageBg} imageStyle={styles.heroImageBgStyle}>
+              <View style={styles.heroImageOverlay} />
+            </ImageBackground>
+          ) : null}
           <View style={styles.heroActions}>
             <Pressable style={styles.backBtn} onPress={() => router.back()}>
               <Feather name="arrow-left" size={20} color="#fff" />
@@ -136,9 +248,11 @@ export default function ChefDetailScreen() {
 
           <View style={styles.heroContent}>
             <View style={styles.chefAvatarLarge}>
-              <Text style={styles.chefAvatarText}>
-                {chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
-              </Text>
+              {chef.avatarUrl ? (
+                <Image source={{ uri: chef.avatarUrl as string }} style={styles.chefAvatarLargeImage} />
+              ) : (
+                <Text style={styles.chefAvatarText}>{initials}</Text>
+              )}
             </View>
             <View style={styles.heroInfo}>
               <View style={styles.heroNameRow}>
@@ -148,6 +262,14 @@ export default function ChefDetailScreen() {
                 )}
               </View>
               <Text style={styles.heroSpecialty}>{chef.specialty}</Text>
+              {chef.dishes[0] ? (
+                <View style={styles.heroSpotlight}>
+                  <Text style={styles.heroSpotlightLabel}>À découvrir</Text>
+                  <Text style={styles.heroSpotlightText} numberOfLines={1}>
+                    {chef.dishes[0].name} • {chef.dishes[0].price.toLocaleString()} FCFA
+                  </Text>
+                </View>
+              ) : null}
               <View style={styles.heroMeta}>
                 <View style={styles.heroBadge}>
                   <Ionicons name="star" size={12} color="#F7C27B" />
@@ -186,11 +308,16 @@ export default function ChefDetailScreen() {
               <DishCard
                 key={dish.id}
                 dish={dish}
-                quantity={isCourier ? 0 : (cart[dish.id] || 0)}
+                quantity={isCourier ? 0 : (cart[dish.id]?.quantity || 0)}
                 onAdd={() => {
                   if (isCourier) return;
                   addToCart(dish.id);
                 }}
+                onRemove={() => {
+                  if (isCourier) return;
+                  removeFromCart(dish.id);
+                }}
+                isLoading={changingDishId === dish.id}
               />
             ))}
           </View>
@@ -236,6 +363,9 @@ export default function ChefDetailScreen() {
             {(chef.stories && chef.stories.length > 0) ? (
               chef.stories.map((story) => (
                 <Pressable key={story.id} style={[styles.storyCard, { backgroundColor: story.bgColor || Colors.light.card }]}>
+                  {story.imageUrl ? (
+                    <Image source={{ uri: story.imageUrl }} style={styles.storyImage} />
+                  ) : null}
                   <View style={styles.storyHeader}>
                     <Text style={styles.storyCaption} numberOfLines={3}>{story.caption}</Text>
                     {story.emoji && <Text style={styles.storyEmoji}>{story.emoji}</Text>}
@@ -292,18 +422,20 @@ export default function ChefDetailScreen() {
 
       {totalItems > 0 && (
         <View style={[styles.cartBar, { paddingBottom: bottomInset + 12 }]}>
-          <Gradient
-            colors={[Colors.light.tint, Colors.light.tintDark]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.cartBarInner}
-          >
-            <View style={styles.cartBadge}>
-              <Text style={styles.cartBadgeText}>{totalItems}</Text>
-            </View>
-            <Text style={styles.cartText}>Voir mon panier</Text>
-            <Text style={styles.cartPrice}>{totalPrice.toLocaleString()} FCFA</Text>
-          </Gradient>
+          <Pressable onPress={() => router.push("/(tabs)/cart")}>
+            <Gradient
+              colors={[Colors.light.tint, Colors.light.tintDark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.cartBarInner}
+            >
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{totalItems}</Text>
+              </View>
+              <Text style={styles.cartText}>Voir mon panier</Text>
+              <Text style={styles.cartPrice}>{totalPrice.toLocaleString()} FCFA</Text>
+            </Gradient>
+          </Pressable>
         </View>
       )}
 
@@ -330,7 +462,17 @@ export default function ChefDetailScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
-  hero: { paddingHorizontal: 20, paddingBottom: 24 },
+  hero: { paddingHorizontal: 20, paddingBottom: 24, position: "relative", overflow: "hidden" },
+  heroImageBg: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  heroImageBgStyle: {
+    opacity: 0.95,
+  },
+  heroImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(43,28,14,0.42)",
+  },
   heroActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   backBtn: {
     width: 40, height: 40, borderRadius: 20,
@@ -349,12 +491,29 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.25)",
     alignItems: "center", justifyContent: "center",
     borderWidth: 3, borderColor: "rgba(255,255,255,0.5)",
+    overflow: "hidden",
   },
+  chefAvatarLargeImage: { width: 80, height: 80, borderRadius: 40 },
   chefAvatarText: { fontSize: 28, fontFamily: "Poppins_700Bold", color: "#fff" },
   heroInfo: { flex: 1, gap: 4 },
   heroNameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   heroName: { fontSize: 20, fontFamily: "Poppins_700Bold", color: "#fff" },
   heroSpecialty: { fontSize: 13, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.85)" },
+  heroSpotlight: {
+    alignSelf: "flex-start",
+    marginTop: 4,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  heroSpotlightLabel: {
+    fontSize: 10,
+    fontFamily: "Poppins_600SemiBold",
+    color: "rgba(255,255,255,0.72)",
+    textTransform: "uppercase",
+  },
+  heroSpotlightText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "#fff", marginTop: 1 },
   heroMeta: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
   heroBadge: {
     flexDirection: "row", alignItems: "center", gap: 4,
@@ -380,6 +539,12 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.light.cardBorder,
     shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 1, shadowRadius: 8, elevation: 2,
+  },
+  dishImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 14,
+    marginRight: 12,
   },
   dishInfo: { flex: 1, gap: 4 },
   popularBadge: {
@@ -460,6 +625,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.light.cardBorder,
     shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 1, shadowRadius: 8, elevation: 2, gap: 10,
+  },
+  storyImage: {
+    width: "100%",
+    height: 180,
+    borderRadius: 14,
   },
   storyHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12, justifyContent: "space-between" },
   storyCaption: { flex: 1, fontSize: 15, fontFamily: "Poppins_500Medium", color: Colors.light.text, lineHeight: 22 },

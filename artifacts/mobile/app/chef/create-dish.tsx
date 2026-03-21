@@ -1,18 +1,21 @@
-import React, { useCallback, useState } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Platform, Alert, Image } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { View, Text, TextInput, Pressable, StyleSheet, Platform, Alert, Image, ScrollView } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
-import { apiFetch } from "@/constants/api";
+import { apiFetch, uploadFile } from "@/constants/api";
 
 export default function CreateDishScreen() {
+  const params = useLocalSearchParams<{ dishId?: string }>();
   const insets = useSafeAreaInsets();
   const topInset = Platform.OS === "web" ? 67 : insets.top;
-  const { user, fetchChefDishes, token } = useApp();
+  const { user, chefDishes, fetchChefDishes, refreshChefs, updateChefDish, token } = useApp();
+  const isEditMode = Boolean(params.dishId);
+  const editingDish = chefDishes.find((dish) => dish.id === params.dishId);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -20,57 +23,121 @@ export default function CreateDishScreen() {
   const [category, setCategory] = useState("Plats Principaux");
   const [prepTime, setPrepTime] = useState("30 min");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [imageUris, setImageUris] = useState<string[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const remainingSlots = useMemo(() => Math.max(0, 3 - imageUris.length), [imageUris.length]);
+
+  useEffect(() => {
+    if (isEditMode && user?.id && !editingDish) {
+      fetchChefDishes(user.id);
+    }
+  }, [editingDish, fetchChefDishes, isEditMode, user?.id]);
+
+  useEffect(() => {
+    if (!editingDish) return;
+    setName(editingDish.name);
+    setDescription(editingDish.description);
+    setPrice(String(editingDish.price));
+    setCategory(editingDish.category);
+    setPrepTime(editingDish.prepTime);
+    setImageUris(editingDish.imageUrls?.length ? editingDish.imageUrls : editingDish.imageUrl ? [editingDish.imageUrl] : []);
+  }, [editingDish]);
+
+  const inferContentType = useCallback((filename: string, mimeType?: string | null) => {
+    if (mimeType && ["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+      return mimeType;
+    }
+
+    const extension = filename.split(".").pop()?.toLowerCase();
+    if (extension === "png") return "image/png";
+    if (extension === "webp") return "image/webp";
+    return "image/jpeg";
+  }, []);
 
   const onSubmit = useCallback(async () => {
     if (!user?.id) return Alert.alert("Erreur", "Utilisateur non connecté");
-    if (!name || !price) return Alert.alert("Erreur", "Veuillez renseigner le nom et le prix");
+    if (!name.trim()) return Alert.alert("Erreur", "Veuillez renseigner le nom du plat");
+    if (!isEditMode && !price) return Alert.alert("Erreur", "Veuillez renseigner le prix");
     setIsSubmitting(true);
     try {
-      const body: any = { name, description, price: Number(price), category, prepTime };
-      if (imageUri) body.imageUrl = imageUri;
-      await apiFetch(`/chef/${user.id}/dishes`, {
-        method: "POST",
-        token: token ?? undefined,
-        body: JSON.stringify(body),
-      });
-      await fetchChefDishes(user.id);
+      if (isEditMode && params.dishId) {
+        await updateChefDish(params.dishId, {
+          name,
+          description,
+          category,
+          prepTime,
+          imageUrls: imageUris,
+        });
+      } else {
+        const body: any = { name, description, price: Number(price), category, prepTime };
+        if (imageUris.length > 0) {
+          body.imageUrl = imageUris[0];
+          body.imageUrls = imageUris;
+        }
+        await apiFetch(`/chef/${user.id}/dishes`, {
+          method: "POST",
+          token: token ?? undefined,
+          body: JSON.stringify(body),
+        });
+        await fetchChefDishes(user.id);
+      }
+      await refreshChefs();
       router.back();
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message ?? "Impossible de créer le plat");
+      Alert.alert("Erreur", e?.message ?? (isEditMode ? "Impossible de modifier le plat" : "Impossible de créer le plat"));
     } finally {
       setIsSubmitting(false);
     }
-  }, [name, description, price, category, prepTime, user?.id, token]);
+  }, [category, description, fetchChefDishes, imageUris, isEditMode, name, params.dishId, prepTime, price, refreshChefs, token, updateChefDish, user?.id]);
 
-  const pickImage = useCallback(async () => {
+  const pickImages = useCallback(async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return Alert.alert("Permission requise", "Autorisez l'accès aux photos");
-      const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8 });
-      if (res.canceled) return;
-      const uri = Array.isArray(res.assets) && res.assets.length > 0 ? res.assets[0].uri : undefined;
-      if (!uri) return;
-      setUploadingImage(true);
-      // upload via helper
-      const filename = uri.split('/').pop() ?? `photo-${Date.now()}.jpg`;
-      const contentType = 'image/jpeg';
-      const { publicUrl } = await (await import("@/constants/api")).uploadFile({
-        fileUri: uri,
-        filename,
-        contentType,
-        purpose: "dish",
-        token: token ?? undefined,
+      if (remainingSlots === 0) {
+        Alert.alert("Limite atteinte", "Vous pouvez ajouter jusqu'à 3 photos par plat.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.8,
+        allowsMultipleSelection: true,
+        selectionLimit: remainingSlots,
       });
-      setImageUri(publicUrl ?? null);
+      if (res.canceled) return;
+      const assets = Array.isArray(res.assets) ? res.assets.slice(0, remainingSlots) : [];
+      if (assets.length === 0) return;
+      setUploadingImage(true);
+      const uploadedUrls: string[] = [];
+
+      for (const asset of assets) {
+        const uri = asset.uri;
+        const filename = asset.fileName ?? uri.split("/").pop() ?? `photo-${Date.now()}.jpg`;
+        const contentType = inferContentType(filename, asset.mimeType);
+        const { publicUrl } = await uploadFile({
+          fileUri: uri,
+          filename,
+          contentType,
+          purpose: "dish",
+          token: token ?? undefined,
+        });
+        if (publicUrl) {
+          uploadedUrls.push(publicUrl);
+        }
+      }
+
+      setImageUris((prev) => Array.from(new Set([...prev, ...uploadedUrls])).slice(0, 3));
     } catch (err: any) {
-      console.warn('Image upload failed', err);
-      Alert.alert('Erreur', 'Impossible d\'uploader l\'image');
+      console.warn("Image upload failed", err);
+      Alert.alert("Erreur", "Impossible d'uploader les photos");
     } finally {
       setUploadingImage(false);
     }
-  }, [token]);
+  }, [inferContentType, remainingSlots, token]);
+
+  const removeImage = useCallback((uriToRemove: string) => {
+    setImageUris((prev) => prev.filter((uri) => uri !== uriToRemove));
+  }, []);
 
   return (
     <View style={[styles.container, { paddingTop: topInset }]}> 
@@ -78,11 +145,20 @@ export default function CreateDishScreen() {
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.light.text} />
         </Pressable>
-        <Text style={styles.title}>Créer un plat</Text>
+        <Text style={styles.title}>{isEditMode ? "Modifier le plat" : "Créer un plat"}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <View style={styles.form}>
+      <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+        <View style={styles.heroCard}>
+          <Text style={styles.heroTitle}>{isEditMode ? "Mettez votre fiche plat à jour" : "Présentez votre plat avec de vraies images"}</Text>
+          <Text style={styles.heroSub}>
+            {isEditMode
+              ? "Vous pouvez modifier le nom, la description, les photos et la préparation. Le prix reste verrouillé après publication."
+              : "Ajoutez jusqu'à 3 photos pour aider les clients à mieux choisir."}
+          </Text>
+        </View>
+
         <Text style={styles.label}>Nom</Text>
         <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Ex: Attiéké poisson" />
 
@@ -90,7 +166,15 @@ export default function CreateDishScreen() {
         <TextInput style={[styles.input, { height: 90 }]} multiline value={description} onChangeText={setDescription} placeholder="Brève description" />
 
         <Text style={styles.label}>Prix (FCFA)</Text>
-        <TextInput style={styles.input} keyboardType="numeric" value={price} onChangeText={setPrice} placeholder="5000" />
+        <TextInput
+          style={[styles.input, isEditMode && styles.disabledInput]}
+          keyboardType="numeric"
+          value={price}
+          onChangeText={setPrice}
+          placeholder="5000"
+          editable={!isEditMode}
+        />
+        {isEditMode ? <Text style={styles.lockedHint}>Le prix est verrouillé après publication pour éviter les écarts involontaires.</Text> : null}
 
         <Text style={styles.label}>Catégorie</Text>
         <TextInput style={styles.input} value={category} onChangeText={setCategory} />
@@ -98,18 +182,46 @@ export default function CreateDishScreen() {
         <Text style={styles.label}>Temps de préparation</Text>
         <TextInput style={styles.input} value={prepTime} onChangeText={setPrepTime} />
 
-          <Text style={styles.label}>Image du plat (optionnel)</Text>
-          {imageUri ? (
-            <Image source={{ uri: imageUri }} style={{ width: 120, height: 80, borderRadius: 8, marginBottom: 8 }} />
-          ) : null}
-          <Pressable style={[styles.submitBtn, { backgroundColor: uploadingImage ? '#ccc' : Colors.light.backgroundSecondary }]} onPress={pickImage} disabled={uploadingImage}>
-            <Text style={{ color: uploadingImage ? '#333' : Colors.light.text }}>{uploadingImage ? 'Téléchargement...' : (imageUri ? 'Modifier l\'image' : 'Ajouter une image')}</Text>
+        <View style={styles.mediaCard}>
+          <View style={styles.mediaHeader}>
+            <Text style={styles.label}>Photos du plat</Text>
+            <Text style={styles.mediaCounter}>{imageUris.length}/3</Text>
+          </View>
+          {imageUris.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryRow}>
+              {imageUris.map((uri, index) => (
+                <View key={uri} style={styles.galleryItem}>
+                  <Image source={{ uri }} style={styles.galleryImage} />
+                  <View style={styles.galleryBadge}>
+                    <Text style={styles.galleryBadgeText}>{index === 0 ? "Principale" : `Photo ${index + 1}`}</Text>
+                  </View>
+                  <Pressable style={styles.removeImageBtn} onPress={() => removeImage(uri)}>
+                    <Feather name="x" size={14} color="#fff" />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={styles.emptyMediaState}>
+              <Feather name="image" size={22} color={Colors.light.textTertiary} />
+              <Text style={styles.emptyMediaText}>Aucune photo ajoutée pour l'instant.</Text>
+            </View>
+          )}
+          <Pressable
+            style={[styles.secondaryBtn, uploadingImage && styles.secondaryBtnDisabled, remainingSlots === 0 && styles.secondaryBtnDisabled]}
+            onPress={pickImages}
+            disabled={uploadingImage || remainingSlots === 0}
+          >
+            <Text style={styles.secondaryBtnText}>
+              {uploadingImage ? "Téléchargement..." : remainingSlots === 0 ? "3 photos ajoutées" : imageUris.length > 0 ? "Ajouter d'autres photos" : "Ajouter des photos"}
+            </Text>
           </Pressable>
+        </View>
 
         <Pressable style={styles.submitBtn} onPress={onSubmit} disabled={isSubmitting}>
-          <Text style={styles.submitText}>{isSubmitting ? "Enregistrement..." : "Créer"}</Text>
+          <Text style={styles.submitText}>{isSubmitting ? (isEditMode ? "Mise à jour..." : "Enregistrement...") : isEditMode ? "Enregistrer les modifications" : "Créer"}</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -120,8 +232,27 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 18, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, flex: 1, textAlign: "center" },
   form: { padding: 20, gap: 12 },
+  heroCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, marginBottom: 4 },
+  heroTitle: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  heroSub: { marginTop: 6, fontSize: 13, lineHeight: 19, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   label: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.text },
   input: { backgroundColor: Colors.light.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  disabledInput: { color: Colors.light.textTertiary, backgroundColor: Colors.light.backgroundSecondary },
+  lockedHint: { marginTop: -4, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
+  mediaCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, gap: 12 },
+  mediaHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  mediaCounter: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
+  galleryRow: { gap: 12, paddingRight: 12 },
+  galleryItem: { width: 156, position: "relative" },
+  galleryImage: { width: 156, height: 108, borderRadius: 14, backgroundColor: Colors.light.backgroundSecondary },
+  galleryBadge: { position: "absolute", left: 8, bottom: 8, backgroundColor: "rgba(17,24,39,0.68)", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 },
+  galleryBadgeText: { color: "#fff", fontSize: 11, fontFamily: "Poppins_500Medium" },
+  removeImageBtn: { position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: 13, backgroundColor: "rgba(17,24,39,0.72)", alignItems: "center", justifyContent: "center" },
+  emptyMediaState: { borderRadius: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, borderStyle: "dashed", paddingVertical: 20, alignItems: "center", gap: 8, backgroundColor: Colors.light.backgroundSecondary },
+  emptyMediaText: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  secondaryBtn: { backgroundColor: Colors.light.backgroundSecondary, paddingVertical: 13, borderRadius: 14, alignItems: "center", borderWidth: 1, borderColor: Colors.light.cardBorder },
+  secondaryBtnText: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold" },
+  secondaryBtnDisabled: { opacity: 0.6 },
   submitBtn: { marginTop: 12, backgroundColor: Colors.light.tint, paddingVertical: 14, borderRadius: 12, alignItems: "center" },
   submitText: { color: "#fff", fontFamily: "Poppins_600SemiBold" },
 });

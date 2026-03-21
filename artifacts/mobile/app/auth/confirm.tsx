@@ -90,6 +90,35 @@ export default function ConfirmEmailScreen() {
     }
   }, [deepLinkMessage, deepLinkStatus, token]);
 
+  useEffect(() => {
+    if (token || !email.trim() || status === "success") return;
+
+    let cancelled = false;
+
+    const pollConfirmationStatus = async () => {
+      try {
+        const result = await apiFetch<{ confirmed: boolean }>(
+          `/auth/confirmation-status?email=${encodeURIComponent(email.trim())}`,
+        );
+
+        if (!cancelled && result.confirmed) {
+          setStatus("success");
+          setMessage("Votre adresse email a ete confirmee avec succes.");
+        }
+      } catch {
+        // Keep polling quietly while the user is on this screen.
+      }
+    };
+
+    pollConfirmationStatus();
+    const intervalId = setInterval(pollConfirmationStatus, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [email, status, token]);
+
   async function handleResend() {
     if (!email.trim()) {
       setMessage("Saisissez votre adresse email pour recevoir un nouveau message.");
@@ -153,6 +182,12 @@ export default function ConfirmEmailScreen() {
             ) : null}
 
             {message ? <Text style={styles.message}>{message}</Text> : null}
+
+            {!token && status !== "success" ? (
+              <Text style={styles.helperText}>
+                Cette page detecte automatiquement la confirmation de votre email.
+              </Text>
+            ) : null}
 
             {status === "success" ? (
               <Pressable style={styles.primaryButton} onPress={() => router.replace("/auth/login")}>
@@ -280,6 +315,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontFamily: "Poppins_500Medium",
     color: "#fff",
+    marginBottom: 12,
+  },
+  helperText: {
+    textAlign: "center",
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "rgba(255,255,255,0.82)",
     marginBottom: 12,
   },
   input: {

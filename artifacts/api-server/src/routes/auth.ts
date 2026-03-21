@@ -38,7 +38,7 @@ function normalizeApiBaseUrl(rawValue: string | undefined): string | null {
 const API_BASE_URL =
   normalizeApiBaseUrl(process.env.API_PUBLIC_URL) ??
   normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_URL) ??
-  "http://localhost:3333/api";
+  "https://api.nixyah.com/api";
 
 function joinUrl(base: string, path: string) {
   const normalizedPath = path.replace(/^\/+/, "");

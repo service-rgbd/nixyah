@@ -7,7 +7,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { apiFetch } from "@/constants/api";
+import { apiFetch, normalizeRemoteUrl } from "@/constants/api";
 
 export interface Chef {
   id: string;
@@ -16,6 +16,7 @@ export interface Chef {
   location: string;
   zone?: string;
   avatarUrl?: string | null;
+  heroImageUrl?: string | null;
   rating: number;
   reviewCount: number;
   priceRange: string;
@@ -37,6 +38,7 @@ export interface Dish {
   prepTime: string;
   isPopular?: boolean;
   imageUrl?: string | null;
+  imageUrls?: string[];
 }
 
 export interface Notification {
@@ -55,6 +57,15 @@ export interface ChefStats {
   totalRevenue: number;
   averageRating: number;
   completionRate: number;
+  activeOrders: number;
+  averageBasket: number;
+  breakdown: {
+    pending: number;
+    accepted: number;
+    preparing: number;
+    ready: number;
+    delivered: number;
+  };
   thisMonth: {
     orders: number;
     revenue: number;
@@ -102,6 +113,21 @@ export interface Order {
       createdAt: string;
     } | null;
   } | null;
+}
+
+export interface ReceivedOrder {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientLocation: string;
+  items: { dishId?: string | null; dishName: string; quantity: number; price: number }[];
+  total: number;
+  status: "pending" | "accepted" | "preparing" | "ready" | "delivered";
+  createdAt: string;
+  occasion?: string | null;
+  persons?: number | null;
+  notes?: string | null;
+  delivery?: Order["delivery"];
 }
 
 export interface ChatMessage {
@@ -162,12 +188,14 @@ interface AppContextValue {
   chefs: Chef[];
   stories: Story[];
   orders: Order[];
+  chefOrders: ReceivedOrder[];
   chats: Chat[];
   notifications: Notification[];
   chefStats: ChefStats | null;
   chefDishes: Dish[];
   favorites: string[];
   isLoadingChefs: boolean;
+  isLoadingChefOrders: boolean;
   isLoadingNotifications: boolean;
   user: AuthUser | null;
   token: string | null;
@@ -181,11 +209,18 @@ interface AppContextValue {
   toggleFavorite: (chefId: string) => void;
   sendMessage: (chatId: string, chefId: string, text: string, chefName: string, chefSpecialty: string, coverColor: string) => void;
   getChef: (id: string) => Chef | undefined;
+  updateCurrentUser: (data: { avatarUrl?: string | null; coverColor?: string; location?: string }) => Promise<AuthUser>;
   refreshChefs: () => Promise<void>;
   refreshStories: () => Promise<void>;
+  likeStory: (storyId: string) => Promise<void>;
   postStory: (data: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null }) => Promise<void>;
   fetchChefStats: (chefId: string) => Promise<void>;
   fetchChefDishes: (chefId: string) => Promise<void>;
+  updateChefDish: (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean }) => Promise<void>;
+  deleteChefDish: (dishId: string) => Promise<void>;
+  fetchChefOrders: () => Promise<void>;
+  updateChefOrderStatus: (orderId: string, status: ReceivedOrder["status"]) => Promise<void>;
+  requestDeliveryForOrder: (orderId: string) => Promise<void>;
   fetchNotifications: () => Promise<void>;
   refreshOrders: () => Promise<void>;
 }
@@ -233,13 +268,60 @@ const AppContext = createContext<AppContextValue | null>(null);
 // Do not expose example chats/orders to unauthenticated users.
 const MOCK_CHATS: Chat[] = [];
 
+function normalizeImageUrlList(input: unknown, fallback?: string | null): string[] {
+  const values = Array.isArray(input) ? input : [];
+  const normalized = values
+    .map((value) => normalizeRemoteUrl(typeof value === "string" ? value : null))
+    .filter((value): value is string => Boolean(value));
+
+  const normalizedFallback = normalizeRemoteUrl(fallback);
+  if (normalizedFallback) {
+    normalized.unshift(normalizedFallback);
+  }
+
+  return Array.from(new Set(normalized));
+}
+
 function mapApiChef(c: any): Chef {
+  const mappedDishes = (c.dishes ?? []).map((d: any) => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    price: d.price,
+    category: d.category,
+    prepTime: d.prepTime,
+    isPopular: d.isPopular,
+    imageUrl: normalizeRemoteUrl(d.imageUrl ?? null),
+    imageUrls: normalizeImageUrlList(d.imageUrls, d.imageUrl ?? null),
+  }));
+  const mappedStories = (c.stories ?? []).map((s: any) => ({
+    id: String(s.id),
+    chefId: String(s.chefId ?? s.chef_profile_id ?? c.id),
+    chefName: s.chefName ?? s.chef_name ?? c.name,
+    chefCoverColor: s.chefCoverColor ?? s.chef_cover_color ?? c.coverColor ?? "#C4522A",
+    caption: s.caption,
+    dishName: s.dishName ?? s.dish_name ?? null,
+    price: s.price ?? null,
+    emoji: s.emoji ?? null,
+    bgColor: s.bgColor ?? s.bg_color ?? null,
+    imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
+    createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
+    expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  }));
+  const heroImageUrl =
+    mappedDishes.find((dish: Dish) => dish.imageUrls?.[0])?.imageUrls?.[0] ??
+    mappedDishes.find((dish: Dish) => dish.imageUrl)?.imageUrl ??
+    mappedStories.find((story: Story) => story.imageUrl)?.imageUrl ??
+    normalizeRemoteUrl(c.avatarUrl ?? null);
+
   return {
     id: c.id,
     name: c.name,
     specialty: c.specialty,
     location: c.location,
     zone: c.zone,
+    avatarUrl: normalizeRemoteUrl(c.avatarUrl ?? null),
+    heroImageUrl,
     rating: c.rating ?? 5.0,
     reviewCount: c.reviewCount ?? 0,
     priceRange: c.priceRange ?? "",
@@ -248,29 +330,22 @@ function mapApiChef(c: any): Chef {
     coverColor: c.coverColor ?? "#C4522A",
     bio: c.bio ?? "",
     responseTime: c.responseTime ?? "< 30 min",
-    dishes: (c.dishes ?? []).map((d: any) => ({
-      id: d.id,
-      name: d.name,
-      description: d.description,
-      price: d.price,
-      category: d.category,
-      prepTime: d.prepTime,
-      isPopular: d.isPopular,
-    })),
-    stories: (c.stories ?? []).map((s: any) => ({
-      id: String(s.id),
-      chefId: String(s.chefId ?? s.chef_profile_id ?? c.id),
-      chefName: s.chefName ?? s.chef_name ?? c.name,
-      chefCoverColor: s.chefCoverColor ?? s.chef_cover_color ?? c.coverColor ?? "#C4522A",
-      caption: s.caption,
-      dishName: s.dishName ?? s.dish_name ?? null,
-      price: s.price ?? null,
-      emoji: s.emoji ?? null,
-      bgColor: s.bgColor ?? s.bg_color ?? null,
-      imageUrl: s.imageUrl ?? s.image_url ?? null,
-      createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
-      expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    })),
+    dishes: mappedDishes,
+    stories: mappedStories,
+  };
+}
+
+function mapApiAuthUser(input: any): AuthUser {
+  return {
+    ...input,
+    avatarUrl: normalizeRemoteUrl(input?.avatarUrl ?? null),
+    chefProfile: input?.chefProfile
+      ? {
+          ...input.chefProfile,
+          specialties: input.chefProfile.specialties ?? undefined,
+        }
+      : null,
+    courierProfile: input?.courierProfile ?? null,
   };
 }
 
@@ -289,6 +364,7 @@ function mapApiOrder(order: any): Order {
             category: "",
             prepTime: "",
             imageUrl: null,
+            imageUrls: [],
           },
           quantity: Number(item.quantity ?? 1),
         }))
@@ -320,16 +396,60 @@ function mapApiOrder(order: any): Order {
   };
 }
 
+function mapApiChefOrder(order: any): ReceivedOrder {
+  return {
+    id: String(order.id),
+    clientId: String(order.clientId),
+    clientName: String(order.clientName ?? "Cliente"),
+    clientLocation: String(order.clientLocation ?? ""),
+    items: Array.isArray(order.items)
+      ? order.items.map((item: any) => ({
+          dishId: item.dishId ? String(item.dishId) : null,
+          dishName: String(item.dishName ?? ""),
+          quantity: Number(item.quantity ?? 1),
+          price: Number(item.price ?? 0),
+        }))
+      : [],
+    total: Number(order.total ?? 0),
+    status: order.status,
+    createdAt: String(order.createdAt ?? new Date().toISOString()),
+    occasion: order.occasion ?? null,
+    persons: order.persons ?? null,
+    notes: order.notes ?? null,
+    delivery: order.delivery
+      ? {
+          id: String(order.delivery.id),
+          status: order.delivery.status,
+          courierUserId: order.delivery.courierUserId ? String(order.delivery.courierUserId) : null,
+          deliveryAddress: order.delivery.deliveryAddress ?? undefined,
+          restaurantAddress: order.delivery.restaurantAddress ?? undefined,
+          latestLocation: order.delivery.latestLocation
+            ? {
+                latitude: Number(order.delivery.latestLocation.latitude),
+                longitude: Number(order.delivery.latestLocation.longitude),
+                accuracy: order.delivery.latestLocation.accuracy ?? null,
+                heading: order.delivery.latestLocation.heading ?? null,
+                speed: order.delivery.latestLocation.speed ?? null,
+                createdAt: String(order.delivery.latestLocation.createdAt),
+              }
+            : null,
+        }
+      : null,
+  };
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [chefs, setChefs] = useState<Chef[]>([]);
   const [stories, setStories] = useState<Story[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [chefOrders, setChefOrders] = useState<ReceivedOrder[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [chefStats, setChefStats] = useState<ChefStats | null>(null);
   const [chefDishes, setChefDishes] = useState<Dish[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [isLoadingChefs, setIsLoadingChefs] = useState(true);
+  const [isLoadingChefOrders, setIsLoadingChefOrders] = useState(false);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -359,7 +479,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         price: s.price ?? null,
         emoji: s.emoji ?? null,
         bgColor: s.bgColor ?? s.bg_color ?? null,
-        imageUrl: s.imageUrl ?? s.image_url ?? null,
+        imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
         createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
         expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })));
@@ -405,8 +525,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (savedToken) {
           try {
             const me = await apiFetch<AuthUser>("/auth/me", { token: savedToken });
-            setUser(me);
+            setUser(mapApiAuthUser(me));
             setToken(savedToken);
+
+            // restore persisted orders/chats only for authenticated user
+            const ordersStr = await AsyncStorage.getItem("nixyah_orders");
+            if (ordersStr) setOrders(JSON.parse(ordersStr));
 
             const chatsStr = await AsyncStorage.getItem("nixyah_chats");
             if (chatsStr) setChats(JSON.parse(chatsStr));
@@ -431,6 +555,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, user?.type, refreshOrders]);
 
+  useEffect(() => {
+    if (token && user?.type === "chef") {
+      fetchChefOrders();
+    }
+  }, [token, user?.type]);
+
   const login = useCallback(async (emailOrPhone: string, password: string) => {
     const data = await apiFetch<{ token: string; user: AuthUser }>("/auth/login", {
       method: "POST",
@@ -438,7 +568,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     await AsyncStorage.setItem("nixyah_token", data.token);
     setToken(data.token);
-    setUser(data.user);
+    setUser(mapApiAuthUser(data.user));
   }, []);
 
   const logout = useCallback(async () => {
@@ -455,7 +585,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (res.token) {
       await AsyncStorage.setItem("nixyah_token", res.token);
       setToken(res.token);
-      setUser(res.user);
+      setUser(mapApiAuthUser(res.user));
       return { requiresEmailConfirmation: false, email: res.user.email };
     }
 
@@ -476,7 +606,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (res.token) {
       await AsyncStorage.setItem("nixyah_token", res.token);
       setToken(res.token);
-      setUser(res.user);
+      setUser(mapApiAuthUser(res.user));
       await refreshChefs();
       return { requiresEmailConfirmation: false, email: res.user.email };
     }
@@ -499,7 +629,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (res.token) {
       await AsyncStorage.setItem("nixyah_token", res.token);
       setToken(res.token);
-      setUser(res.user);
+      setUser(mapApiAuthUser(res.user));
       return { requiresEmailConfirmation: false, email: res.user.email };
     }
 
@@ -512,15 +642,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const postStory = useCallback(async (storyData: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string }) => {
+  const postStory = useCallback(async (storyData: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null }) => {
     if (!token) throw new Error("Non connecté");
     await apiFetch("/stories", {
       method: "POST",
       body: JSON.stringify(storyData),
       token,
     });
-    await refreshStories();
-  }, [token, refreshStories]);
+    await Promise.all([refreshStories(), refreshChefs()]);
+  }, [token, refreshChefs, refreshStories]);
 
   const addOrder = useCallback((order: Order) => {
     setOrders((prev) => {
@@ -579,11 +709,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [chefs]
   );
 
+  const updateCurrentUser = useCallback(async (data: { avatarUrl?: string | null; coverColor?: string; location?: string }) => {
+    if (!token) throw new Error("Non connecté");
+    const updated = await apiFetch<AuthUser>("/auth/me", {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(data),
+    });
+    const nextUser = mapApiAuthUser(updated);
+    setUser(nextUser);
+    await refreshChefs();
+    return nextUser;
+  }, [token, refreshChefs]);
+
   const fetchChefStats = useCallback(async (chefId: string) => {
-    if (!token) return;
     try {
       setIsLoadingNotifications(true);
-      const data = await apiFetch<ChefStats>(`/chef/${chefId}/stats`, { token });
+      const data = await apiFetch<ChefStats>(`/chef/${chefId}/stats`, { token: token ?? undefined });
       setChefStats(data);
     } catch (error) {
       console.warn("Failed to load chef stats:", error);
@@ -603,12 +745,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         category: d.category,
         prepTime: d.prepTime,
         isPopular: d.isPopular,
-        imageUrl: d.imageUrl ?? null,
+        imageUrl: normalizeRemoteUrl(d.imageUrl ?? null),
+        imageUrls: normalizeImageUrlList(d.imageUrls, d.imageUrl ?? null),
       })));
     } catch (error) {
       console.warn("Failed to load chef dishes:", error);
     }
   }, []);
+
+  const updateChefDish = useCallback(async (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean }) => {
+    if (!token || !user?.id) throw new Error("Non connecté");
+    await apiFetch(`/chef/${user.id}/dishes/${dishId}`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({
+        name: data.name,
+        description: data.description,
+        category: data.category,
+        prepTime: data.prepTime,
+        imageUrl: data.imageUrls[0] ?? null,
+        imageUrls: data.imageUrls,
+        isPopular: Boolean(data.isPopular),
+      }),
+    });
+    await Promise.all([fetchChefDishes(user.id), refreshChefs()]);
+  }, [fetchChefDishes, refreshChefs, token, user?.id]);
+
+  const deleteChefDish = useCallback(async (dishId: string) => {
+    if (!token || !user?.id) throw new Error("Non connecté");
+    await apiFetch(`/chef/${user.id}/dishes/${dishId}`, {
+      method: "DELETE",
+      token,
+    });
+    await Promise.all([fetchChefDishes(user.id), refreshChefs()]);
+  }, [fetchChefDishes, refreshChefs, token, user?.id]);
+
+  const fetchChefOrders = useCallback(async () => {
+    if (!token || user?.type !== "chef") return;
+    try {
+      setIsLoadingChefOrders(true);
+      const data = await apiFetch<{ orders: any[] }>("/chef/orders", { token });
+      setChefOrders((data.orders ?? []).map(mapApiChefOrder));
+    } catch (error) {
+      console.warn("Failed to load chef orders:", error);
+    } finally {
+      setIsLoadingChefOrders(false);
+    }
+  }, [token, user?.type]);
+
+  const updateChefOrderStatus = useCallback(async (orderId: string, status: ReceivedOrder["status"]) => {
+    if (!token || user?.type !== "chef") throw new Error("Non connectée");
+    await apiFetch(`/chef/orders/${orderId}/status`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ status }),
+    });
+    await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
+  }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
+
+  const requestDeliveryForOrder = useCallback(async (orderId: string) => {
+    if (!token || user?.type !== "chef") throw new Error("Non connectée");
+    await apiFetch(`/delivery/orders/${orderId}/broadcast`, {
+      method: "POST",
+      token,
+    });
+    await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
+  }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
 
   const fetchNotifications = useCallback(async () => {
     if (!token || !user?.id) return;
@@ -637,12 +839,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       chefs,
       stories,
       orders,
+      chefOrders,
       chats,
       notifications,
       chefStats,
       chefDishes,
       favorites,
       isLoadingChefs,
+      isLoadingChefOrders,
       isLoadingNotifications,
       user,
       token,
@@ -657,15 +861,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       toggleFavorite,
       sendMessage,
       getChef,
+      updateCurrentUser,
       refreshChefs,
       refreshStories,
+      likeStory,
       fetchChefStats,
       fetchChefDishes,
+      updateChefDish,
+      deleteChefDish,
+      fetchChefOrders,
+      updateChefOrderStatus,
+      requestDeliveryForOrder,
       fetchNotifications,
-      likeStory,
       refreshOrders,
     }),
-    [chefs, stories, orders, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, toggleFavorite, sendMessage, getChef, refreshChefs, refreshStories, fetchChefStats, fetchChefDishes, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, chefOrders, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, updateChefOrderStatus, requestDeliveryForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

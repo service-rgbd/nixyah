@@ -118,6 +118,9 @@ export const ordersTable = pgTable("orders", {
   occasion: text("occasion"),
   persons: integer("persons"),
   budget: text("budget"),
+  deliveryAddress: text("delivery_address"),
+  deliveryLatitude: real("delivery_latitude"),
+  deliveryLongitude: real("delivery_longitude"),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -213,6 +216,7 @@ export const notificationType = pgEnum("notification_type", ["order", "review", 
 
 export const notificationsTable = pgTable("notifications", {
   id: serial("id").primaryKey(),
+  chefId: integer("chef_id").references(() => usersTable.id),
   userId: integer("user_id").notNull().references(() => usersTable.id),
   type: notificationType("type").notNull(),
   title: text("title").notNull(),

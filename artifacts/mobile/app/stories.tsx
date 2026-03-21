@@ -99,7 +99,7 @@ export default function StoriesFeed() {
     <View style={[styles.container, { paddingTop: topInset }]}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <View>
+          <View style={styles.headerTextWrap}>
             <Text style={styles.eyebrow}>Stories des cuisinieres</Text>
             <Text style={styles.title}>Ce qui sort de la cuisine</Text>
           </View>
@@ -138,6 +138,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
   content: { padding: 20, paddingBottom: Platform.OS === "web" ? 120 : 110 },
   header: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  headerTextWrap: { flex: 1, minWidth: 0, paddingRight: 4 },
   eyebrow: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.textTertiary, marginBottom: 4 },
   title: { fontSize: 24, fontFamily: "Poppins_700Bold", color: Colors.light.text, lineHeight: 30 },
   publishBtn: {
@@ -148,6 +149,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 16,
+    flexShrink: 0,
   },
   publishBtnText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   bubblesSection: { marginTop: 18, marginBottom: 18 },

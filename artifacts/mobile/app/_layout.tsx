@@ -79,6 +79,22 @@ function RootLayoutNav() {
         name="delivery/job/[id]"
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
+      <Stack.Screen
+        name="client/addresses"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="help/order"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="help/inbox"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="help/general"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
       
     </Stack>
   );

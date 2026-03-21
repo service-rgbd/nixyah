@@ -66,13 +66,18 @@ export default function PostStoryScreen() {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return setError("Autorisez l'accès aux photos pour ajouter une image");
-      const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8 });
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.8,
+      });
       if (res.canceled) return;
-      const uri = Array.isArray(res.assets) && res.assets.length > 0 ? res.assets[0].uri : undefined;
+      const asset = Array.isArray(res.assets) && res.assets.length > 0 ? res.assets[0] : undefined;
+      const uri = asset?.uri;
       if (!uri) return;
       setUploadingImage(true);
-      const filename = uri.split('/').pop() ?? `story-${Date.now()}.jpg`;
-      const contentType = 'image/jpeg';
+      const filename = asset?.fileName ?? uri.split('/').pop() ?? `story-${Date.now()}.jpg`;
+      const extension = filename.split('.').pop()?.toLowerCase();
+      const contentType = asset?.mimeType ?? (extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg');
       const { publicUrl } = await uploadFile({
         fileUri: uri,
         filename,
@@ -242,8 +247,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
-  headerTitle: { flex: 1, fontSize: 17, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, textAlign: "center" },
-  publishBtn: { backgroundColor: Colors.light.tint, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8 },
+  headerTitle: { flex: 1, minWidth: 0, fontSize: 17, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, textAlign: "center" },
+  publishBtn: { backgroundColor: Colors.light.tint, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, flexShrink: 0 },
   publishBtnText: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   body: { flex: 1, backgroundColor: Colors.light.background },
   preview: { alignItems: "center", paddingVertical: 24, gap: 10, backgroundColor: Colors.light.backgroundSecondary },

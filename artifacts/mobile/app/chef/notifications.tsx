@@ -29,6 +29,8 @@ export default function NotificationsScreen() {
     }, [user, fetchNotifications])
   );
 
+  const unreadCount = notifications.filter((item) => !item.isRead).length;
+
   const getIcon = (type: string) => {
     switch (type) {
       case "order":
@@ -37,24 +39,34 @@ export default function NotificationsScreen() {
         return <Ionicons name="star" size={18} color="#F59E0B" />;
       case "message":
         return <Feather name="message-circle" size={18} color={Colors.light.tint} />;
+      case "payment":
+        return <Feather name="credit-card" size={18} color="#059669" />;
       default:
         return <Feather name="bell" size={18} color={Colors.light.textTertiary} />;
     }
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topInset }]}>
+    <View style={[styles.container, { paddingTop: topInset }]}> 
       <View style={styles.header}>
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.light.text} />
         </Pressable>
         <Text style={styles.title}>Notifications</Text>
-        <Pressable style={styles.clearBtn}>
-          <Feather name="check" size={20} color={Colors.light.tint} />
-        </Pressable>
+        <View style={styles.clearBtn} />
       </View>
 
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: bottomInset + 20 }]} showsVerticalScrollIndicator={false}>
+        <View style={styles.summaryCard}>
+          <View>
+            <Text style={styles.summaryEyebrow}>Centre d'alertes</Text>
+            <Text style={styles.summaryTitle}>{unreadCount} notification{unreadCount !== 1 ? "s" : ""} à surveiller</Text>
+          </View>
+          <Pressable style={styles.summaryCta} onPress={() => router.push("/(tabs)/orders")}>
+            <Text style={styles.summaryCtaText}>Voir les commandes</Text>
+          </Pressable>
+        </View>
+
         {isLoadingNotifications ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={Colors.light.tint} />
@@ -68,6 +80,8 @@ export default function NotificationsScreen() {
                 onPress={() => {
                   if (notif.deliveryJobId) {
                     router.push({ pathname: "/delivery/job/[id]", params: { id: notif.deliveryJobId } });
+                  } else if (notif.orderId && user?.type === "chef") {
+                    router.push("/(tabs)/orders");
                   }
                 }}
               >
@@ -75,11 +89,13 @@ export default function NotificationsScreen() {
                   {getIcon(notif.type)}
                 </View>
                 <View style={styles.notifContent}>
-                  <Text style={styles.notifTitle} numberOfLines={1}>{notif.title}</Text>
-                  <Text style={styles.notifMessage} numberOfLines={2}>{notif.message}</Text>
-                  <Text style={styles.notifTime}>{new Date(notif.timestamp).toLocaleString('fr-FR')}</Text>
+                  <View style={styles.titleRow}>
+                    <Text style={styles.notifTitle} numberOfLines={1}>{notif.title}</Text>
+                    {!notif.isRead && <View style={styles.unreadDot} />}
+                  </View>
+                  <Text style={styles.notifMessage} numberOfLines={3}>{notif.message}</Text>
+                  <Text style={styles.notifTime}>{new Date(notif.timestamp).toLocaleString("fr-FR")}</Text>
                 </View>
-                {!notif.isRead && <View style={styles.unreadDot} />}
               </Pressable>
             ))}
           </View>
@@ -87,7 +103,7 @@ export default function NotificationsScreen() {
           <View style={styles.emptyState}>
             <Ionicons name="notifications-off" size={48} color={Colors.light.textTertiary} />
             <Text style={styles.emptyTitle}>Aucune notification</Text>
-            <Text style={styles.emptySub}>Vous recevrez des notifications ici</Text>
+            <Text style={styles.emptySub}>Les nouvelles commandes, avis et messages apparaîtront ici.</Text>
           </View>
         )}
       </ScrollView>
@@ -100,19 +116,25 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.light.divider },
   backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 18, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, flex: 1, textAlign: "center" },
-  clearBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  content: { paddingHorizontal: 20, paddingTop: 12 },
+  clearBtn: { width: 40, height: 40 },
+  content: { paddingHorizontal: 20, paddingTop: 16, gap: 12 },
+  summaryCard: { backgroundColor: Colors.light.card, borderRadius: 18, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  summaryEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint, textTransform: "uppercase" },
+  summaryTitle: { marginTop: 4, fontSize: 15, lineHeight: 21, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  summaryCta: { backgroundColor: Colors.light.backgroundSecondary, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  summaryCtaText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   loadingContainer: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-  notificationList: { gap: 8 },
-  notifItem: { backgroundColor: Colors.light.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, flexDirection: "row", alignItems: "center", gap: 12 },
+  notificationList: { gap: 10 },
+  notifItem: { backgroundColor: Colors.light.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, flexDirection: "row", alignItems: "flex-start", gap: 12 },
   notifItemUnread: { backgroundColor: Colors.light.backgroundSecondary },
-  notifIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  notifContent: { flex: 1, gap: 3 },
-  notifTitle: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  notifIcon: { width: 42, height: 42, borderRadius: 12, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  notifContent: { flex: 1, gap: 4 },
+  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  notifTitle: { flex: 1, fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   notifMessage: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, lineHeight: 18 },
   notifTime: { fontSize: 10, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   unreadDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.light.tint, flexShrink: 0 },
   emptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 100, gap: 12 },
   emptyTitle: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
-  emptySub: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  emptySub: { fontSize: 13, lineHeight: 19, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, textAlign: "center" },
 });
