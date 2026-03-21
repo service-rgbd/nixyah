@@ -16,6 +16,166 @@ import { requireAuth, requireChef, requireClient, requireCourier, type AuthReque
 
 const router = express.Router();
 
+const BROADCAST_RADIUS_STEPS_KM = [5, 10, 15, 20] as const;
+const BROADCAST_STEP_DURATION_MS = 5 * 60 * 1000;
+const BROADCAST_WINDOW_MS = 20 * 60 * 1000;
+
+type MapPoint = {
+  latitude: number;
+  longitude: number;
+};
+
+function toPoint(latitude?: number | null, longitude?: number | null): MapPoint | null {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude: Number(latitude), longitude: Number(longitude) };
+}
+
+function getDistanceKm(from: MapPoint, to: MapPoint): number {
+  const earthRadiusKm = 6371;
+  const dLat = ((to.latitude - from.latitude) * Math.PI) / 180;
+  const dLon = ((to.longitude - from.longitude) * Math.PI) / 180;
+  const lat1 = (from.latitude * Math.PI) / 180;
+  const lat2 = (to.latitude * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getBroadcastAgeMs(broadcastedAt: Date, now = new Date()): number {
+  return Math.max(0, now.getTime() - broadcastedAt.getTime());
+}
+
+function isBroadcastExpired(broadcastedAt: Date, now = new Date()): boolean {
+  return getBroadcastAgeMs(broadcastedAt, now) >= BROADCAST_WINDOW_MS;
+}
+
+function getBroadcastRadiusKm(broadcastedAt: Date, now = new Date()): number {
+  const ageMs = getBroadcastAgeMs(broadcastedAt, now);
+  const stepIndex = Math.min(
+    BROADCAST_RADIUS_STEPS_KM.length - 1,
+    Math.floor(ageMs / BROADCAST_STEP_DURATION_MS),
+  );
+
+  return BROADCAST_RADIUS_STEPS_KM[stepIndex];
+}
+
+function getBroadcastEndsAt(broadcastedAt: Date): Date {
+  return new Date(broadcastedAt.getTime() + BROADCAST_WINDOW_MS);
+}
+
+function getRemainingBroadcastMinutes(broadcastedAt: Date, now = new Date()): number {
+  const remainingMs = Math.max(0, getBroadcastEndsAt(broadcastedAt).getTime() - now.getTime());
+  return Math.ceil(remainingMs / 60000);
+}
+
+async function notifyCouriersAboutDeliveryJob(jobId: number, courierUserIds: number[]) {
+  if (courierUserIds.length === 0) {
+    return;
+  }
+
+  const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
+  if (!job) {
+    return;
+  }
+
+  const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, job.chefProfileId)).limit(1);
+  const [chefUser] = chefProfile
+    ? await db.select().from(usersTable).where(eq(usersTable.id, chefProfile.userId)).limit(1)
+    : [];
+  const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, job.clientId)).limit(1);
+
+  await notifyUsers({
+    userIds: courierUserIds,
+    type: "order",
+    title: "Nouvelle mission de livraison",
+    message: `${chefUser?.name ?? job.restaurantName} a une commande prete pour ${clientUser?.name ?? job.clientName}.`,
+    orderId: job.orderId,
+    deliveryJobId: job.id,
+    data: {
+      screen: "courier/orders",
+      deliveryJobId: String(job.id),
+    },
+  });
+}
+
+async function syncDeliveryJobOffers(jobId: number) {
+  const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
+  if (!job || job.courierUserId || ["delivered", "cancelled"].includes(job.status)) {
+    return { radiusKm: 0, remainingMinutes: 0, newCourierIds: [] as number[] };
+  }
+
+  const now = new Date();
+  if (isBroadcastExpired(job.broadcastedAt, now)) {
+    await db
+      .update(deliveryOffersTable)
+      .set({ status: "expired", respondedAt: now })
+      .where(and(eq(deliveryOffersTable.deliveryJobId, job.id), eq(deliveryOffersTable.status, "pending")));
+
+    return { radiusKm: BROADCAST_RADIUS_STEPS_KM[BROADCAST_RADIUS_STEPS_KM.length - 1], remainingMinutes: 0, newCourierIds: [] as number[] };
+  }
+
+  const radiusKm = getBroadcastRadiusKm(job.broadcastedAt, now);
+  const restaurantPoint = toPoint(job.restaurantLatitude, job.restaurantLongitude);
+
+  const [existingOffers, couriers] = await Promise.all([
+    db.select().from(deliveryOffersTable).where(eq(deliveryOffersTable.deliveryJobId, job.id)),
+    db.select().from(courierProfilesTable).where(eq(courierProfilesTable.isAvailable, true)),
+  ]);
+
+  const offeredCourierIds = new Set(existingOffers.map((offer) => offer.courierUserId));
+  const newCouriers = couriers.filter((courier) => {
+    if (offeredCourierIds.has(courier.userId)) {
+      return false;
+    }
+
+    const courierPoint = toPoint(courier.currentLatitude, courier.currentLongitude);
+    if (!restaurantPoint || !courierPoint) {
+      return true;
+    }
+
+    return getDistanceKm(restaurantPoint, courierPoint) <= radiusKm;
+  });
+
+  if (newCouriers.length > 0) {
+    await db.insert(deliveryOffersTable).values(
+      newCouriers.map((courier) => ({
+        deliveryJobId: job.id,
+        courierUserId: courier.userId,
+        status: "pending" as const,
+      })),
+    );
+
+    await notifyCouriersAboutDeliveryJob(job.id, newCouriers.map((courier) => courier.userId));
+  }
+
+  return {
+    radiusKm,
+    remainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
+    newCourierIds: newCouriers.map((courier) => courier.userId),
+  };
+}
+
+async function syncOpenDeliveryBroadcasts() {
+  const jobs = await db
+    .select({ id: deliveryJobsTable.id })
+    .from(deliveryJobsTable)
+    .where(
+      and(
+        isNull(deliveryJobsTable.courierUserId),
+        ne(deliveryJobsTable.status, "delivered"),
+        ne(deliveryJobsTable.status, "cancelled"),
+      ),
+    );
+
+  await Promise.all(jobs.map((job) => syncDeliveryJobOffers(job.id)));
+}
+
 async function getDeliveryJobPayload(jobId: number) {
   const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
   if (!job) {
@@ -41,6 +201,9 @@ async function getDeliveryJobPayload(jobId: number) {
     .orderBy(desc(deliveryLocationUpdatesTable.createdAt))
     .limit(1);
 
+  const now = new Date();
+  const restaurantPoint = toPoint(job.restaurantLatitude, job.restaurantLongitude);
+
   return {
     id: String(job.id),
     orderId: String(job.orderId),
@@ -58,6 +221,9 @@ async function getDeliveryJobPayload(jobId: number) {
     deliveryLongitude: job.deliveryLongitude,
     notes: job.notes,
     broadcastedAt: job.broadcastedAt.toISOString(),
+    broadcastRadiusKm: restaurantPoint ? getBroadcastRadiusKm(job.broadcastedAt, now) : null,
+    broadcastEndsAt: getBroadcastEndsAt(job.broadcastedAt).toISOString(),
+    broadcastRemainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
     acceptedAt: job.acceptedAt?.toISOString() ?? null,
     pickedUpAt: job.pickedUpAt?.toISOString() ?? null,
     deliveredAt: job.deliveredAt?.toISOString() ?? null,
@@ -114,8 +280,27 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
       if (order.status !== "ready") {
         await db.update(ordersTable).set({ status: "ready" }).where(eq(ordersTable.id, order.id));
       }
-      const payload = await getDeliveryJobPayload(existingJob.id);
-      return res.json({ job: payload, reused: true });
+
+      let activeJob = existingJob;
+      let rebroadcasted = false;
+
+      if (!existingJob.courierUserId && isBroadcastExpired(existingJob.broadcastedAt)) {
+        await db.delete(deliveryOffersTable).where(eq(deliveryOffersTable.deliveryJobId, existingJob.id));
+        const [resetJob] = await db
+          .update(deliveryJobsTable)
+          .set({ status: "broadcasting", broadcastedAt: new Date() })
+          .where(eq(deliveryJobsTable.id, existingJob.id))
+          .returning();
+
+        if (resetJob) {
+          activeJob = resetJob;
+          rebroadcasted = true;
+        }
+      }
+
+      const syncResult = await syncDeliveryJobOffers(activeJob.id);
+      const payload = await getDeliveryJobPayload(activeJob.id);
+      return res.json({ job: payload, reused: true, rebroadcasted, notifiedCouriers: syncResult.newCourierIds.length });
     }
 
     if (order.status !== "ready") {
@@ -154,7 +339,7 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
         orderId: order.id,
         chefProfileId: order.chefProfileId,
         clientId: order.clientId,
-        status: "available",
+        status: "broadcasting",
         restaurantName: chefUser.name,
         restaurantAddress: chefProfile.location,
         restaurantLatitude: restaurantPoint?.latitude ?? null,
@@ -174,36 +359,10 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
       throw error;
     }
 
-    const couriers = await db
-      .select()
-      .from(courierProfilesTable)
-      .where(eq(courierProfilesTable.isAvailable, true));
-
-    if (couriers.length > 0) {
-      await db.insert(deliveryOffersTable).values(
-        couriers.map((courier) => ({
-          deliveryJobId: job.id,
-          courierUserId: courier.userId,
-          status: "pending" as const,
-        })),
-      );
-
-      await notifyUsers({
-        userIds: couriers.map((courier) => courier.userId),
-        type: "order",
-        title: "Nouvelle mission de livraison",
-        message: `${chefUser.name} a une commande prete pour ${clientUser.name}.`,
-        orderId: order.id,
-        deliveryJobId: job.id,
-        data: {
-          screen: "courier/orders",
-          deliveryJobId: String(job.id),
-        },
-      });
-    }
+    const syncResult = await syncDeliveryJobOffers(job.id);
 
     const payload = await getDeliveryJobPayload(job.id);
-    return res.status(201).json({ job: payload, notifiedCouriers: couriers.length });
+    return res.status(201).json({ job: payload, notifiedCouriers: syncResult.newCourierIds.length });
   } catch (error) {
     console.error("broadcast delivery error", error);
     return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
@@ -212,6 +371,15 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
 
 router.get("/delivery/jobs/available", requireCourier, async (req: AuthRequest, res) => {
   try {
+    await syncOpenDeliveryBroadcasts();
+
+    const [courierProfile] = await db
+      .select()
+      .from(courierProfilesTable)
+      .where(eq(courierProfilesTable.userId, req.userId!))
+      .limit(1);
+    const courierPoint = toPoint(courierProfile?.currentLatitude, courierProfile?.currentLongitude);
+
     const offers = await db
       .select()
       .from(deliveryOffersTable)
@@ -229,7 +397,21 @@ router.get("/delivery/jobs/available", requireCourier, async (req: AuthRequest, 
         .filter((offer) => jobMap.has(offer.deliveryJobId))
         .map(async (offer) => {
           const payload = await getDeliveryJobPayload(offer.deliveryJobId);
-          return payload ? { ...payload, offerId: String(offer.id), offerStatus: offer.status } : null;
+          if (!payload) {
+            return null;
+          }
+
+          const restaurantPoint = toPoint(payload.restaurantLatitude, payload.restaurantLongitude);
+          const distanceKm = courierPoint && restaurantPoint
+            ? Number(getDistanceKm(courierPoint, restaurantPoint).toFixed(1))
+            : null;
+
+          return {
+            ...payload,
+            offerId: String(offer.id),
+            offerStatus: offer.status,
+            distanceKm,
+          };
         }),
     );
 
@@ -285,6 +467,44 @@ router.patch("/delivery/courier/availability", requireCourier, async (req: AuthR
     });
   } catch (error) {
     console.error("update courier availability error", error);
+    return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/delivery/courier/location", requireCourier, async (req: AuthRequest, res) => {
+  try {
+    const latitude = Number(req.body.latitude);
+    const longitude = Number(req.body.longitude);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return res.status(400).json({ error: "BadRequest", message: "Coordonnees invalides" });
+    }
+
+    const [profile] = await db
+      .update(courierProfilesTable)
+      .set({
+        currentLatitude: latitude,
+        currentLongitude: longitude,
+        lastLocationAt: new Date(),
+      })
+      .where(eq(courierProfilesTable.userId, req.userId!))
+      .returning();
+
+    await syncOpenDeliveryBroadcasts();
+
+    return res.json({
+      courierProfile: profile
+        ? {
+            id: String(profile.id),
+            userId: String(profile.userId),
+            currentLatitude: profile.currentLatitude,
+            currentLongitude: profile.currentLongitude,
+            lastLocationAt: profile.lastLocationAt?.toISOString() ?? null,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("update courier location error", error);
     return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });

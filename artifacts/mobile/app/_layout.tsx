@@ -10,8 +10,6 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import Constants from "expo-constants";
-import * as Device from "expo-device";
-import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -20,31 +18,42 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { apiFetch } from "@/constants/api";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+let notificationsHandlerConfigured = false;
 
 function PushNotificationsBootstrap() {
   const { token, user } = useApp();
 
   useEffect(() => {
-    if (!token || !user) {
+    const appOwnership = (Constants as any).appOwnership;
+    const executionEnvironment = (Constants as any).executionEnvironment;
+    const isExpoGo = appOwnership === "expo" || executionEnvironment === "storeClient";
+
+    if (!token || !user || Platform.OS === "web" || isExpoGo) {
       return;
     }
 
     let isMounted = true;
+    let responseSubscription: { remove: () => void } | null = null;
 
     const registerForPushNotifications = async () => {
       try {
+        const Notifications = await import("expo-notifications");
+
+        if (!notificationsHandlerConfigured) {
+          Notifications.setNotificationHandler({
+            handleNotification: async () => ({
+              shouldPlaySound: true,
+              shouldSetBadge: true,
+              shouldShowBanner: true,
+              shouldShowList: true,
+            }),
+          });
+          notificationsHandlerConfigured = true;
+        }
+
         if (Platform.OS === "android") {
           await Notifications.setNotificationChannelAsync("default", {
             name: "default",
@@ -52,10 +61,6 @@ function PushNotificationsBootstrap() {
             vibrationPattern: [0, 250, 250, 250],
             lightColor: "#D4611A",
           });
-        }
-
-        if (!Device.isDevice) {
-          return;
         }
 
         const currentPermissions = await Notifications.getPermissionsAsync();
@@ -75,9 +80,25 @@ function PushNotificationsBootstrap() {
           Constants.easConfig?.projectId ??
           undefined;
 
-        const expoPushToken = projectId
-          ? (await Notifications.getExpoPushTokenAsync({ projectId })).data
-          : (await Notifications.getExpoPushTokenAsync()).data;
+        if (!projectId) {
+          return;
+        }
+
+        responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+          const data = response.notification.request.content.data as { type?: string; storyId?: string } | undefined;
+          if (data?.type === "story-video" && data.storyId) {
+            void import("expo-router").then(({ router }) => {
+              router.push({ pathname: "/story/[id]", params: { id: data.storyId! } });
+            });
+            return;
+          }
+
+          void import("expo-router").then(({ router }) => {
+            router.push("/(tabs)/stories");
+          });
+        });
+
+        const expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
 
         if (!isMounted || !expoPushToken) {
           return;
@@ -96,25 +117,11 @@ function PushNotificationsBootstrap() {
       }
     };
 
-    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as { type?: string; storyId?: string } | undefined;
-      if (data?.type === "story-video" && data.storyId) {
-        void import("expo-router").then(({ router }) => {
-          router.push({ pathname: "/story/[id]", params: { id: data.storyId! } });
-        });
-        return;
-      }
-
-      void import("expo-router").then(({ router }) => {
-        router.push("/(tabs)/stories");
-      });
-    });
-
     void registerForPushNotifications();
 
     return () => {
       isMounted = false;
-      responseSubscription.remove();
+      responseSubscription?.remove();
     };
   }, [token, user]);
 

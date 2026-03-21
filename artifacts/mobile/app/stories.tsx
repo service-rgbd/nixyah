@@ -136,7 +136,7 @@ function StoryCard({ story, isActive, cardHeight }: { story: Story; isActive: bo
     <Pressable onPress={() => router.push({ pathname: "/story/[id]", params: { id: story.id } })} style={styles.cardWrapper}>
       {story.videoUrl ? (
         <View style={[styles.cardImage, { minHeight: cardHeight }]}> 
-          <VideoView player={player} style={styles.cardVideo} contentFit="cover" nativeControls={false} allowsFullscreen={false} />
+          <VideoView player={player} style={styles.cardVideo} contentFit="cover" nativeControls={false} />
           <View style={styles.cardOverlay} />
           {content}
         </View>

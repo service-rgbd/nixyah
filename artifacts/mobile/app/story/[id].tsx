@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { View, Text, StyleSheet, Pressable, Platform, ImageBackground } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,29 +11,26 @@ export default function StoryViewer() {
   const params = useLocalSearchParams();
   const { id } = params as { id?: string };
   const { stories } = useApp();
-  const [story, setStory] = useState<Story | null>(null);
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const storyIndex = useMemo(
     () => stories.findIndex((item) => item.id === String(id)),
     [id, stories]
   );
+  const story = useMemo<Story | null>(
+    () => stories.find((item) => item.id === String(id)) ?? null,
+    [id, stories]
+  );
   const hasPrevious = storyIndex > 0;
   const hasNext = storyIndex >= 0 && storyIndex < stories.length - 1;
 
-  useEffect(() => {
-    if (id) {
-      const s = stories.find((x) => x.id === String(id));
-      if (s) setStory(s);
-    }
-  }, [id, stories]);
+  const videoPlayer = useVideoPlayer(story?.videoUrl ?? null, (player) => {
+    player.loop = true;
+  });
 
   if (!story) return null;
 
   const bgColor = story.bgColor ?? story.chefCoverColor;
-  const videoPlayer = useVideoPlayer(story.videoUrl ?? null, (player) => {
-    player.loop = true;
-  });
   const cardContent = (
     <>
       <View style={styles.progressRow}>
@@ -128,7 +125,7 @@ export default function StoryViewer() {
         </ImageBackground>
       ) : story.videoUrl ? (
         <View style={styles.imageBg}>
-          <VideoView player={videoPlayer} style={styles.videoBg} contentFit="cover" nativeControls={false} allowsFullscreen />
+          <VideoView player={videoPlayer} style={styles.videoBg} contentFit="cover" nativeControls={false} />
           <View style={[styles.overlay, { backgroundColor: "rgba(26,18,10,0.34)" }]} />
           {cardContent}
         </View>

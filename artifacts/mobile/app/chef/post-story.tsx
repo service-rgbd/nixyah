@@ -163,7 +163,7 @@ export default function PostStoryScreen() {
               <Image source={{ uri: imageUri }} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 200, borderTopLeftRadius: 24, borderTopRightRadius: 24 }} />
             ) : videoUri ? (
               <View style={styles.videoPreviewWrap}>
-                <VideoView player={storyVideoPlayer} style={styles.videoPreview} contentFit="cover" allowsFullscreen={false} nativeControls={false} />
+                <VideoView player={storyVideoPlayer} style={styles.videoPreview} contentFit="cover" nativeControls={false} />
               </View>
             ) : null}
             {!videoUri ? <Text style={styles.previewEmoji}>{selectedEmoji}</Text> : null}

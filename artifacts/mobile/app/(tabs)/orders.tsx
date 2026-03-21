@@ -1,6 +1,7 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import * as Location from "expo-location";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -41,8 +42,14 @@ type DeliveryJob = {
   status: keyof typeof DELIVERY_STATUS_CONFIG;
   restaurantName: string;
   restaurantAddress: string;
+  restaurantLatitude?: number | null;
+  restaurantLongitude?: number | null;
   clientName: string;
   deliveryAddress: string;
+  broadcastRadiusKm?: number | null;
+  broadcastEndsAt?: string | null;
+  broadcastRemainingMinutes?: number | null;
+  distanceKm?: number | null;
 };
 
 function OrderCard({
@@ -168,6 +175,13 @@ function DeliveryJobCard({
           <Text style={styles.orderChef}>{job.restaurantName}</Text>
           <Text style={styles.orderDate}>{job.restaurantAddress}</Text>
           <Text style={[styles.orderDate, { marginTop: 6 }]}>{job.clientName} · {job.deliveryAddress}</Text>
+          {job.distanceKm != null || job.broadcastRadiusKm != null || job.broadcastRemainingMinutes != null ? (
+            <Text style={[styles.orderMeta, { marginTop: 8 }]}> 
+              {job.distanceKm != null ? `${job.distanceKm.toFixed(1)} km de vous` : "Zone en cours"}
+              {job.broadcastRadiusKm != null ? ` · rayon ${job.broadcastRadiusKm} km` : ""}
+              {job.broadcastRemainingMinutes != null ? ` · ${job.broadcastRemainingMinutes} min restantes` : ""}
+            </Text>
+          ) : null}
         </View>
         <View style={[styles.statusBadge, { backgroundColor: config.color + "20" }]}>
           <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
@@ -320,11 +334,47 @@ export default function OrdersScreen() {
   const [acceptingJobId, setAcceptingJobId] = useState<string | null>(null);
   const [chefActionKey, setChefActionKey] = useState<string | null>(null);
   const [reportingOrderId, setReportingOrderId] = useState<string | null>(null);
+  const courierLocationSyncedAtRef = useRef(0);
+  const alertedMissionIdsRef = useRef<Set<string>>(new Set());
+
+  const syncCourierAvailabilityLocation = async () => {
+    if (!token || !isCourier) {
+      return;
+    }
+
+    const shouldSync = Date.now() - courierLocationSyncedAtRef.current > 30_000;
+    if (!shouldSync) {
+      return;
+    }
+
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      await apiFetch("/delivery/courier/location", {
+        method: "POST",
+        token,
+        body: JSON.stringify({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }),
+      });
+
+      courierLocationSyncedAtRef.current = Date.now();
+    } catch (error) {
+      console.warn("Failed to sync courier location:", error);
+    }
+  };
 
   const loadCourierJobs = async () => {
     if (!token) return;
     setLoadingCourier(true);
     try {
+      await syncCourierAvailabilityLocation();
+
       const [available, current] = await Promise.all([
         apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/available", { token }),
         apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/current", { token }),
@@ -337,6 +387,37 @@ export default function OrdersScreen() {
       setLoadingCourier(false);
     }
   };
+
+  useEffect(() => {
+    if (!isCourier || loadingCourier || availableJobs.length === 0) {
+      return;
+    }
+
+    const newJob = availableJobs.find((job) => !alertedMissionIdsRef.current.has(job.id));
+    for (const job of availableJobs) {
+      alertedMissionIdsRef.current.add(job.id);
+    }
+
+    if (!newJob) {
+      return;
+    }
+
+    const proximityText = newJob.distanceKm != null
+      ? `${newJob.distanceKm.toFixed(1)} km de votre position`
+      : "dans votre zone actuelle";
+    const windowText = newJob.broadcastRemainingMinutes != null
+      ? `Visible encore ${newJob.broadcastRemainingMinutes} minutes.`
+      : "";
+
+    Alert.alert(
+      "Nouvelle mission disponible",
+      `${newJob.restaurantName} pour ${newJob.clientName} · ${proximityText}. ${windowText}`.trim(),
+      [
+        { text: "Plus tard", style: "cancel" },
+        { text: "Voir", onPress: () => router.push({ pathname: "/delivery/job/[id]", params: { id: newJob.id } }) },
+      ],
+    );
+  }, [availableJobs, isCourier, loadingCourier]);
 
   useFocusEffect(
     React.useCallback(() => {
