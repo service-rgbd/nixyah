@@ -39,6 +39,7 @@ const DELIVERY_STATUS_CONFIG = {
 type DeliveryJob = {
   id: string;
   orderId: string;
+  orderTotal?: number | null;
   status: keyof typeof DELIVERY_STATUS_CONFIG;
   restaurantName: string;
   restaurantAddress: string;
@@ -50,7 +51,122 @@ type DeliveryJob = {
   broadcastEndsAt?: string | null;
   broadcastRemainingMinutes?: number | null;
   distanceKm?: number | null;
+  createdAt?: string | null;
+  acceptedAt?: string | null;
+  deliveredAt?: string | null;
 };
+
+type CourierMissionFilter = "all" | "current" | "available" | "history";
+type ClientOrderFilter = "all" | "meal" | "delivery";
+
+function formatChefOrderMoment(value?: string | null) {
+  if (!value) {
+    return "Maintenant";
+  }
+
+  return new Date(value).toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatClockLabel(value?: string | null) {
+  if (!value) {
+    return "--:--";
+  }
+
+  return new Date(value).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatHistoryDayLabel(value?: string | null) {
+  if (!value) {
+    return "Récemment";
+  }
+
+  const date = new Date(value);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - startOfTarget.getTime()) / 86400000);
+
+  if (diffDays === 0) {
+    return "Aujourd'hui";
+  }
+
+  if (diffDays === 1) {
+    return "Hier";
+  }
+
+  return date.toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+}
+
+function getMissionDate(job: DeliveryJob) {
+  return job.deliveredAt ?? job.acceptedAt ?? job.createdAt ?? null;
+}
+
+function formatMissionAmount(job: DeliveryJob) {
+  return `${Math.round(job.orderTotal ?? 0).toLocaleString("fr-FR")}F`;
+}
+
+function getClientOrderStatus(order: Order) {
+  if (order.delivery?.status === "cancelled") {
+    return { label: "Annulée", color: "#D45845" };
+  }
+
+  if (order.delivery?.status === "delivered" || order.status === "delivered") {
+    return { label: "Terminée", color: Colors.light.textSecondary };
+  }
+
+  const config = STATUS_CONFIG[order.status];
+  return { label: config.label, color: config.color };
+}
+
+function groupItemsByDay<T>(items: T[], getDate: (item: T) => string | null) {
+  const sections = new Map<string, { title: string; items: T[] }>();
+
+  for (const item of items) {
+    const dateValue = getDate(item);
+    const key = dateValue ? new Date(dateValue).toDateString() : "unknown";
+    const existing = sections.get(key);
+
+    if (existing) {
+      existing.items.push(item);
+      continue;
+    }
+
+    sections.set(key, {
+      title: formatHistoryDayLabel(dateValue),
+      items: [item],
+    });
+  }
+
+  return Array.from(sections.values());
+}
+
+function FilterChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={[styles.filterChip, active && styles.filterChipActive]} onPress={onPress}>
+      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
 
 function OrderCard({
   order,
@@ -167,37 +283,119 @@ function DeliveryJobCard({
   accepting?: boolean;
 }) {
   const config = DELIVERY_STATUS_CONFIG[job.status];
+  const missionTime = formatClockLabel(getMissionDate(job));
+  const missionMeta = job.status === "cancelled"
+    ? "Annulée"
+    : job.status === "delivered"
+      ? "Terminée"
+      : `${job.restaurantAddress} → ${job.deliveryAddress}`;
 
   return (
-    <View style={styles.orderCard}>
-      <View style={styles.orderTop}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.orderChef}>{job.restaurantName}</Text>
-          <Text style={styles.orderDate}>{job.restaurantAddress}</Text>
-          <Text style={[styles.orderDate, { marginTop: 6 }]}>{job.clientName} · {job.deliveryAddress}</Text>
-          {job.distanceKm != null || job.broadcastRadiusKm != null || job.broadcastRemainingMinutes != null ? (
-            <Text style={[styles.orderMeta, { marginTop: 8 }]}> 
-              {job.distanceKm != null ? `${job.distanceKm.toFixed(1)} km de vous` : "Zone en cours"}
-              {job.broadcastRadiusKm != null ? ` · rayon ${job.broadcastRadiusKm} km` : ""}
-              {job.broadcastRemainingMinutes != null ? ` · ${job.broadcastRemainingMinutes} min restantes` : ""}
-            </Text>
-          ) : null}
+    <View style={styles.historyCard}>
+      <View style={styles.historyCardTopRow}>
+        <View style={styles.historyCardIconWrap}>
+          <Feather name="package" size={18} color="#1F1A17" />
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: config.color + "20" }]}>
-          <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+        <View style={styles.historyCardMain}>
+          <View style={styles.historyCardHeadlineRow}>
+            <Text style={styles.historyCardTitle} numberOfLines={1}>{`Livraison, ${missionTime}`}</Text>
+            <Text style={styles.historyCardAmount}>{formatMissionAmount(job)}</Text>
+          </View>
+          <Text style={[styles.historyCardMeta, job.status === "cancelled" && styles.historyDangerMeta]} numberOfLines={1}>
+            {missionMeta}
+          </Text>
+          {job.status !== "cancelled" ? (
+            <Text style={styles.historyCardSubline} numberOfLines={1}>{job.restaurantName} · {job.clientName}</Text>
+          ) : null}
         </View>
       </View>
 
-      <View style={styles.orderFooter}>
-        <Pressable style={styles.reorderBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: job.id } })}>
-          <Feather name="map" size={14} color={Colors.light.tint} />
-          <Text style={styles.reorderText}>Voir le suivi</Text>
-        </Pressable>
-        {onAccept ? (
-          <Pressable style={styles.acceptBtn} onPress={() => onAccept(job.id)} disabled={accepting}>
-            {accepting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.acceptBtnText}>Accepter</Text>}
+      <View style={styles.historyBottomRow}>
+        <View style={[styles.historyStatusPill, { backgroundColor: `${config.color}18` }]}> 
+          <Text style={[styles.historyStatusText, { color: config.color }]}>{config.label}</Text>
+        </View>
+
+        <View style={styles.historyActionsRow}>
+          <Pressable style={styles.historyGhostBtn} onPress={() => router.push("/(tabs)/help")}> 
+            <Feather name="headphones" size={16} color="#1F1A17" />
+            <Text style={styles.historyGhostBtnText}>Aide</Text>
           </Pressable>
-        ) : null}
+          {onAccept ? (
+            <Pressable style={styles.historyGhostBtn} onPress={() => onAccept(job.id)} disabled={accepting}>
+              {accepting ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
+                <Feather name="check-circle" size={16} color="#1F1A17" />
+                <Text style={styles.historyGhostBtnText}>Accepter</Text>
+              </>}
+            </Pressable>
+          ) : (
+            <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: job.id } })}>
+              <Feather name="repeat" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>{job.status === "delivered" ? "Revoir" : "Ouvrir"}</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function ClientHistoryCard({
+  order,
+  onReportIssue,
+  reporting,
+}: {
+  order: Order;
+  onReportIssue: (order: Order) => void;
+  reporting?: boolean;
+}) {
+  const status = getClientOrderStatus(order);
+  const orderTime = formatClockLabel(order.createdAt);
+  const primaryAddress = order.delivery?.restaurantAddress || order.chefName;
+  const secondaryAddress = order.delivery?.deliveryAddress;
+
+  return (
+    <View style={styles.historyCard}>
+      <View style={styles.historyCardTopRow}>
+        <View style={[styles.historyCardIconWrap, order.delivery ? styles.historyDeliveryIconWrap : styles.historyMealIconWrap]}>
+          <Ionicons name={order.delivery ? "cube" : "restaurant"} size={18} color={order.delivery ? "#F24C1A" : "#D4611A"} />
+        </View>
+        <View style={styles.historyCardMain}>
+          <View style={styles.historyCardHeadlineRow}>
+            <Text style={styles.historyCardTitle} numberOfLines={1}>{`${order.delivery ? "Livraison" : order.chefName}, ${orderTime}`}</Text>
+            <Text style={styles.historyCardAmount}>{`${Math.round(order.total).toLocaleString("fr-FR")}F`}</Text>
+          </View>
+          <Text style={[styles.historyCardMeta, status.label === "Annulée" && styles.historyDangerMeta]} numberOfLines={1}>
+            {status.label === "Annulée" ? status.label : primaryAddress}
+          </Text>
+          {status.label !== "Annulée" && secondaryAddress ? (
+            <Text style={styles.historyCardSubline} numberOfLines={1}>{`${primaryAddress} → ${secondaryAddress}`}</Text>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.historyBottomRow}>
+        <View style={[styles.historyStatusPill, { backgroundColor: `${status.color}18` }]}> 
+          <Text style={[styles.historyStatusText, { color: status.color }]}>{status.label}</Text>
+        </View>
+        <View style={styles.historyActionsRow}>
+          <Pressable style={styles.historyGhostBtn} onPress={() => onReportIssue(order)} disabled={reporting}>
+            {reporting ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
+              <Feather name="headphones" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>Aide</Text>
+            </>}
+          </Pressable>
+          {order.delivery ? (
+            <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: order.delivery!.id } })}>
+              <Feather name="repeat" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>{status.label === "Terminée" ? "Répéter" : "Suivre"}</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/chef/[id]", params: { id: order.chefId } })}>
+              <Feather name="repeat" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>Répéter</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -218,6 +416,10 @@ function ChefOrderCard({
 }) {
   const config = STATUS_CONFIG[order.status];
   const deliveryConfig = order.delivery ? DELIVERY_STATUS_CONFIG[order.delivery.status] : null;
+  const iconName = order.delivery ? "bicycle-outline" : "restaurant-outline";
+  const headlineMeta = [order.clientLocation, order.occasion, order.persons ? `${order.persons} pers.` : null]
+    .filter(Boolean)
+    .join(" · ");
 
   const nextAction =
     order.status === "pending"
@@ -231,68 +433,90 @@ function ChefOrderCard({
             : null;
 
   return (
-    <View style={[styles.orderCard, order.status === "pending" && styles.priorityOrderCard]}>
-      <View style={styles.orderTop}>
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={styles.orderChef}>{order.clientName}</Text>
-          <Text style={styles.orderDate}>{new Date(order.createdAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</Text>
-          {order.clientLocation ? <Text style={styles.orderMeta}>📍 {order.clientLocation}</Text> : null}
+    <View style={[styles.chefCard, order.status === "pending" && styles.chefCardPriority]}>
+      <View style={styles.chefCardTopRow}>
+        <View style={styles.chefCardIdentityRow}>
+          <View style={[styles.chefCardIconWrap, order.delivery ? styles.historyDeliveryIconWrap : styles.historyMealIconWrap]}>
+            <Ionicons name={iconName} size={18} color={order.delivery ? "#F24C1A" : "#D4611A"} />
+          </View>
+
+          <View style={styles.chefCardMain}>
+            <View style={styles.chefCardHeadlineRow}>
+              <Text style={styles.chefCardTitle} numberOfLines={1}>{order.clientName}</Text>
+              <Text style={styles.chefCardAmount}>{`${Math.round(order.total).toLocaleString("fr-FR")}F`}</Text>
+            </View>
+
+            <Text style={styles.chefCardDate}>{formatChefOrderMoment(order.createdAt)}</Text>
+            {headlineMeta ? <Text style={styles.chefCardMeta}>{headlineMeta}</Text> : null}
+          </View>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: config.color + "20" }]}>
-          <Feather name={config.icon} size={11} color={config.color} />
-          <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+
+        <View style={[styles.historyStatusPill, { backgroundColor: `${config.color}18` }]}> 
+          <Text style={[styles.historyStatusText, { color: config.color }]}>{config.label}</Text>
         </View>
       </View>
 
-      {(order.occasion || order.persons || order.notes) ? (
-        <View style={styles.briefCard}>
-          {order.occasion ? <Text style={styles.briefText}>Occasion: <Text style={styles.briefStrong}>{order.occasion}</Text></Text> : null}
-          {order.persons ? <Text style={styles.briefText}>Personnes: <Text style={styles.briefStrong}>{order.persons}</Text></Text> : null}
-          {order.notes ? <Text style={styles.briefText}>Note: <Text style={styles.briefStrong}>{order.notes}</Text></Text> : null}
+      <View style={styles.chefCardTagRow}>
+        {order.occasion ? (
+          <View style={styles.chefInfoChip}>
+            <Text style={styles.chefInfoChipText}>{order.occasion}</Text>
+          </View>
+        ) : null}
+        {order.persons ? (
+          <View style={styles.chefInfoChip}>
+            <Text style={styles.chefInfoChipText}>{`${order.persons} personnes`}</Text>
+          </View>
+        ) : null}
+        {deliveryConfig ? (
+          <View style={[styles.chefInfoChip, { backgroundColor: `${deliveryConfig.color}16` }]}> 
+            <Text style={[styles.chefInfoChipText, { color: deliveryConfig.color }]}>{deliveryConfig.label}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {order.notes ? (
+        <View style={styles.chefBriefCard}>
+          <Text style={styles.chefBriefLabel}>Instruction</Text>
+          <Text style={styles.chefBriefText}>{order.notes}</Text>
         </View>
       ) : null}
 
-      <View style={styles.orderDivider} />
-
-      <View style={styles.orderDishes}>
+      <View style={styles.chefItemsCard}>
         {order.items.map((item, index) => (
-          <View key={`${order.id}-${item.dishId ?? index}`} style={styles.orderDishRow}>
-            <Text style={styles.orderDishQty}>{item.quantity}x</Text>
-            <Text style={styles.orderDishName}>{item.dishName}</Text>
-            <Text style={styles.orderDishPrice}>{(item.price * item.quantity).toLocaleString()} FCFA</Text>
+          <View key={`${order.id}-${item.dishId ?? index}`} style={styles.chefItemRow}>
+            <View style={styles.chefItemQuantityBadge}>
+              <Text style={styles.chefItemQuantityText}>{item.quantity}x</Text>
+            </View>
+            <Text style={styles.chefItemName} numberOfLines={1}>{item.dishName}</Text>
+            <Text style={styles.chefItemPrice}>{`${Math.round(item.price * item.quantity).toLocaleString("fr-FR")}F`}</Text>
           </View>
         ))}
       </View>
 
-      <View style={styles.kitchenFooter}>
-        <View>
+      <View style={styles.chefCardFooter}>
+        <View style={styles.chefCardFooterMeta}>
           <Text style={styles.orderTotalLabel}>Total encaissé</Text>
           <Text style={styles.orderTotal}>{order.total.toLocaleString()} FCFA</Text>
         </View>
-        <View style={styles.trailingActions}>
-          {deliveryConfig ? (
-            <View style={[styles.statusBadge, { backgroundColor: deliveryConfig.color + "20" }]}>
-              <Text style={[styles.statusText, { color: deliveryConfig.color }]}>{deliveryConfig.label}</Text>
-            </View>
-          ) : null}
 
+        <View style={styles.chefActionsRow}>
           {order.delivery ? (
-            <Pressable style={styles.reorderBtn} onPress={() => onOpenDelivery(order)}>
-              <Feather name="truck" size={14} color={Colors.light.tint} />
-              <Text style={styles.reorderText}>Suivre la livraison</Text>
+            <Pressable style={styles.historyGhostBtn} onPress={() => onOpenDelivery(order)}>
+              <Feather name="truck" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>Suivre</Text>
             </Pressable>
           ) : order.status === "ready" ? (
-            <Pressable style={styles.secondaryActionBtn} onPress={() => onRequestDelivery(order)} disabled={loadingAction === `${order.id}:delivery`}>
-              {loadingAction === `${order.id}:delivery` ? <ActivityIndicator color={Colors.light.tint} size="small" /> : <>
-                <Feather name="truck" size={14} color={Colors.light.tint} />
-                <Text style={styles.secondaryActionText}>Trouver un livreur</Text>
+            <Pressable style={styles.historyGhostBtn} onPress={() => onRequestDelivery(order)} disabled={loadingAction === `${order.id}:delivery`}>
+              {loadingAction === `${order.id}:delivery` ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
+                <Feather name="truck" size={16} color="#1F1A17" />
+                <Text style={styles.historyGhostBtnText}>Trouver un livreur</Text>
               </>}
             </Pressable>
           ) : null}
 
           {nextAction ? (
-            <Pressable style={styles.acceptBtn} onPress={() => onAdvance(order)} disabled={loadingAction === `${order.id}:status`}>
-              {loadingAction === `${order.id}:status` ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.acceptBtnText}>{nextAction.label}</Text>}
+            <Pressable style={styles.chefPrimaryActionBtn} onPress={() => onAdvance(order)} disabled={loadingAction === `${order.id}:status`}>
+              {loadingAction === `${order.id}:status` ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.chefPrimaryActionText}>{nextAction.label}</Text>}
             </Pressable>
           ) : null}
         </View>
@@ -330,10 +554,14 @@ export default function OrdersScreen() {
   const isDeliveryMode = params.mode === "delivery";
   const [availableJobs, setAvailableJobs] = useState<DeliveryJob[]>([]);
   const [currentJobs, setCurrentJobs] = useState<DeliveryJob[]>([]);
+  const [historyJobs, setHistoryJobs] = useState<DeliveryJob[]>([]);
   const [loadingCourier, setLoadingCourier] = useState(false);
   const [acceptingJobId, setAcceptingJobId] = useState<string | null>(null);
   const [chefActionKey, setChefActionKey] = useState<string | null>(null);
   const [reportingOrderId, setReportingOrderId] = useState<string | null>(null);
+  const [courierLoadNotice, setCourierLoadNotice] = useState<string | null>(null);
+  const [courierFilter, setCourierFilter] = useState<CourierMissionFilter>("all");
+  const [clientFilter, setClientFilter] = useState<ClientOrderFilter>("all");
   const courierLocationSyncedAtRef = useRef(0);
   const alertedMissionIdsRef = useRef<Set<string>>(new Set());
 
@@ -375,13 +603,25 @@ export default function OrdersScreen() {
     try {
       await syncCourierAvailabilityLocation();
 
-      const [available, current] = await Promise.all([
+      const [availableResult, currentResult, historyResult] = await Promise.allSettled([
         apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/available", { token }),
         apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/current", { token }),
+        apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/history", { token }),
       ]);
-      setAvailableJobs(available.jobs ?? []);
-      setCurrentJobs(current.jobs ?? []);
+
+      setAvailableJobs(availableResult.status === "fulfilled" ? (availableResult.value.jobs ?? []) : []);
+      setCurrentJobs(currentResult.status === "fulfilled" ? (currentResult.value.jobs ?? []) : []);
+      setHistoryJobs(historyResult.status === "fulfilled" ? (historyResult.value.jobs ?? []) : []);
+
+      if (historyResult.status === "rejected") {
+        setCourierLoadNotice("L'historique des missions n'est pas encore disponible sur ce backend déployé. Les missions en cours et disponibles restent visibles.");
+      } else if (availableResult.status === "rejected" || currentResult.status === "rejected") {
+        setCourierLoadNotice("Certaines missions n'ont pas pu être chargées. Réessayez dans quelques secondes.");
+      } else {
+        setCourierLoadNotice(null);
+      }
     } catch (error) {
+      setCourierLoadNotice("Impossible de charger les missions pour le moment.");
       console.warn("Failed to load courier jobs:", error);
     } finally {
       setLoadingCourier(false);
@@ -477,6 +717,63 @@ export default function OrdersScreen() {
   const priorityOrders = chefOrders.filter((order) => ["pending", "accepted", "preparing"].includes(order.status));
   const readyOrders = chefOrders.filter((order) => order.status === "ready");
   const archivedOrders = chefOrders.filter((order) => order.status === "delivered");
+  const filteredClientOrders = useMemo(() => {
+    if (clientFilter === "all") {
+      return orders;
+    }
+
+    if (clientFilter === "delivery") {
+      return orders.filter((order) => Boolean(order.delivery));
+    }
+
+    return orders.filter((order) => !order.delivery);
+  }, [clientFilter, orders]);
+  const clientOrderSections = useMemo(
+    () => groupItemsByDay(filteredClientOrders, (order) => order.createdAt),
+    [filteredClientOrders],
+  );
+  const filteredCurrentJobs = useMemo(
+    () => courierFilter === "available" || courierFilter === "history" ? [] : currentJobs,
+    [courierFilter, currentJobs],
+  );
+  const filteredAvailableJobs = useMemo(
+    () => courierFilter === "current" || courierFilter === "history" ? [] : availableJobs,
+    [availableJobs, courierFilter],
+  );
+  const filteredHistoryJobs = useMemo(
+    () => courierFilter === "current" || courierFilter === "available" ? [] : historyJobs,
+    [courierFilter, historyJobs],
+  );
+  const historySections = useMemo(
+    () => groupItemsByDay(filteredHistoryJobs, (job) => getMissionDate(job)),
+    [filteredHistoryJobs],
+  );
+  const chefSections = useMemo(
+    () => [
+      {
+        key: "priority",
+        title: "À traiter maintenant",
+        subtitle: "Acceptez puis faites avancer les commandes les plus récentes.",
+        items: priorityOrders,
+        empty: "Aucune commande urgente en ce moment.",
+      },
+      {
+        key: "ready",
+        title: "Prêtes à sortir",
+        subtitle: "Déclenchez un livreur ou clôturez la remise si la cliente récupère sur place.",
+        items: readyOrders,
+        empty: "Aucune commande prête pour le moment.",
+      },
+      {
+        key: "history",
+        title: "Historique récent",
+        subtitle: "Gardez un œil sur les commandes finalisées pour vérifier le rythme du service.",
+        items: archivedOrders,
+        empty: "Aucune commande finalisée pour l'instant.",
+      },
+    ],
+    [archivedOrders, priorityOrders, readyOrders],
+  );
 
   const handleAdvanceChefOrder = async (order: ReceivedOrder) => {
     const nextStatus =
@@ -573,10 +870,39 @@ export default function OrdersScreen() {
 
   if (isCourier) {
     return (
-      <View style={[styles.container, { paddingTop: topInset }]}> 
-        <View style={styles.header}>
-          <Text style={styles.title}>Mes missions</Text>
-          <Text style={styles.subtitle}>{currentJobs.length} en cours · {availableJobs.length} disponibles</Text>
+      <View style={[styles.courierHistoryScreen, { paddingTop: topInset }]}> 
+        <View style={styles.historyHeader}>
+          <Text style={styles.historyScreenTitle}>Mes courses et commandes</Text>
+          <Text style={styles.historyScreenSubtitle}>{currentJobs.length} en cours · {availableJobs.length} disponibles · {historyJobs.length} archivées</Text>
+          <View style={styles.summaryGrid}>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{currentJobs.length}</Text>
+              <Text style={styles.summaryLabel}>En cours</Text>
+            </View>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{availableJobs.length}</Text>
+              <Text style={styles.summaryLabel}>À accepter</Text>
+            </View>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{historyJobs.length}</Text>
+              <Text style={styles.summaryLabel}>Historique</Text>
+            </View>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{currentJobs.length + availableJobs.length + historyJobs.length}</Text>
+              <Text style={styles.summaryLabel}>Total missions</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            <FilterChip label="Tout" active={courierFilter === "all"} onPress={() => setCourierFilter("all")} />
+            <FilterChip label="En cours" active={courierFilter === "current"} onPress={() => setCourierFilter("current")} />
+            <FilterChip label="Disponibles" active={courierFilter === "available"} onPress={() => setCourierFilter("available")} />
+            <FilterChip label="Historique" active={courierFilter === "history"} onPress={() => setCourierFilter("history")} />
+          </ScrollView>
+          {courierLoadNotice ? (
+            <View style={styles.inlineNoticeCard}>
+              <Text style={styles.inlineNoticeText}>{courierLoadNotice}</Text>
+            </View>
+          ) : null}
         </View>
 
         {loadingCourier ? (
@@ -584,26 +910,35 @@ export default function OrdersScreen() {
             <ActivityIndicator color={Colors.light.tint} />
           </View>
         ) : (
-          <ScrollView contentContainerStyle={[styles.list, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]} showsVerticalScrollIndicator={false}>
-            {currentJobs.length > 0 ? (
+          <ScrollView contentContainerStyle={[styles.historyList, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]} showsVerticalScrollIndicator={false}>
+            {filteredCurrentJobs.length > 0 ? (
               <>
-                <SectionHeader title="Mission en cours" subtitle="Priorité sur ce trajet avant de prendre une nouvelle course." />
-                {currentJobs.map((job) => (
+                <Text style={styles.daySectionTitle}>Mission en cours</Text>
+                {filteredCurrentJobs.map((job) => (
                   <DeliveryJobCard key={job.id} job={job} />
                 ))}
               </>
             ) : null}
 
-            <SectionHeader title={currentJobs.length > 0 ? "Nouvelles missions" : "Missions disponibles"} subtitle="N'acceptez que les courses que vous pouvez démarrer rapidement." />
-            {availableJobs.length === 0 ? (
-              <View style={styles.emptyInline}>
-                <Text style={styles.emptyDesc}>Aucune mission disponible pour le moment.</Text>
-              </View>
-            ) : (
-              availableJobs.map((job) => (
+            {filteredAvailableJobs.length > 0 ? <Text style={styles.daySectionTitle}>{filteredCurrentJobs.length > 0 ? "Nouvelles missions" : "Missions disponibles"}</Text> : null}
+            {filteredAvailableJobs.map((job) => (
                 <DeliveryJobCard key={job.id} job={job} onAccept={acceptJob} accepting={acceptingJobId === job.id} />
-              ))
-            )}
+            ))}
+
+            {historySections.map((section) => (
+              <View key={section.title} style={styles.daySectionBlock}>
+                <Text style={styles.daySectionTitle}>{section.title}</Text>
+                {section.items.map((job) => (
+                  <DeliveryJobCard key={job.id} job={job} />
+                ))}
+              </View>
+            ))}
+
+            {filteredCurrentJobs.length === 0 && filteredAvailableJobs.length === 0 && historySections.length === 0 ? (
+              <View style={styles.emptyInline}>
+                <Text style={styles.emptyDesc}>Aucune mission à afficher pour ce filtre.</Text>
+              </View>
+            ) : null}
           </ScrollView>
         )}
       </View>
@@ -612,10 +947,28 @@ export default function OrdersScreen() {
 
   if (isChef) {
     return (
-      <View style={[styles.container, { paddingTop: topInset }]}> 
-        <View style={styles.header}>
-          <Text style={styles.title}>Commandes reçues</Text>
-          <Text style={styles.subtitle}>Pilotez la cuisine, puis déclenchez la livraison au bon moment.</Text>
+      <View style={[styles.courierHistoryScreen, { paddingTop: topInset }]}> 
+        <View style={styles.historyHeader}>
+          <Text style={styles.historyScreenTitle}>Commandes reçues</Text>
+          <Text style={styles.historyScreenSubtitle}>Pilotez la cuisine, déclenchez la livraison au bon moment et gardez une vue nette sur votre service.</Text>
+          <View style={styles.summaryGrid}>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{chefSummary.pending}</Text>
+              <Text style={styles.summaryLabel}>À accepter</Text>
+            </View>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{chefSummary.active}</Text>
+              <Text style={styles.summaryLabel}>En cuisine</Text>
+            </View>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{chefSummary.ready}</Text>
+              <Text style={styles.summaryLabel}>Prêtes</Text>
+            </View>
+            <View style={styles.summaryCardSoft}>
+              <Text style={styles.summaryValue}>{chefSummary.delivered}</Text>
+              <Text style={styles.summaryLabel}>Terminées</Text>
+            </View>
+          </View>
         </View>
 
         {isLoadingChefOrders ? (
@@ -623,26 +976,7 @@ export default function OrdersScreen() {
             <ActivityIndicator color={Colors.light.tint} />
           </View>
         ) : (
-          <ScrollView contentContainerStyle={[styles.list, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]} showsVerticalScrollIndicator={false}>
-            <View style={styles.summaryGrid}>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>{chefSummary.pending}</Text>
-                <Text style={styles.summaryLabel}>À accepter</Text>
-              </View>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>{chefSummary.active}</Text>
-                <Text style={styles.summaryLabel}>En cuisine</Text>
-              </View>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>{chefSummary.ready}</Text>
-                <Text style={styles.summaryLabel}>Prêtes</Text>
-              </View>
-              <View style={styles.summaryCard}>
-                <Text style={styles.summaryValue}>{chefSummary.delivered}</Text>
-                <Text style={styles.summaryLabel}>Terminées</Text>
-              </View>
-            </View>
-
+          <ScrollView contentContainerStyle={[styles.historyList, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]} showsVerticalScrollIndicator={false}>
             {chefOrders.length === 0 ? (
               <View style={styles.emptyStateInline}>
                 <View style={styles.emptyIcon}>
@@ -652,55 +986,25 @@ export default function OrdersScreen() {
                 <Text style={styles.emptyDesc}>Vos nouvelles commandes apparaîtront ici avec les prochaines actions à effectuer.</Text>
               </View>
             ) : (
-              <>
-                <SectionHeader title="À traiter maintenant" subtitle="Acceptez puis faites avancer les commandes les plus récentes." />
-                {priorityOrders.length === 0 ? (
-                  <View style={styles.emptyInline}>
-                    <Text style={styles.emptyDesc}>Aucune commande urgente en ce moment.</Text>
-                  </View>
-                ) : priorityOrders.map((order) => (
-                  <ChefOrderCard
-                    key={order.id}
-                    order={order}
-                    onAdvance={handleAdvanceChefOrder}
-                    onRequestDelivery={handleRequestDelivery}
-                    onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
-                    loadingAction={chefActionKey}
-                  />
-                ))}
-
-                <SectionHeader title="Prêtes à sortir" subtitle="Déclenchez un livreur ou clôturez la remise si la cliente récupère sur place." />
-                {readyOrders.length === 0 ? (
-                  <View style={styles.emptyInline}>
-                    <Text style={styles.emptyDesc}>Aucune commande prête pour le moment.</Text>
-                  </View>
-                ) : readyOrders.map((order) => (
-                  <ChefOrderCard
-                    key={order.id}
-                    order={order}
-                    onAdvance={handleAdvanceChefOrder}
-                    onRequestDelivery={handleRequestDelivery}
-                    onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
-                    loadingAction={chefActionKey}
-                  />
-                ))}
-
-                <SectionHeader title="Historique récent" subtitle="Gardez un œil sur les commandes finalisées pour vérifier le rythme du service." />
-                {archivedOrders.length === 0 ? (
-                  <View style={styles.emptyInline}>
-                    <Text style={styles.emptyDesc}>Aucune commande finalisée pour l'instant.</Text>
-                  </View>
-                ) : archivedOrders.map((order) => (
-                  <ChefOrderCard
-                    key={order.id}
-                    order={order}
-                    onAdvance={handleAdvanceChefOrder}
-                    onRequestDelivery={handleRequestDelivery}
-                    onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
-                    loadingAction={chefActionKey}
-                  />
-                ))}
-              </>
+              chefSections.map((section) => (
+                <View key={section.key} style={styles.daySectionBlock}>
+                  <SectionHeader title={section.title} subtitle={section.subtitle} />
+                  {section.items.length === 0 ? (
+                    <View style={styles.emptyInline}>
+                      <Text style={styles.emptyDesc}>{section.empty}</Text>
+                    </View>
+                  ) : section.items.map((order) => (
+                    <ChefOrderCard
+                      key={order.id}
+                      order={order}
+                      onAdvance={handleAdvanceChefOrder}
+                      onRequestDelivery={handleRequestDelivery}
+                      onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
+                      loadingAction={chefActionKey}
+                    />
+                  ))}
+                </View>
+              ))
             )}
           </ScrollView>
         )}
@@ -709,13 +1013,18 @@ export default function OrdersScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: topInset }]}> 
-      <View style={styles.header}>
-        <Text style={styles.title}>Mes commandes</Text>
-        <Text style={styles.subtitle}>{orders.length} commande{orders.length !== 1 ? "s" : ""}</Text>
+    <View style={[styles.courierHistoryScreen, { paddingTop: topInset }]}> 
+      <View style={styles.historyHeader}>
+        <Text style={styles.historyScreenTitle}>Mes courses et commandes</Text>
+        <Text style={styles.historyScreenSubtitle}>{orders.length} commande{orders.length !== 1 ? "s" : ""}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+          <FilterChip label="Tout" active={clientFilter === "all"} onPress={() => setClientFilter("all")} />
+          <FilterChip label="Repas" active={clientFilter === "meal"} onPress={() => setClientFilter("meal")} />
+          <FilterChip label="Livraison" active={clientFilter === "delivery"} onPress={() => setClientFilter("delivery")} />
+        </ScrollView>
       </View>
 
-      {orders.length === 0 ? (
+      {filteredClientOrders.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIcon}>
             <Feather name="shopping-bag" size={36} color={Colors.light.tabIconDefault} />
@@ -733,30 +1042,35 @@ export default function OrdersScreen() {
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={[styles.list, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]}
+          contentContainerStyle={[styles.historyList, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.summaryGrid}>
-            <View style={styles.summaryCard}>
+            <View style={styles.summaryCardSoft}>
               <Text style={styles.summaryValue}>{clientSummary.active}</Text>
-              <Text style={styles.summaryLabel}>En préparation</Text>
+              <Text style={styles.summaryLabel}>En cours</Text>
             </View>
-            <View style={styles.summaryCard}>
+            <View style={styles.summaryCardSoft}>
               <Text style={styles.summaryValue}>{clientSummary.inDelivery}</Text>
               <Text style={styles.summaryLabel}>En livraison</Text>
             </View>
-            <View style={styles.summaryCard}>
+            <View style={styles.summaryCardSoft}>
               <Text style={styles.summaryValue}>{clientSummary.delivered}</Text>
               <Text style={styles.summaryLabel}>Livrées</Text>
             </View>
-            <View style={styles.summaryCard}>
+            <View style={styles.summaryCardSoft}>
               <Text style={styles.summaryValue}>{Math.round(clientSummary.totalSpent / 1000)}k</Text>
-              <Text style={styles.summaryLabel}>FCFA dépensés</Text>
+              <Text style={styles.summaryLabel}>Dépensés</Text>
             </View>
           </View>
 
-          {orders.map((order) => (
-            <OrderCard key={order.id} order={order} onReportIssue={handleReportIssue} reporting={reportingOrderId === order.id} />
+          {clientOrderSections.map((section) => (
+            <View key={section.title} style={styles.daySectionBlock}>
+              <Text style={styles.daySectionTitle}>{section.title}</Text>
+              {section.items.map((order) => (
+                <ClientHistoryCard key={order.id} order={order} onReportIssue={handleReportIssue} reporting={reportingOrderId === order.id} />
+              ))}
+            </View>
           ))}
         </ScrollView>
       )}
@@ -1111,5 +1425,342 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.tint,
+  },
+  courierHistoryScreen: {
+    flex: 1,
+    backgroundColor: "#FCFBF9",
+  },
+  historyHeader: {
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    gap: 14,
+  },
+  historyScreenTitle: {
+    fontSize: 28,
+    lineHeight: 33,
+    fontFamily: "Poppins_700Bold",
+    color: "#211B17",
+  },
+  historyScreenSubtitle: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: "Poppins_400Regular",
+    color: "#7C7068",
+  },
+  filterRow: {
+    gap: 10,
+    paddingRight: 20,
+  },
+  filterChip: {
+    borderRadius: 999,
+    backgroundColor: "#F2EFEC",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  filterChipActive: {
+    backgroundColor: "#2D2723",
+  },
+  filterChipText: {
+    fontSize: 14,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#2D2723",
+  },
+  filterChipTextActive: {
+    color: "#FFFFFF",
+  },
+  historyList: {
+    paddingHorizontal: 20,
+    gap: 16,
+  },
+  daySectionBlock: {
+    gap: 12,
+  },
+  daySectionTitle: {
+    fontSize: 14,
+    fontFamily: "Poppins_500Medium",
+    color: "#8C827B",
+  },
+  historyCard: {
+    borderRadius: 24,
+    backgroundColor: "#F5F2EE",
+    padding: 14,
+    gap: 14,
+  },
+  historyCardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  historyCardIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFF8F2",
+  },
+  historyDeliveryIconWrap: {
+    backgroundColor: "#FFF2ED",
+  },
+  historyMealIconWrap: {
+    backgroundColor: "#FFF7E8",
+  },
+  historyCardMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  historyCardHeadlineRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  historyCardTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 16,
+    lineHeight: 21,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+  },
+  historyCardAmount: {
+    fontSize: 15,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+  },
+  historyCardMeta: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#7B7068",
+  },
+  historyDangerMeta: {
+    color: "#D45845",
+  },
+  historyCardSubline: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#91857D",
+  },
+  historyBottomRow: {
+    gap: 12,
+  },
+  historyStatusPill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  historyStatusText: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+  },
+  historyActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  historyGhostBtn: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 18,
+    backgroundColor: "#EBE7E3",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+  },
+  historyGhostBtnText: {
+    fontSize: 13,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+  },
+  inlineNoticeCard: {
+    borderRadius: 18,
+    backgroundColor: "#F5EEE6",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  inlineNoticeText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_500Medium",
+    color: "#7C5A2D",
+  },
+  chefCard: {
+    borderRadius: 24,
+    backgroundColor: "#F5F2EE",
+    padding: 14,
+    gap: 14,
+  },
+  chefCardPriority: {
+    borderWidth: 1,
+    borderColor: "rgba(243, 156, 18, 0.24)",
+  },
+  chefCardTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  chefCardIdentityRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  chefCardIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chefCardMain: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  chefCardHeadlineRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  chefCardTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 16,
+    lineHeight: 20,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+  },
+  chefCardAmount: {
+    fontSize: 15,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  chefCardDate: {
+    fontSize: 12,
+    fontFamily: "Poppins_500Medium",
+    color: "#6E625B",
+  },
+  chefCardMeta: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#8A7D75",
+  },
+  chefCardTagRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  chefInfoChip: {
+    borderRadius: 999,
+    backgroundColor: "#ECE7E2",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chefInfoChipText: {
+    fontSize: 12,
+    fontFamily: "Poppins_500Medium",
+    color: "#5E544E",
+  },
+  chefBriefCard: {
+    borderRadius: 18,
+    backgroundColor: "#ECE7E2",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  chefBriefLabel: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#8A7D75",
+    textTransform: "uppercase",
+  },
+  chefBriefText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: "Poppins_400Regular",
+    color: "#2D2723",
+  },
+  chefItemsCard: {
+    borderRadius: 20,
+    backgroundColor: "#FFFDFC",
+    padding: 12,
+    gap: 10,
+  },
+  chefItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  chefItemQuantityBadge: {
+    minWidth: 38,
+    borderRadius: 12,
+    backgroundColor: "#FFF2E8",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+  },
+  chefItemQuantityText: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    color: "#D4611A",
+  },
+  chefItemName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontFamily: "Poppins_500Medium",
+    color: "#1F1A17",
+  },
+  chefItemPrice: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#6E625B",
+  },
+  chefCardFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    gap: 12,
+  },
+  chefCardFooterMeta: {
+    flexShrink: 1,
+  },
+  chefActionsRow: {
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+  },
+  chefPrimaryActionBtn: {
+    minHeight: 56,
+    minWidth: 122,
+    borderRadius: 18,
+    backgroundColor: Colors.light.tint,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  chefPrimaryActionText: {
+    fontSize: 13,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#FFFFFF",
+  },
+  summaryCardSoft: {
+    width: "47%",
+    backgroundColor: "#F5F2EE",
+    borderRadius: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    gap: 4,
   },
 });
