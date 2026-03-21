@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { storiesTable, chefProfilesTable, usersTable, storyLikesTable, dishesTable } from "@workspace/db/schema";
-import { eq, gt, desc, and } from "drizzle-orm";
+import { eq, gt, desc, and, ne } from "drizzle-orm";
 import { requireAuth, requireChef, type AuthRequest } from "../middlewares/auth.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
+import { notifyUsers } from "../lib/notifications.js";
 
 const router: IRouter = Router();
 
@@ -24,6 +25,8 @@ router.get("/stories", async (req, res) => {
       chefName: u.name,
       chefCoverColor: u.coverColor,
       imageUrl: s.imageUrl ?? null,
+      videoUrl: s.videoUrl ?? null,
+      videoDurationSeconds: s.videoDurationSeconds ?? null,
       caption: s.caption,
       dishName: s.dishName,
       price: s.price,
@@ -42,7 +45,10 @@ router.get("/stories", async (req, res) => {
 
 router.post("/stories", requireChef, async (req: AuthRequest, res) => {
   try {
-    const { caption, dishName, price, emoji, bgColor, imageUrl } = req.body;
+    const { caption, dishName, price, emoji, bgColor, imageUrl, videoUrl } = req.body;
+    const videoDurationSeconds = typeof req.body.videoDurationSeconds === "number"
+      ? req.body.videoDurationSeconds
+      : Number(req.body.videoDurationSeconds ?? NaN);
     const dishId = typeof req.body.dishId !== "undefined" ? Number(req.body.dishId) : null;
     if (!caption) {
       res.status(400).json({ error: "BadRequest", message: "La description est requise" });
@@ -64,6 +70,14 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
       res.status(400).json({ error: "BadRequest", message: "Image de story invalide ou non autorisée" });
       return;
     }
+    if (videoUrl && !isOwnedUploadUrl(String(videoUrl), "story", req.userId!)) {
+      res.status(400).json({ error: "BadRequest", message: "Video de story invalide ou non autorisée" });
+      return;
+    }
+    if (videoUrl && Number.isFinite(videoDurationSeconds) && videoDurationSeconds > 10) {
+      res.status(400).json({ error: "BadRequest", message: "La video doit durer au maximum 10 secondes" });
+      return;
+    }
 
     let linkedDish = null;
     if (dishId !== null) {
@@ -81,6 +95,8 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
       chefProfileId: cp.id,
       caption,
       imageUrl: imageUrl || null,
+      videoUrl: videoUrl || null,
+      videoDurationSeconds: Number.isFinite(videoDurationSeconds) ? videoDurationSeconds : null,
       dishId: linkedDish?.id ?? null,
       dishName: linkedDish?.name ?? dishName ?? null,
       price: linkedDish?.price ?? price ?? null,
@@ -90,12 +106,37 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
       expiresAt,
     }).returning();
 
+    if (story.videoUrl) {
+      try {
+        const recipients = await db
+          .select({ id: usersTable.id })
+          .from(usersTable)
+          .where(ne(usersTable.id, req.userId!));
+
+        await notifyUsers({
+          userIds: recipients.map((recipient) => recipient.id),
+          type: "system",
+          title: `${u.name} vient de publier une vidéo`,
+          message: linkedDish?.name ?? dishName ?? caption,
+          data: {
+            type: "story-video",
+            storyId: String(story.id),
+            chefId: String(cp.id),
+          },
+        });
+      } catch (notificationError) {
+        console.warn("story video notification failed", notificationError);
+      }
+    }
+
     res.status(201).json({
       id: String(story.id),
       chefId: String(cp.id),
       chefName: u.name,
       chefCoverColor: u.coverColor,
       imageUrl: story.imageUrl || null,
+      videoUrl: story.videoUrl || null,
+      videoDurationSeconds: story.videoDurationSeconds ?? null,
       caption: story.caption,
       dishName: story.dishName,
       price: story.price,

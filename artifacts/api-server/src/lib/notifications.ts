@@ -21,6 +21,50 @@ interface NotifyUsersInput {
   data?: Record<string, unknown>;
 }
 
+type StoredPushSubscription = typeof pushSubscriptionsTable.$inferSelect;
+
+async function sendExpoPushNotifications(subscriptions: StoredPushSubscription[], payload: {
+  title: string;
+  message: string;
+  data?: Record<string, unknown>;
+  orderId?: number | null;
+  deliveryJobId?: number | null;
+}) {
+  if (subscriptions.length === 0) {
+    return [] as Array<{ endpoint: string; status: string }>;
+  }
+
+  const messages = subscriptions.map((subscription) => ({
+    to: subscription.endpoint,
+    sound: "default",
+    title: payload.title,
+    body: payload.message,
+    data: {
+      ...payload.data,
+      orderId: payload.orderId ?? null,
+      deliveryJobId: payload.deliveryJobId ?? null,
+    },
+  }));
+
+  const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Accept-Encoding": "gzip, deflate",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(messages),
+  });
+
+  const body = await response.text().catch(() => "");
+  if (!response.ok) {
+    console.warn("expo push send failed", response.status, body);
+    return subscriptions.map((subscription) => ({ endpoint: subscription.endpoint, status: "error" }));
+  }
+
+  return subscriptions.map((subscription) => ({ endpoint: subscription.endpoint, status: "ok" }));
+}
+
 export async function notifyUsers({
   userIds,
   type = "system",
@@ -55,7 +99,21 @@ export async function notifyUsers({
   const payload = JSON.stringify({ title, message, data, orderId, deliveryJobId });
   const results: Array<{ endpoint: string; status: string }> = [];
 
-  for (const subscription of subscriptions) {
+  const expoSubscriptions = subscriptions.filter((subscription) => subscription.platform === "expo");
+  const webSubscriptions = subscriptions.filter((subscription) => subscription.platform !== "expo");
+
+  if (expoSubscriptions.length > 0) {
+    const expoResults = await sendExpoPushNotifications(expoSubscriptions, {
+      title,
+      message,
+      data,
+      orderId,
+      deliveryJobId,
+    });
+    results.push(...expoResults);
+  }
+
+  for (const subscription of webSubscriptions) {
     try {
       await webpush.sendNotification(
         {

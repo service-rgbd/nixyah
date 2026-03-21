@@ -100,6 +100,8 @@ export const storiesTable = pgTable("stories", {
   chefProfileId: integer("chef_profile_id").notNull().references(() => chefProfilesTable.id),
   caption: text("caption").notNull(),
   imageUrl: text("image_url"),
+  videoUrl: text("video_url"),
+  videoDurationSeconds: real("video_duration_seconds"),
   dishId: integer("dish_id").references(() => dishesTable.id),
   dishName: text("dish_name"),
   price: real("price"),

@@ -28,12 +28,21 @@ const R2_PUBLIC_BASE_URL = normalizePublicBaseUrl(
 
 export type UploadPurpose = "avatar" | "story" | "dish";
 
-const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp"]);
+const IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+]);
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "heic", "heif"]);
+const VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm"]);
 
 const PURPOSE_CONFIG: Record<UploadPurpose, { prefix: string; maxBytes: number }> = {
   avatar: { prefix: "avatars", maxBytes: 5 * 1024 * 1024 },
-  story: { prefix: "stories", maxBytes: 10 * 1024 * 1024 },
+  story: { prefix: "stories", maxBytes: 100 * 1024 * 1024 },
   dish: { prefix: "dishes", maxBytes: 10 * 1024 * 1024 },
 };
 
@@ -85,14 +94,14 @@ export function validateUploadInput(input: {
   if (!filename) {
     throw new Error("Le nom du fichier est requis.");
   }
-  if (!contentType || !IMAGE_MIME_TYPES.has(contentType)) {
+  if (!contentType || (!IMAGE_MIME_TYPES.has(contentType) && !VIDEO_MIME_TYPES.has(contentType))) {
     throw new Error("Type de fichier non autorisé.");
   }
   if (purpose !== "avatar" && purpose !== "story" && purpose !== "dish") {
     throw new Error("Usage d'upload invalide.");
   }
   const extension = getExtension(filename);
-  if (!extension || !IMAGE_EXTENSIONS.has(extension)) {
+  if (!extension || (!IMAGE_EXTENSIONS.has(extension) && !VIDEO_EXTENSIONS.has(extension))) {
     throw new Error("Extension de fichier non autorisée.");
   }
   if (!Number.isFinite(fileSize) || fileSize <= 0) {
@@ -107,7 +116,7 @@ export function validateUploadInput(input: {
 
 export function buildUploadKey(userId: number, purpose: UploadPurpose, filename: string): string {
   const extension = getExtension(filename);
-  const safeExtension = extension && IMAGE_EXTENSIONS.has(extension) ? extension : "bin";
+  const safeExtension = extension && (IMAGE_EXTENSIONS.has(extension) || VIDEO_EXTENSIONS.has(extension)) ? extension : "bin";
   const { prefix } = PURPOSE_CONFIG[purpose];
   return `${prefix}/${userId}/${Date.now()}-${crypto.randomUUID()}.${safeExtension}`;
 }

@@ -84,6 +84,8 @@ export interface Story {
   emoji?: string | null;
   bgColor?: string | null;
   imageUrl?: string | null;
+  videoUrl?: string | null;
+  videoDurationSeconds?: number | null;
   createdAt: string;
   expiresAt: string;
 }
@@ -213,7 +215,7 @@ interface AppContextValue {
   refreshChefs: () => Promise<void>;
   refreshStories: () => Promise<void>;
   likeStory: (storyId: string) => Promise<void>;
-  postStory: (data: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null }) => Promise<void>;
+  postStory: (data: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null; videoUrl?: string | null; videoDurationSeconds?: number | null }) => Promise<void>;
   fetchChefStats: (chefId: string) => Promise<void>;
   fetchChefDishes: (chefId: string) => Promise<void>;
   updateChefDish: (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean }) => Promise<void>;
@@ -305,6 +307,8 @@ function mapApiChef(c: any): Chef {
     emoji: s.emoji ?? null,
     bgColor: s.bgColor ?? s.bg_color ?? null,
     imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
+    videoUrl: normalizeRemoteUrl(s.videoUrl ?? s.video_url ?? null),
+    videoDurationSeconds: s.videoDurationSeconds ?? s.video_duration_seconds ?? null,
     createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
     expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   }));
@@ -480,6 +484,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         emoji: s.emoji ?? null,
         bgColor: s.bgColor ?? s.bg_color ?? null,
         imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
+        videoUrl: normalizeRemoteUrl(s.videoUrl ?? s.video_url ?? null),
+        videoDurationSeconds: s.videoDurationSeconds ?? s.video_duration_seconds ?? null,
         createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
         expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })));
@@ -642,7 +648,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const postStory = useCallback(async (storyData: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null }) => {
+  const postStory = useCallback(async (storyData: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null; videoUrl?: string | null; videoDurationSeconds?: number | null }) => {
     if (!token) throw new Error("Non connecté");
     await apiFetch("/stories", {
       method: "POST",

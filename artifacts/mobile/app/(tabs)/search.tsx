@@ -3,7 +3,6 @@ import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   ImageBackground,
   Platform,
   Pressable,
@@ -16,87 +15,19 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { useApp, Chef } from "@/contexts/AppContext";
-
-const FILTERS = ["Toutes", "Ivoirien", "Grillades", "Événements", "Snacks", "Desserts", "Dioula"];
+import { Chef, useApp } from "@/contexts/AppContext";
 
 const CATEGORIES = [
-  { id: "ivoirien",  label: "Ivoirien",    emoji: "🇨🇮", filter: "Ivoirien"    },
-  { id: "grillades", label: "Grillades",   emoji: "🍖",  filter: "Grillades"   },
-  { id: "snacks",    label: "Snacks",      emoji: "🥪",  filter: "Snacks"      },
-  { id: "desserts",  label: "Desserts",    emoji: "🧁",  filter: "Desserts"    },
-  { id: "dioula",    label: "Dioula",      emoji: "🍲",  filter: "Dioula"      },
-  { id: "events",    label: "Événements",  emoji: "🎉",  filter: "Événements"  },
+  { id: "all", label: "Tout", filter: null, emoji: "✨" },
+  { id: "ivoirien", label: "Ivoirien", filter: "Ivoirien", emoji: "🇨🇮" },
+  { id: "grillades", label: "Grillades", filter: "Grillades", emoji: "🍖" },
+  { id: "snacks", label: "Snacks", filter: "Snacks", emoji: "🥪" },
+  { id: "desserts", label: "Desserts", filter: "Desserts", emoji: "🧁" },
+  { id: "dioula", label: "Dioula", filter: "Dioula", emoji: "🍲" },
+  { id: "events", label: "Événements", filter: "Événements", emoji: "🎉" },
 ];
 
-function ChefSpotlightCard({ chef, isFavorite, onFavoriteToggle }: { chef: Chef; isFavorite: boolean; onFavoriteToggle: () => void }) {
-  const heroImage = getChefHeroImage(chef);
-  const initials = chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-  const firstDish = chef.dishes?.[0] ?? null;
-
-  return (
-    <Pressable
-      style={styles.spotlightCard}
-      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
-    >
-      <View style={styles.spotlightMedia}>
-        {heroImage ? (
-          <ImageBackground source={{ uri: heroImage }} style={styles.spotlightImage} imageStyle={styles.spotlightImageStyle}>
-            <View style={styles.spotlightOverlay} />
-          </ImageBackground>
-        ) : (
-          <View style={[styles.spotlightImage, styles.spotlightFallback, { backgroundColor: chef.coverColor }]}>
-            <Text style={styles.spotlightInitials}>{initials}</Text>
-          </View>
-        )}
-
-        <Pressable style={styles.spotlightHeart} onPress={onFavoriteToggle} hitSlop={10}>
-          <Ionicons
-            name={isFavorite ? "heart" : "heart-outline"}
-            size={16}
-            color={isFavorite ? Colors.light.error : Colors.light.text}
-          />
-        </Pressable>
-
-        <View style={styles.spotlightBadgeRow}>
-          {chef.isOnline ? (
-            <View style={styles.spotlightStatusBadge}>
-              <View style={styles.spotlightStatusDot} />
-              <Text style={styles.spotlightStatusText}>En ligne</Text>
-            </View>
-          ) : null}
-          {chef.isVerified ? (
-            <View style={styles.spotlightVerifiedBadge}>
-              <Ionicons name="shield-checkmark" size={12} color={Colors.light.tintDark} />
-            </View>
-          ) : null}
-        </View>
-      </View>
-
-      <View style={styles.spotlightBody}>
-        <View style={styles.spotlightTitleRow}>
-          <Text style={styles.spotlightName} numberOfLines={1}>{chef.name}</Text>
-          <View style={styles.spotlightRating}>
-            <Ionicons name="star" size={12} color="#F7C27B" />
-            <Text style={styles.spotlightRatingText}>{chef.rating.toFixed(1)}</Text>
-          </View>
-        </View>
-        <Text style={styles.spotlightSpecialty} numberOfLines={1}>{chef.specialty}</Text>
-        <View style={styles.spotlightMetaRow}>
-          <Feather name="map-pin" size={11} color={Colors.light.textTertiary} />
-          <Text style={styles.spotlightMetaText} numberOfLines={1}>{chef.location.split(",")[0]}</Text>
-        </View>
-        {firstDish ? (
-          <View style={styles.spotlightDishPill}>
-            <Text style={styles.spotlightDishText} numberOfLines={1}>{firstDish.name}</Text>
-          </View>
-        ) : null}
-      </View>
-    </Pressable>
-  );
-}
-
-function getChefHeroImage(chef: Chef) {
+function getChefHeroImage(chef: Chef): string | null {
   return (
     chef.heroImageUrl ??
     chef.dishes?.find((dish) => dish.imageUrls?.[0])?.imageUrls?.[0] ??
@@ -105,87 +36,127 @@ function getChefHeroImage(chef: Chef) {
   );
 }
 
-// Slim horizontal list row — one chef per line, clean & scannable
-function ChefRow({ chef, isFavorite, onFavoriteToggle }: { chef: Chef; isFavorite: boolean; onFavoriteToggle: () => void }) {
-  const initials = chef.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+function getApprovalRate(chef: Chef): number {
+  return Math.max(91, Math.min(99, Math.round(chef.rating * 20)));
+}
+
+function getStatusBadge(chef: Chef) {
+  if (chef.isOnline) {
+    return {
+      label: "En ligne",
+      backgroundColor: "rgba(39,174,96,0.12)",
+      textColor: Colors.light.success,
+      icon: "radio" as const,
+    };
+  }
+
+  if (chef.isVerified) {
+    return {
+      label: "Vérifiée",
+      backgroundColor: "rgba(247,194,123,0.2)",
+      textColor: Colors.light.tintDark,
+      icon: "shield-checkmark" as const,
+    };
+  }
+
+  return {
+    label: "Cuisine maison",
+    backgroundColor: Colors.light.backgroundSecondary,
+    textColor: Colors.light.textSecondary,
+    icon: "restaurant" as const,
+  };
+}
+
+function FilterChip({
+  label,
+  emoji,
+  active,
+  onPress,
+}: {
+  label: string;
+  emoji: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={[styles.filterChip, active && styles.filterChipActive]} onPress={onPress}>
+      <Text style={styles.filterChipEmoji}>{emoji}</Text>
+      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function RestaurantCard({
+  chef,
+  isFavorite,
+  onFavoriteToggle,
+}: {
+  chef: Chef;
+  isFavorite: boolean;
+  onFavoriteToggle: () => void;
+}) {
   const heroImage = getChefHeroImage(chef);
-  const firstDish = chef.dishes?.[0] ?? null;
+  const initials = chef.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const topDish = chef.dishes?.[0] ?? null;
+  const status = getStatusBadge(chef);
+
   return (
     <Pressable
-      style={styles.chefRow}
+      style={styles.restaurantCard}
       onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
     >
-      <View style={styles.chefRowMedia}>
+      <View style={styles.restaurantCardMedia}>
         {heroImage ? (
-          <ImageBackground source={{ uri: heroImage }} style={styles.chefRowAvatar} imageStyle={styles.chefRowAvatarImg}>
-            <View style={styles.chefRowMediaOverlay} />
+          <ImageBackground source={{ uri: heroImage }} style={styles.restaurantCardImage} imageStyle={styles.restaurantCardImageStyle}>
+            <View style={styles.restaurantCardOverlay} />
           </ImageBackground>
         ) : (
-          <View style={[styles.chefRowAvatar, { backgroundColor: chef.coverColor }]}> 
-            {chef.avatarUrl ? (
-              <Image source={{ uri: chef.avatarUrl as string }} style={styles.chefRowAvatarImg} />
-            ) : (
-              <Text style={styles.chefRowInitials}>{initials}</Text>
-            )}
+          <View style={[styles.restaurantCardImage, styles.restaurantCardFallback, { backgroundColor: chef.coverColor }]}>
+            <Text style={styles.restaurantCardInitials}>{initials}</Text>
           </View>
         )}
-        <View style={styles.chefRowAvatarBadge}>
-          {chef.avatarUrl ? (
-            <Image source={{ uri: chef.avatarUrl as string }} style={styles.chefRowAvatarBadgeImg} />
-          ) : (
-            <View style={[styles.chefRowAvatarBadgeFallback, { backgroundColor: chef.coverColor }]}> 
-              <Text style={styles.chefRowAvatarBadgeText}>{initials}</Text>
-            </View>
-          )}
-        </View>
-        {firstDish?.isPopular ? (
-          <View style={styles.chefRowPhotoTag}>
-            <Text style={styles.chefRowPhotoTagText}>Plat phare</Text>
+
+        <View style={styles.restaurantCardTopBar}>
+          <View style={[styles.statusBadge, { backgroundColor: status.backgroundColor }]}>
+            <Ionicons name={status.icon} size={12} color={status.textColor} />
+            <Text style={[styles.statusBadgeText, { color: status.textColor }]}>{status.label}</Text>
           </View>
-        ) : null}
-        {chef.isOnline && <View style={styles.chefRowOnlineDot} />}
+          <Pressable style={styles.favoriteButton} onPress={onFavoriteToggle} hitSlop={10}>
+            <Ionicons
+              name={isFavorite ? "heart" : "heart-outline"}
+              size={18}
+              color={isFavorite ? Colors.light.error : Colors.light.text}
+            />
+          </Pressable>
+        </View>
       </View>
 
-      <View style={styles.chefRowBody}>
-        <View style={styles.chefRowTop}>
-          <Text style={styles.chefRowName} numberOfLines={1}>{chef.name}</Text>
-          <View style={styles.chefRowRating}>
-            <Ionicons name="star" size={11} color="#F7C27B" />
-            <Text style={styles.chefRowRatingText}>{chef.rating.toFixed(1)}</Text>
-          </View>
+      <View style={styles.restaurantCardContent}>
+        <View style={styles.restaurantCardHeaderRow}>
+          <Text style={styles.restaurantCardTitle} numberOfLines={1}>{chef.name}</Text>
+          {chef.isVerified ? <Text style={styles.restaurantCardSponsor}>Vérifiée</Text> : null}
         </View>
-        <Text style={styles.chefRowSpecialty} numberOfLines={1}>{chef.specialty}</Text>
-        <View style={styles.chefRowMeta}>
-          <Feather name="map-pin" size={11} color={Colors.light.textTertiary} />
-          <Text style={styles.chefRowMetaText}>{chef.location.split(",")[0]}</Text>
-          <View style={styles.chefRowDot} />
-          <Feather name="clock" size={11} color={Colors.light.textTertiary} />
-          <Text style={styles.chefRowMetaText}>{chef.responseTime}</Text>
-          {chef.priceRange ? (
-            <>
-              <View style={styles.chefRowDot} />
-              <Text style={styles.chefRowPrice}>{chef.priceRange}</Text>
-            </>
+
+        <Text style={styles.restaurantCardSubtitle} numberOfLines={1}>{chef.specialty}</Text>
+
+        <View style={styles.restaurantCardMetaRow}>
+          <Text style={styles.restaurantCardMetaText}>
+            👍 {getApprovalRate(chef)}% • {chef.responseTime} • {chef.priceRange || "Tarifs clairs"}
+          </Text>
+          <Text style={styles.restaurantCardSponsorMuted}>{chef.isOnline ? "Disponible" : "Sur demande"}</Text>
+        </View>
+
+        <View style={styles.restaurantCardBottomRow}>
+          <View style={styles.restaurantCardLocationRow}>
+            <Feather name="map-pin" size={13} color={Colors.light.textTertiary} />
+            <Text style={styles.restaurantCardLocation} numberOfLines={1}>{chef.location.split(",")[0]}</Text>
+          </View>
+          {topDish ? (
+            <View style={styles.restaurantCardDishPill}>
+              <Text style={styles.restaurantCardDishText} numberOfLines={1}>{topDish.name}</Text>
+            </View>
           ) : null}
         </View>
-        {firstDish ? (
-          <View style={styles.chefRowDishPill}>
-            <Text style={styles.chefRowDishPillText} numberOfLines={1}>
-              {firstDish.name} • {firstDish.price.toLocaleString()} FCFA
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.chefRowRight}>
-        <Pressable onPress={onFavoriteToggle} hitSlop={12} style={styles.chefRowHeart}>
-          <Ionicons
-            name={isFavorite ? "heart" : "heart-outline"}
-            size={18}
-            color={isFavorite ? Colors.light.tint : Colors.light.tabIconDefault}
-          />
-        </Pressable>
-        <Feather name="chevron-right" size={16} color={Colors.light.cardBorder} />
       </View>
     </Pressable>
   );
@@ -195,232 +166,159 @@ export default function SearchScreen() {
   const insets = useSafeAreaInsets();
   const { chefs, favorites, toggleFavorite, isLoadingChefs } = useApp();
   const [query, setQuery] = useState("");
-  const [selectedFilter, setSelectedFilter] = useState("Toutes");
+  const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
-  const isFiltering = query.length > 0 || selectedFilter !== "Toutes";
+  const onlineCount = chefs.filter((chef) => chef.isOnline).length;
+  const isFiltering = query.trim().length > 0 || selectedFilter !== null;
 
-  const filtered: Chef[] = chefs
+  const filteredChefs = [...chefs]
     .filter((chef) => {
-      const matchQuery =
-        !query ||
-        chef.name.toLowerCase().includes(query.toLowerCase()) ||
-        chef.specialty.toLowerCase().includes(query.toLowerCase()) ||
-        chef.location.toLowerCase().includes(query.toLowerCase());
-      const matchFilter =
-        selectedFilter === "Toutes" ||
-        chef.specialty.toLowerCase().includes(selectedFilter.toLowerCase());
-      return matchQuery && matchFilter;
-    })
-    .sort((a, b) => b.reviewCount - a.reviewCount || b.rating - a.rating);
+      const normalizedQuery = query.trim().toLowerCase();
+      const matchesQuery =
+        !normalizedQuery ||
+        chef.name.toLowerCase().includes(normalizedQuery) ||
+        chef.specialty.toLowerCase().includes(normalizedQuery) ||
+        chef.location.toLowerCase().includes(normalizedQuery) ||
+        chef.dishes.some((dish) => dish.name.toLowerCase().includes(normalizedQuery));
 
-  const onlineChefs = chefs.filter((c) => c.isOnline).slice(0, 4);
-  const popularChefs = [...chefs]
-    .sort((a, b) => b.rating - a.rating || b.reviewCount - a.reviewCount)
-    .slice(0, 4);
-  const spotlightChefs = [...chefs]
-    .sort((a, b) => Number(b.isVerified) - Number(a.isVerified) || b.rating - a.rating)
-    .slice(0, 6);
-  const allSorted = [...chefs].sort((a, b) => b.reviewCount - a.reviewCount || b.rating - a.rating);
+      const matchesFilter =
+        selectedFilter === null ||
+        chef.specialty.toLowerCase().includes(selectedFilter.toLowerCase());
+
+      return matchesQuery && matchesFilter;
+    })
+    .sort(
+      (a, b) =>
+        Number(b.isOnline) - Number(a.isOnline) ||
+        Number(b.isVerified) - Number(a.isVerified) ||
+        b.rating - a.rating ||
+        b.reviewCount - a.reviewCount
+    );
+
+  const featuredChef = filteredChefs[0] ?? null;
 
   return (
     <View style={[styles.container, { paddingTop: topInset }]}>
-      {/* ── Sticky header ── */}
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.title}>Explorer</Text>
-            <Text style={styles.subtitle}>{chefs.length} cuisinières disponibles</Text>
-          </View>
-        </View>
+        <Text style={styles.title}>Explorer</Text>
+        <Text style={styles.subtitle}>Des adresses qui donnent envie de commander, pas un simple annuaire.</Text>
+
         <View style={styles.searchBox}>
           <Feather name="search" size={16} color={Colors.light.textTertiary} />
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Cuisinière, plat, quartier..."
+            placeholder="Cuisine, plat, quartier..."
             placeholderTextColor={Colors.light.textTertiary}
             style={styles.searchInput}
             autoCorrect={false}
           />
-          {query.length > 0 && (
+          {query.length > 0 ? (
             <Pressable onPress={() => setQuery("")} hitSlop={8}>
               <Feather name="x" size={16} color={Colors.light.textTertiary} />
             </Pressable>
-          )}
+          ) : null}
         </View>
       </View>
 
-      {/* ── Main scrollable content ── */}
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}
+        contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : insets.bottom + 92 }}
       >
-        {/* Category icon shortcuts */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoriesRow}
-        >
-          {CATEGORIES.map((item) => {
-            const isActive = selectedFilter === item.filter;
-            return (
-              <Pressable
-                key={item.id}
-                style={styles.categoryItem}
-                onPress={() => setSelectedFilter(isActive ? "Toutes" : item.filter)}
-              >
-                <View style={[styles.categoryIconWrap, isActive && styles.categoryIconWrapActive]}>
-                  <Text style={styles.categoryEmoji}>{item.emoji}</Text>
-                </View>
-                <Text style={[styles.categoryLabel, isActive && styles.categoryLabelActive]}>
-                  {item.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <View style={styles.editorialBlock}>
+          <Text style={styles.editorialEyebrow}>Sélection du jour</Text>
+          <Text style={styles.editorialTitle}>Choisis vite, commande mieux.</Text>
+          <Text style={styles.editorialSubtitle}>Filtres simples, cartes claires, détails visibles avant même d’ouvrir la fiche.</Text>
+          <View style={styles.editorialMetrics}>
+            <View style={styles.editorialMetricPill}>
+              <Text style={styles.editorialMetricValue}>{chefs.length}</Text>
+              <Text style={styles.editorialMetricLabel}>adresses</Text>
+            </View>
+            <View style={styles.editorialMetricPill}>
+              <Text style={styles.editorialMetricValue}>{onlineCount}</Text>
+              <Text style={styles.editorialMetricLabel}>en ligne</Text>
+            </View>
+          </View>
+        </View>
 
-        {/* Filter chips */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filtersRow}
         >
-          {FILTERS.map((f) => (
-            <Pressable
-              key={f}
-              style={[styles.filterChip, selectedFilter === f && styles.filterChipActive]}
-              onPress={() => setSelectedFilter(f)}
-            >
-              <Text style={[styles.filterText, selectedFilter === f && styles.filterTextActive]}>{f}</Text>
-            </Pressable>
+          {CATEGORIES.map((item) => (
+            <FilterChip
+              key={item.id}
+              label={item.label}
+              emoji={item.emoji}
+              active={selectedFilter === item.filter}
+              onPress={() => setSelectedFilter(item.filter)}
+            />
           ))}
         </ScrollView>
 
-        {/* ── Content body ── */}
         {isLoadingChefs ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={Colors.light.tint} size="large" />
-            <Text style={styles.loadingText}>Chargement des cuisinières...</Text>
+            <Text style={styles.loadingText}>Chargement des cuisines...</Text>
           </View>
-
-        ) : isFiltering ? (
-          /* Search / filter results */
-          filtered.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Feather name="search" size={40} color={Colors.light.tabIconDefault} />
-              <Text style={styles.emptyTitle}>Aucun résultat</Text>
-              <Text style={styles.emptyDesc}>Essayez un autre mot-clé ou filtre</Text>
-            </View>
-          ) : (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>
-                  {filtered.length} résultat{filtered.length > 1 ? "s" : ""}
-                </Text>
-                <View style={styles.sectionBadge}>
-                  <Text style={styles.sectionBadgeText}>{selectedFilter !== "Toutes" ? selectedFilter : "Recherche"}</Text>
-                </View>
-              </View>
-              <View style={styles.chefList}>
-                {filtered.map((chef) => (
-                  <ChefRow
-                    key={chef.id}
-                    chef={chef}
-                    isFavorite={favorites.includes(chef.id)}
-                    onFavoriteToggle={() => toggleFavorite(chef.id)}
-                  />
-                ))}
-              </View>
-            </View>
-          )
-
+        ) : filteredChefs.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>🔎</Text>
+            <Text style={styles.emptyTitle}>Aucun résultat</Text>
+            <Text style={styles.emptyDesc}>Essaie un autre plat, une autre cuisine ou un autre quartier.</Text>
+            <Pressable
+              style={styles.emptyButton}
+              onPress={() => {
+                setQuery("");
+                setSelectedFilter(null);
+              }}
+            >
+              <Text style={styles.emptyButtonText}>Réinitialiser</Text>
+            </Pressable>
+          </View>
         ) : (
-          /* Browse mode — rich sectioned layout */
           <>
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>A decouvrir</Text>
-                <Pressable onPress={() => setSelectedFilter("Toutes")}>
-                  <Text style={styles.sectionLink}>Highlights</Text>
-                </Pressable>
+            {!isFiltering && featuredChef ? (
+              <View style={styles.featuredWrap}>
+                <Text style={styles.sectionLabel}>Adresse en vue</Text>
+                <RestaurantCard
+                  chef={featuredChef}
+                  isFavorite={favorites.includes(featuredChef.id)}
+                  onFavoriteToggle={() => toggleFavorite(featuredChef.id)}
+                />
               </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.spotlightRow}
-              >
-                {spotlightChefs.map((chef) => (
-                  <ChefSpotlightCard
-                    key={chef.id}
-                    chef={chef}
-                    isFavorite={favorites.includes(chef.id)}
-                    onFavoriteToggle={() => toggleFavorite(chef.id)}
-                  />
-                ))}
-              </ScrollView>
-            </View>
+            ) : null}
 
-            {/* En ligne maintenant */}
-            {onlineChefs.length > 0 && (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>En ligne maintenant</Text>
-                  <Pressable onPress={() => setSelectedFilter("Toutes")}>
-                    <Text style={styles.sectionLink}>Voir tout</Text>
+            <View style={styles.resultsSection}>
+              <View style={styles.resultsHeader}>
+                <Text style={styles.resultsTitle}>
+                  {isFiltering ? `${filteredChefs.length} résultat${filteredChefs.length > 1 ? "s" : ""}` : "Toutes les adresses"}
+                </Text>
+                {selectedFilter !== null ? (
+                  <Pressable style={styles.clearFilterPill} onPress={() => setSelectedFilter(null)}>
+                    <Text style={styles.clearFilterText}>{selectedFilter}</Text>
+                    <Feather name="x" size={13} color={Colors.light.tint} />
                   </Pressable>
-                </View>
-                <View style={styles.chefList}>
-                  {onlineChefs.map((chef) => (
-                    <ChefRow
+                ) : null}
+              </View>
+
+              <View style={styles.cardList}>
+                {filteredChefs.map((chef, index) => {
+                  if (!isFiltering && featuredChef && chef.id === featuredChef.id && index === 0) {
+                    return null;
+                  }
+
+                  return (
+                    <RestaurantCard
                       key={chef.id}
                       chef={chef}
                       isFavorite={favorites.includes(chef.id)}
                       onFavoriteToggle={() => toggleFavorite(chef.id)}
                     />
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* Les plus populaires */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Sélection populaire</Text>
-                <Pressable onPress={() => setSelectedFilter("Toutes")}>
-                  <Text style={styles.sectionLink}>Voir tout</Text>
-                </Pressable>
-              </View>
-              <View style={styles.chefList}>
-                {popularChefs.map((chef) => (
-                  <ChefRow
-                    key={chef.id}
-                    chef={chef}
-                    isFavorite={favorites.includes(chef.id)}
-                    onFavoriteToggle={() => toggleFavorite(chef.id)}
-                  />
-                ))}
-              </View>
-            </View>
-
-            {/* Toutes les cuisinières */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Toutes les cuisinières</Text>
-                <View style={styles.sectionBadge}>
-                  <Text style={styles.sectionBadgeText}>{allSorted.length}</Text>
-                </View>
-              </View>
-              <View style={styles.chefList}>
-                {allSorted.map((chef) => (
-                  <ChefRow
-                    key={chef.id}
-                    chef={chef}
-                    isFavorite={favorites.includes(chef.id)}
-                    onFavoriteToggle={() => toggleFavorite(chef.id)}
-                  />
-                ))}
+                  );
+                })}
               </View>
             </View>
           </>
@@ -431,101 +329,121 @@ export default function SearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.light.background },
-
-  // ── Header ──────────────────────────────────────────────────────────
+  container: {
+    flex: 1,
+    backgroundColor: Colors.light.background,
+  },
   header: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 6,
     paddingBottom: 14,
     backgroundColor: Colors.light.background,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.light.divider,
-  },
-  headerTop: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    marginBottom: 12,
   },
   title: {
-    fontSize: 26,
+    fontSize: 28,
+    lineHeight: 34,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.text,
-    lineHeight: 32,
   },
   subtitle: {
+    marginTop: 4,
     fontSize: 13,
+    lineHeight: 19,
     fontFamily: "Poppins_400Regular",
     color: Colors.light.textSecondary,
-    marginTop: 1,
+    maxWidth: 310,
   },
   searchBox: {
+    marginTop: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     backgroundColor: Colors.light.card,
-    borderRadius: 14,
+    borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
     shadowColor: Colors.light.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.6,
-    shadowRadius: 8,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 2,
   },
   searchInput: {
     flex: 1,
-    fontFamily: "Poppins_400Regular",
-    fontSize: 14,
-    color: Colors.light.text,
     padding: 0,
+    fontSize: 14,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.text,
   },
-
-  // ── Categories (emoji shortcuts) ──────────────────────────────────
-  categoriesRow: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 4, gap: 12 },
-  categoryItem: { alignItems: "center", width: 68, gap: 6 },
-  categoryIconWrap: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: Colors.light.card,
+  editorialBlock: {
+    marginHorizontal: 16,
+    marginTop: 6,
+    borderRadius: 24,
+    padding: 18,
+    backgroundColor: Colors.light.backgroundSecondary,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: Colors.light.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 2,
+    gap: 8,
   },
-  categoryIconWrapActive: {
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderColor: Colors.light.tint,
-    borderWidth: 2,
-  },
-  categoryEmoji: { fontSize: 26 },
-  categoryLabel: {
+  editorialEyebrow: {
     fontSize: 11,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tint,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  editorialTitle: {
+    fontSize: 24,
+    lineHeight: 28,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.text,
+    maxWidth: 240,
+  },
+  editorialSubtitle: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.textSecondary,
+    maxWidth: 300,
+  },
+  editorialMetrics: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  editorialMetricPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(255,255,255,0.72)",
+  },
+  editorialMetricValue: {
+    fontSize: 13,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.text,
+  },
+  editorialMetricLabel: {
+    fontSize: 12,
     fontFamily: "Poppins_500Medium",
     color: Colors.light.textSecondary,
-    textAlign: "center",
-    lineHeight: 15,
   },
-  categoryLabelActive: {
-    color: Colors.light.tint,
-    fontFamily: "Poppins_600SemiBold",
+  filtersRow: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    gap: 10,
   },
-
-  // ── Filter chips ──────────────────────────────────────────────────
-  filtersRow: { paddingHorizontal: 20, paddingVertical: 12, gap: 8, alignItems: "center" },
   filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
     backgroundColor: Colors.light.card,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
@@ -534,386 +452,250 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.tint,
     borderColor: Colors.light.tint,
   },
-  filterText: {
+  filterChipEmoji: {
+    fontSize: 14,
+  },
+  filterChipText: {
     fontSize: 12,
-    fontFamily: "Poppins_500Medium",
+    fontFamily: "Poppins_600SemiBold",
     color: Colors.light.textSecondary,
   },
-  filterTextActive: {
+  filterChipTextActive: {
     color: "#fff",
-    fontFamily: "Poppins_600SemiBold",
   },
-
-  // ── Sections ─────────────────────────────────────────────────────
-  section: { marginTop: 8, paddingBottom: 4 },
-  sectionHeader: {
+  featuredWrap: {
+    marginTop: 18,
+  },
+  sectionLabel: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tint,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  resultsSection: {
+    marginTop: 18,
+  },
+  resultsHeader: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    marginBottom: 12,
+    gap: 12,
   },
-  sectionTitle: {
+  resultsTitle: {
+    flex: 1,
     fontSize: 18,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.text,
-    letterSpacing: -0.3,
   },
-  sectionLink: {
-    fontSize: 13,
+  clearFilterPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: Colors.light.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: Colors.light.tint,
+  },
+  clearFilterText: {
+    fontSize: 12,
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.tint,
   },
-  sectionBadge: {
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+  cardList: {
+    paddingHorizontal: 16,
+    gap: 16,
   },
-  sectionBadgeText: {
-    fontSize: 12,
-    fontFamily: "Poppins_500Medium",
-    color: Colors.light.textTertiary,
-  },
-  spotlightRow: {
-    paddingHorizontal: 20,
-    gap: 14,
-    paddingBottom: 2,
-  },
-  spotlightCard: {
-    width: 232,
+  restaurantCard: {
     backgroundColor: Colors.light.card,
-    borderRadius: 24,
+    borderRadius: 18,
+    overflow: "hidden",
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
-    overflow: "hidden",
     shadowColor: Colors.light.shadow,
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.45,
-    shadowRadius: 12,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    elevation: 3,
   },
-  spotlightMedia: {
+  restaurantCardMedia: {
     position: "relative",
   },
-  spotlightImage: {
+  restaurantCardImage: {
     width: "100%",
-    height: 156,
-    justifyContent: "flex-end",
-  },
-  spotlightImageStyle: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  spotlightFallback: {
-    alignItems: "center",
+    height: 184,
     justifyContent: "center",
+    alignItems: "center",
   },
-  spotlightInitials: {
-    fontSize: 24,
-    fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.92)",
+  restaurantCardImageStyle: {
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
   },
-  spotlightOverlay: {
+  restaurantCardOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(26,18,10,0.18)",
+    backgroundColor: "rgba(26,18,10,0.14)",
   },
-  spotlightHeart: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.92)",
+  restaurantCardFallback: {
+    backgroundColor: Colors.light.tint,
   },
-  spotlightBadgeRow: {
+  restaurantCardInitials: {
+    fontSize: 30,
+    fontFamily: "Poppins_700Bold",
+    color: "rgba(255,255,255,0.94)",
+  },
+  restaurantCardTopBar: {
     position: "absolute",
-    left: 10,
-    right: 10,
-    bottom: 10,
+    top: 12,
+    left: 12,
+    right: 12,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
   },
-  spotlightStatusBadge: {
+  statusBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(255,255,255,0.94)",
     borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
   },
-  spotlightStatusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: Colors.light.success,
-  },
-  spotlightStatusText: {
+  statusBadgeText: {
     fontSize: 11,
     fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.text,
   },
-  spotlightVerifiedBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  favoriteButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.94)",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,243,230,0.96)",
   },
-  spotlightBody: {
-    padding: 14,
-    gap: 6,
+  restaurantCardContent: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 13,
   },
-  spotlightTitleRow: {
+  restaurantCardHeaderRow: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
-  },
-  spotlightName: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.text,
-  },
-  spotlightRating: {
-    flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 10,
+    marginBottom: 4,
   },
-  spotlightRatingText: {
-    fontSize: 12,
-    fontFamily: "Poppins_600SemiBold",
+  restaurantCardTitle: {
+    flex: 1,
     color: Colors.light.text,
+    fontSize: 16,
+    fontFamily: "Poppins_600SemiBold",
   },
-  spotlightSpecialty: {
+  restaurantCardSponsor: {
+    color: Colors.light.textTertiary,
+    fontSize: 12,
+    fontFamily: "Poppins_500Medium",
+  },
+  restaurantCardSubtitle: {
+    color: Colors.light.textSecondary,
+    fontSize: 13,
+    fontFamily: "Poppins_400Regular",
+  },
+  restaurantCardMetaRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  restaurantCardMetaText: {
+    flex: 1,
+    color: Colors.light.textSecondary,
+    fontSize: 13,
+    fontFamily: "Poppins_500Medium",
+  },
+  restaurantCardSponsorMuted: {
+    color: Colors.light.textTertiary,
     fontSize: 12,
     fontFamily: "Poppins_400Regular",
-    color: Colors.light.textSecondary,
   },
-  spotlightMetaRow: {
+  restaurantCardBottomRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  restaurantCardLocationRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-  },
-  spotlightMetaText: {
     flex: 1,
-    fontSize: 11,
-    fontFamily: "Poppins_400Regular",
-    color: Colors.light.textTertiary,
   },
-  spotlightDishPill: {
-    alignSelf: "flex-start",
-    marginTop: 4,
+  restaurantCardLocation: {
+    flex: 1,
+    color: Colors.light.textTertiary,
+    fontSize: 12,
+    fontFamily: "Poppins_400Regular",
+  },
+  restaurantCardDishPill: {
+    maxWidth: "48%",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: Colors.light.backgroundSecondary,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    maxWidth: "100%",
   },
-  spotlightDishText: {
-    fontSize: 10,
-    fontFamily: "Poppins_500Medium",
+  restaurantCardDishText: {
     color: Colors.light.text,
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
   },
-  // ── Chef list (vertical full-width rows) ─────────────────────────
-  chefList: {
-    marginHorizontal: 20,
+  loadingState: {
+    alignItems: "center",
+    paddingTop: 72,
     gap: 12,
   },
-  chefRow: {
-    flexDirection: "row",
-    alignItems: "stretch",
-    padding: 14,
-    gap: 14,
-    backgroundColor: Colors.light.card,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    shadowColor: Colors.light.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 12,
-    elevation: 2,
-  },
-  chefRowMedia: {
-    width: 108,
-    position: "relative",
-    justifyContent: "center",
-  },
-  chefRowAvatar: {
-    width: 108,
-    height: 108,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  chefRowAvatarImg: {
-    width: 108,
-    height: 108,
-    borderRadius: 24,
-  },
-  chefRowMediaOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(26,18,10,0.16)",
-  },
-  chefRowInitials: {
-    fontSize: 18,
-    fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.9)",
-  },
-  chefRowOnlineDot: {
-    position: "absolute",
-    bottom: 2,
-    right: 2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: "#27AE60",
-    borderWidth: 2,
-    borderColor: Colors.light.card,
-  },
-  chefRowAvatarBadge: {
-    position: "absolute",
-    left: 8,
-    bottom: 8,
-  },
-  chefRowAvatarBadgeImg: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.82)",
-  },
-  chefRowAvatarBadgeFallback: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.82)",
-  },
-  chefRowAvatarBadgeText: {
-    fontSize: 10,
-    fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.9)",
-  },
-  chefRowPhotoTag: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    backgroundColor: "rgba(255,197,77,0.96)",
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  chefRowPhotoTagText: {
-    fontSize: 10,
-    fontFamily: "Poppins_700Bold",
-    color: "#1A120A",
-  },
-  chefRowBody: { flex: 1, gap: 5, justifyContent: "center" },
-  chefRowTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  chefRowName: {
-    flex: 1,
-    fontSize: 16,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.text,
-    marginRight: 8,
-  },
-  chefRowRating: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-  },
-  chefRowRatingText: {
-    fontSize: 12,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.text,
-  },
-  chefRowSpecialty: {
-    fontSize: 13,
-    fontFamily: "Poppins_400Regular",
-    color: Colors.light.textSecondary,
-  },
-  chefRowMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    flexWrap: "wrap",
-    marginTop: 1,
-  },
-  chefRowMetaText: {
-    fontSize: 11,
-    fontFamily: "Poppins_400Regular",
-    color: Colors.light.textTertiary,
-  },
-  chefRowPrice: {
-    fontSize: 11,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.tint,
-  },
-  chefRowDishPill: {
-    alignSelf: "flex-start",
-    marginTop: 2,
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    maxWidth: "100%",
-  },
-  chefRowDishPillText: {
-    fontSize: 10,
-    fontFamily: "Poppins_500Medium",
-    color: Colors.light.text,
-  },
-  chefRowDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: Colors.light.cardBorder,
-    marginHorizontal: 1,
-  },
-  chefRowRight: {
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 4,
-  },
-  chefRowHeart: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  // ── States ──────────────────────────────────────────────────────
-  loadingState: { alignItems: "center", paddingTop: 60, gap: 12 },
   loadingText: {
     fontSize: 13,
     fontFamily: "Poppins_400Regular",
     color: Colors.light.textSecondary,
   },
-  emptyState: { alignItems: "center", paddingTop: 60, gap: 10, paddingHorizontal: 40 },
+  emptyState: {
+    alignItems: "center",
+    paddingTop: 72,
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  emptyIcon: {
+    fontSize: 40,
+  },
   emptyTitle: {
     fontSize: 18,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.text,
   },
   emptyDesc: {
+    textAlign: "center",
     fontSize: 13,
+    lineHeight: 19,
     fontFamily: "Poppins_400Regular",
     color: Colors.light.textSecondary,
-    textAlign: "center",
+  },
+  emptyButton: {
+    marginTop: 8,
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    backgroundColor: Colors.light.tint,
+  },
+  emptyButtonText: {
+    fontSize: 13,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#fff",
   },
 });

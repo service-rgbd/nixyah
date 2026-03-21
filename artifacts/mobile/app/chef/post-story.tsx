@@ -14,6 +14,7 @@ import {
   Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useVideoPlayer, VideoView } from "expo-video";
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
 import * as ImagePicker from "expo-image-picker";
@@ -36,7 +37,13 @@ export default function PostStoryScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+  const [videoDurationSeconds, setVideoDurationSeconds] = useState<number | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const storyVideoPlayer = useVideoPlayer(videoUri ?? null, (player) => {
+    player.loop = true;
+    player.muted = true;
+  });
 
   const handlePost = async () => {
     if (!caption.trim()) {
@@ -53,6 +60,8 @@ export default function PostStoryScreen() {
         emoji: selectedEmoji,
         bgColor: selectedColor,
         imageUrl: imageUri ?? undefined,
+        videoUrl: videoUri ?? undefined,
+        videoDurationSeconds,
       });
       router.back();
     } catch (e: any) {
@@ -62,22 +71,47 @@ export default function PostStoryScreen() {
     }
   };
 
-  const pickImage = async () => {
+  const pickMedia = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return setError("Autorisez l'accès aux photos pour ajouter une image");
+      if (!perm.granted) return setError("Autorisez l'accès aux photos pour ajouter un media");
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
+        mediaTypes: ["images", "videos"],
         quality: 0.8,
       });
       if (res.canceled) return;
       const asset = Array.isArray(res.assets) && res.assets.length > 0 ? res.assets[0] : undefined;
       const uri = asset?.uri;
       if (!uri) return;
+      const assetType = asset?.type;
+      const assetDurationSeconds = typeof asset?.duration === "number" ? asset.duration / 1000 : null;
+      const fileSize = typeof asset?.fileSize === "number" ? asset.fileSize : null;
+      if (assetType === "video") {
+        if (assetDurationSeconds && assetDurationSeconds > 10) {
+          setError("La video de story doit durer 10 secondes maximum");
+          return;
+        }
+        if (fileSize && fileSize > 100 * 1024 * 1024) {
+          setError("La video de story ne doit pas depasser 100 Mo");
+          return;
+        }
+      }
       setUploadingImage(true);
-      const filename = asset?.fileName ?? uri.split('/').pop() ?? `story-${Date.now()}.jpg`;
+      const filename = asset?.fileName ?? uri.split('/').pop() ?? `story-${Date.now()}.${assetType === "video" ? "mp4" : "jpg"}`;
       const extension = filename.split('.').pop()?.toLowerCase();
-      const contentType = asset?.mimeType ?? (extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg');
+      const contentType = asset?.mimeType ?? (assetType === "video"
+        ? extension === 'mov' ? 'video/quicktime' : extension === 'webm' ? 'video/webm' : 'video/mp4'
+        : extension === 'png'
+          ? 'image/png'
+          : extension === 'webp'
+            ? 'image/webp'
+            : extension === 'heic'
+              ? 'image/heic'
+              : extension === 'heif'
+                ? 'image/heif'
+                : extension === 'jpg'
+                  ? 'image/jpg'
+                  : 'image/jpeg');
       const { publicUrl } = await uploadFile({
         fileUri: uri,
         filename,
@@ -85,10 +119,18 @@ export default function PostStoryScreen() {
         purpose: "story",
         token: token ?? undefined,
       });
-      setImageUri(publicUrl ?? null);
+      if (assetType === "video") {
+        setVideoUri(publicUrl ?? null);
+        setVideoDurationSeconds(assetDurationSeconds ?? null);
+        setImageUri(null);
+      } else {
+        setImageUri(publicUrl ?? null);
+        setVideoUri(null);
+        setVideoDurationSeconds(null);
+      }
     } catch (err) {
-      console.warn('story image upload failed', err);
-      setError('Impossible d\'uploader l\'image');
+      console.warn('story media upload failed', err);
+      setError('Impossible d\'uploader le media');
     } finally {
       setUploadingImage(false);
     }
@@ -119,8 +161,12 @@ export default function PostStoryScreen() {
           <View style={[styles.previewCard, { backgroundColor: selectedColor }]}>
             {imageUri ? (
               <Image source={{ uri: imageUri }} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 200, borderTopLeftRadius: 24, borderTopRightRadius: 24 }} />
+            ) : videoUri ? (
+              <View style={styles.videoPreviewWrap}>
+                <VideoView player={storyVideoPlayer} style={styles.videoPreview} contentFit="cover" allowsFullscreen={false} nativeControls={false} />
+              </View>
             ) : null}
-            <Text style={styles.previewEmoji}>{selectedEmoji}</Text>
+            {!videoUri ? <Text style={styles.previewEmoji}>{selectedEmoji}</Text> : null}
             <Text style={styles.previewCaption} numberOfLines={3}>
               {caption || "Votre description ici..."}
             </Text>
@@ -224,9 +270,10 @@ export default function PostStoryScreen() {
               ))}
             </View>
             <View style={{ marginTop: 8 }}>
-              <Pressable style={[styles.publishBtn, { backgroundColor: uploadingImage ? '#ccc' : Colors.light.backgroundSecondary }]} onPress={pickImage}>
-                {uploadingImage ? <ActivityIndicator color="#fff" /> : <Text style={{ color: Colors.light.text }}>{imageUri ? 'Modifier l\'image' : 'Ajouter une image'}</Text>}
+              <Pressable style={[styles.publishBtn, { backgroundColor: uploadingImage ? '#ccc' : Colors.light.backgroundSecondary }]} onPress={pickMedia}>
+                {uploadingImage ? <ActivityIndicator color="#fff" /> : <Text style={{ color: Colors.light.text }}>{videoUri ? 'Modifier la video' : imageUri ? 'Modifier l\'image' : 'Ajouter une image ou video'}</Text>}
               </Pressable>
+              <Text style={styles.mediaHint}>Video story: 10 secondes maximum, taille maximale 100 Mo.</Text>
             </View>
           </View>
         </View>
@@ -275,6 +322,8 @@ const styles = StyleSheet.create({
   previewAvatarText: { fontSize: 11, fontFamily: "Poppins_700Bold", color: "#fff" },
   previewAuthorName: { fontSize: 12, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.85)" },
   previewHint: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
+  videoPreviewWrap: { position: 'absolute', top: 0, left: 0, right: 0, height: 200, overflow: 'hidden', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+  videoPreview: { width: '100%', height: '100%' },
   form: { padding: 20, gap: 16 },
   errorBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FEF2F2", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "#FCA5A5" },
   errorText: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.error, flex: 1 },
@@ -290,6 +339,7 @@ const styles = StyleSheet.create({
   emojiBtnActive: { borderColor: Colors.light.tint, backgroundColor: Colors.light.backgroundSecondary, borderWidth: 2 },
   emoji: { fontSize: 22 },
   colorsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  mediaHint: { marginTop: 10, fontSize: 11, lineHeight: 16, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   colorDot: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   colorDotSelected: { borderWidth: 2.5, borderColor: Colors.light.text },
 });

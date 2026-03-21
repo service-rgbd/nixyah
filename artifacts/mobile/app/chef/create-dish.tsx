@@ -44,13 +44,16 @@ export default function CreateDishScreen() {
   }, [editingDish]);
 
   const inferContentType = useCallback((filename: string, mimeType?: string | null) => {
-    if (mimeType && ["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+    if (mimeType && ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif"].includes(mimeType)) {
       return mimeType;
     }
 
     const extension = filename.split(".").pop()?.toLowerCase();
     if (extension === "png") return "image/png";
     if (extension === "webp") return "image/webp";
+    if (extension === "heic") return "image/heic";
+    if (extension === "heif") return "image/heif";
+    if (extension === "jpg") return "image/jpg";
     return "image/jpeg";
   }, []);
 

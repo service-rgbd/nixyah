@@ -83,6 +83,29 @@ export default function ProfileScreen() {
     readyOrders: chefOrders.filter((order) => order.status === "ready").length,
     deliveredOrders: chefOrders.filter((order) => order.status === "delivered").length,
   }), [chefOrders]);
+  const chefDashboardGroups = useMemo(() => ([
+    {
+      title: "Pilotage",
+      items: [
+        { icon: "shopping-bag" as const, label: "Commandes", sub: `${chefSummary.pendingOrders} a traiter maintenant`, onPress: () => router.push("/(tabs)/orders") },
+        { icon: "bar-chart-2" as const, label: "Performance", sub: `${chefSummary.deliveredOrders} finalisees`, onPress: () => router.push("/chef/stats") },
+      ],
+    },
+    {
+      title: "Catalogue",
+      items: [
+        { icon: "package" as const, label: "Menu", sub: "Plats, prix et visuels", onPress: () => router.push("/chef/my-dishes") },
+        { icon: "camera" as const, label: "Story du jour", sub: "Image ou video 10 sec", onPress: () => router.push("/chef/post-story") },
+      ],
+    },
+    {
+      title: "Relation client",
+      items: [
+        { icon: "bell" as const, label: "Notifications", sub: "Commandes, retours et alertes", onPress: () => router.push("/chef/notifications") },
+        { icon: "help-circle" as const, label: "Aide", sub: "Questions frequentes et support", onPress: () => router.push("/(tabs)/help") },
+      ],
+    },
+  ]), [chefSummary.deliveredOrders, chefSummary.pendingOrders]);
 
   const handleMenuPress = (item: MenuItem) => {
     if (item.label === "Publier une story") {
@@ -126,7 +149,20 @@ export default function ProfileScreen() {
 
       const asset = res.assets[0];
       const filename = asset.fileName ?? asset.uri.split("/").pop() ?? `restaurant-${Date.now()}.jpg`;
-      const contentType = asset.mimeType ?? "image/jpeg";
+      const extension = filename.split(".").pop()?.toLowerCase();
+      const contentType = asset.mimeType ?? (
+        extension === "png"
+          ? "image/png"
+          : extension === "webp"
+            ? "image/webp"
+            : extension === "heic"
+              ? "image/heic"
+              : extension === "heif"
+                ? "image/heif"
+                : extension === "jpg"
+                  ? "image/jpg"
+                  : "image/jpeg"
+      );
 
       setUploadingAvatar(true);
       const { publicUrl } = await uploadFile({
@@ -370,7 +406,7 @@ export default function ProfileScreen() {
               <Text style={styles.profileLocation}>📍 {user.location}</Text>
               <Text style={styles.profilePhotoHint}>
                 {isChef
-                  ? "Ajoutez la photo de votre restaurant pour inspirer confiance dès la première vue."
+                  ? "Ajoutez la photo du restaurant et gardez un tableau de bord simple, centré sur l'essentiel."
                   : "Votre espace client est limité aux commandes, adresses, offres et support."}
               </Text>
             </View>
@@ -380,7 +416,7 @@ export default function ProfileScreen() {
             <View style={styles.chefHeroCard}>
               <View style={styles.chefHeroHead}>
                 <View>
-                  <Text style={styles.chefHeroEyebrow}>Espace restaurant</Text>
+                  <Text style={styles.chefHeroEyebrow}>Dashboard cuisine</Text>
                   <Text style={styles.chefHeroTitle}>{user.chefProfile?.specialty ?? "Votre cuisine"}</Text>
                 </View>
                 <View style={styles.verifiedBadge}>
@@ -389,8 +425,8 @@ export default function ProfileScreen() {
                 </View>
               </View>
 
-              <Text style={styles.chefHeroDescription} numberOfLines={3}>
-                {user.chefProfile?.bio || "Présentez votre univers culinaire, vos spécialités et votre rythme de service pour rassurer vos clientes."}
+              <Text style={styles.chefHeroDescription} numberOfLines={2}>
+                {user.chefProfile?.bio || "Pilotez les commandes, le menu et la story du jour depuis des groupes d'actions plus clairs."}
               </Text>
 
               <View style={styles.chefMetricRow}>
@@ -429,38 +465,32 @@ export default function ProfileScreen() {
         </Gradient>
 
         {isChef ? (
-          <View style={styles.actionPanel}>
-            <Pressable style={styles.actionCard} onPress={() => router.push("/(tabs)/orders")}>
-              <Gradient colors={[Colors.light.tint, Colors.light.tintDark]} style={styles.actionIconWrap}>
-                <Feather name="shopping-bag" size={18} color="#fff" />
-              </Gradient>
-              <Text style={styles.actionTitle}>Commandes</Text>
-              <Text style={styles.actionSub}>Priorités, statuts et livraison</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionCard} onPress={() => router.push("/chef/my-dishes")}>
-              <Gradient colors={["#8B5CF6", "#6D28D9"]} style={styles.actionIconWrap}>
-                <Feather name="package" size={18} color="#fff" />
-              </Gradient>
-              <Text style={styles.actionTitle}>Mon menu</Text>
-              <Text style={styles.actionSub}>Ajouter, modifier ou retirer un plat</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionCard} onPress={() => router.push("/chef/post-story")}>
-              <Gradient colors={["#D97706", "#B45309"]} style={styles.actionIconWrap}>
-                <Feather name="camera" size={18} color="#fff" />
-              </Gradient>
-              <Text style={styles.actionTitle}>Story du jour</Text>
-              <Text style={styles.actionSub}>Mettre en avant l'instant présent</Text>
-            </Pressable>
-
-            <Pressable style={styles.actionCard} onPress={() => router.push("/chef/stats")}>
-              <Gradient colors={["#059669", "#047857"]} style={styles.actionIconWrap}>
-                <Feather name="bar-chart-2" size={18} color="#fff" />
-              </Gradient>
-              <Text style={styles.actionTitle}>Performance</Text>
-              <Text style={styles.actionSub}>Chiffres, panier moyen, avis</Text>
-            </Pressable>
+          <View style={styles.chefDashboardWrap}>
+            {chefDashboardGroups.map((group) => (
+              <View key={group.title} style={styles.clientSectionBlock}>
+                <Text style={styles.clientSectionHeading}>{group.title}</Text>
+                <View style={styles.clientSectionCard}>
+                  {group.items.map((item, index) => (
+                    <Pressable
+                      key={item.label}
+                      style={[styles.clientMenuItem, index === group.items.length - 1 && styles.clientMenuItemLast]}
+                      onPress={item.onPress}
+                    >
+                      <View style={styles.clientMenuLeft}>
+                        <View style={styles.clientMenuIconWrap}>
+                          <Feather name={item.icon} size={18} color={Colors.light.tint} />
+                        </View>
+                        <View style={styles.clientMenuTextWrap}>
+                          <Text style={styles.clientMenuLabel}>{item.label}</Text>
+                          <Text style={styles.clientMenuSub}>{item.sub}</Text>
+                        </View>
+                      </View>
+                      <Feather name="chevron-right" size={18} color={Colors.light.textTertiary} />
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ))}
           </View>
         ) : !isCourier ? (
           <View style={styles.actionPanel}>
@@ -524,7 +554,7 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        <View style={styles.menuSection}>
+        {!isChef ? <View style={styles.menuSection}>
           {menuItems.map((item, idx) => (
             <Pressable
               key={idx}
@@ -541,7 +571,7 @@ export default function ProfileScreen() {
               <Feather name="chevron-right" size={16} color={Colors.light.tabIconDefault} />
             </Pressable>
           ))}
-        </View>
+        </View> : null}
 
         <Pressable style={styles.logoutBtn} onPress={handleLogout} disabled={loggingOut}>
           {loggingOut ? (
@@ -706,6 +736,7 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, textAlign: "center" },
   statDivider: { width: 1, height: 32, backgroundColor: Colors.light.divider },
   actionPanel: { paddingHorizontal: 20, paddingTop: 18, gap: 12 },
+  chefDashboardWrap: { paddingTop: 10 },
   actionCard: { backgroundColor: Colors.light.card, borderRadius: 18, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 14, gap: 10 },
   actionIconWrap: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   actionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },

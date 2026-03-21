@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp, Story } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
+import { useVideoPlayer, VideoView } from "expo-video";
 
 export default function StoryViewer() {
   const params = useLocalSearchParams();
@@ -30,6 +31,9 @@ export default function StoryViewer() {
   if (!story) return null;
 
   const bgColor = story.bgColor ?? story.chefCoverColor;
+  const videoPlayer = useVideoPlayer(story.videoUrl ?? null, (player) => {
+    player.loop = true;
+  });
   const cardContent = (
     <>
       <View style={styles.progressRow}>
@@ -69,10 +73,10 @@ export default function StoryViewer() {
 
       <View style={styles.content}>
         <View style={styles.storyBadge}>
-          <Feather name="camera" size={14} color="#fff" />
-          <Text style={styles.storyBadgeText}>Story cuisine</Text>
+          <Feather name={story.videoUrl ? "play-circle" : "camera"} size={14} color="#fff" />
+          <Text style={styles.storyBadgeText}>{story.videoUrl ? "Story video" : "Story cuisine"}</Text>
         </View>
-        <Text style={styles.storyEmoji}>{story.emoji ?? "🍲"}</Text>
+        {!story.videoUrl ? <Text style={styles.storyEmoji}>{story.emoji ?? "🍲"}</Text> : null}
         <Text style={styles.caption}>{story.caption}</Text>
         {!!story.dishName && (
           <Text style={styles.dish}>
@@ -122,6 +126,12 @@ export default function StoryViewer() {
           <View style={[styles.overlay, { backgroundColor: "rgba(26,18,10,0.34)" }]} />
           {cardContent}
         </ImageBackground>
+      ) : story.videoUrl ? (
+        <View style={styles.imageBg}>
+          <VideoView player={videoPlayer} style={styles.videoBg} contentFit="cover" nativeControls={false} allowsFullscreen />
+          <View style={[styles.overlay, { backgroundColor: "rgba(26,18,10,0.34)" }]} />
+          {cardContent}
+        </View>
       ) : (
         <View style={[styles.fallbackBg, { backgroundColor: bgColor }]}>
           <View style={[styles.overlay, { backgroundColor: "rgba(26,18,10,0.22)" }]} />
@@ -135,6 +145,7 @@ export default function StoryViewer() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.text },
   imageBg: { flex: 1 },
+  videoBg: { ...StyleSheet.absoluteFillObject },
   fallbackBg: { flex: 1 },
   overlay: { ...StyleSheet.absoluteFillObject },
   progressRow: {

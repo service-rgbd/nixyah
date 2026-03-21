@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Gradient from "@/components/SafeGradient";
 import Colors from "@/constants/colors";
-import { Chef, useApp } from "@/contexts/AppContext";
+import { Chef, Dish, useApp } from "@/contexts/AppContext";
 
 const courierPromoImage = require("@/assets/images/courier-delivery-illustration.png");
 const cashierPromoImage = require("@/assets/images/login-cashier-illustration.png");
@@ -72,6 +72,8 @@ const PROMOS = [
     title: "Livraison suivie",
     subtitle: "Commandes prises en charge plus rapidement",
     image: courierPromoImage,
+    icon: "bicycle" as IoniconsName,
+    accentColor: Colors.light.accent,
     action: () => router.push("/(tabs)/orders?mode=delivery"),
   },
   {
@@ -79,9 +81,28 @@ const PROMOS = [
     title: "Courses minute",
     subtitle: "Une course, une cheffe et un suivi simple",
     image: cashierPromoImage,
+    icon: "bag-handle" as IoniconsName,
+    accentColor: Colors.light.tint,
     action: () => router.push("/(tabs)/search"),
   },
 ];
+
+type QuickDishItem = {
+  chefId: string;
+  name: string;
+  price: number;
+  imageUrl: string | null;
+};
+
+function getDishImage(dish: Dish) {
+  return dish.imageUrls?.[0] ?? dish.imageUrl ?? null;
+}
+
+function getPrepMinutes(prepTime?: string) {
+  if (!prepTime) return Number.POSITIVE_INFINITY;
+  const match = prepTime.match(/(\d+)/);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
 
 function ServiceIllustration({
   primaryIcon,
@@ -150,15 +171,7 @@ function ServiceBubble({
   );
 }
 
-function SuggestionCard({
-  chef,
-  isFavorite,
-  onFavoriteToggle,
-}: {
-  chef: Chef;
-  isFavorite: boolean;
-  onFavoriteToggle: () => void;
-}) {
+function DiscoveryChefCard({ chef }: { chef: Chef }) {
   const imageUrl = chef.heroImageUrl ?? chef.avatarUrl ?? chef.dishes[0]?.imageUrl ?? null;
   const initials = chef.name
     .split(" ")
@@ -169,35 +182,94 @@ function SuggestionCard({
 
   return (
     <Pressable
-      style={styles.suggestionCard}
+      style={styles.discoveryChefCard}
       onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
     >
-      <View style={styles.suggestionVisualWrap}>
+      <View style={styles.discoveryChefVisualWrap}>
         <View
           style={[
-            styles.suggestionVisual,
+            styles.discoveryChefVisual,
             !imageUrl ? { backgroundColor: chef.coverColor } : null,
           ]}
         >
           {imageUrl ? (
-            <RNImage source={{ uri: imageUrl }} style={styles.suggestionVisualImage} />
+            <RNImage source={{ uri: imageUrl }} style={styles.discoveryChefVisualImage} />
           ) : (
-            <Text style={styles.suggestionInitials}>{initials}</Text>
+            <Text style={styles.discoveryChefInitials}>{initials}</Text>
           )}
         </View>
-        <Pressable style={styles.favoriteButton} onPress={onFavoriteToggle}>
-          <Ionicons
-            name={isFavorite ? "heart" : "heart-outline"}
-            size={14}
-            color={isFavorite ? Colors.light.error : Colors.light.textSecondary}
-          />
-        </Pressable>
       </View>
-      <Text style={styles.suggestionName} numberOfLines={1}>
-        {chef.name}
+      <View style={styles.discoveryChefBody}>
+        <View style={styles.discoveryChefTopRow}>
+          <Text style={styles.discoveryChefName} numberOfLines={1}>
+            {chef.name}
+          </Text>
+          <View style={styles.discoveryChefRatingPill}>
+            <Ionicons name="star" size={10} color="#F7C27B" />
+            <Text style={styles.discoveryChefRatingText}>{chef.rating.toFixed(1)}</Text>
+          </View>
+        </View>
+        <Text style={styles.discoveryChefMeta} numberOfLines={1}>
+          {chef.specialty}
+        </Text>
+        <View style={styles.discoveryChefLocationRow}>
+          <Feather name="map-pin" size={11} color="rgba(255,255,255,0.54)" />
+          <Text style={styles.discoveryChefLocation} numberOfLines={1}>
+            {chef.location.split(",")[0]}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function DiscoveryUtilityCard({
+  title,
+  subtitle,
+  icon,
+  accentColor,
+  action,
+}: {
+  title: string;
+  subtitle: string;
+  icon: IoniconsName;
+  accentColor: string;
+  action: () => void;
+}) {
+  return (
+    <Pressable style={styles.discoveryUtilityCard} onPress={action}>
+      <View style={[styles.discoveryUtilityIconWrap, { backgroundColor: `${accentColor}20` }] }>
+        <Ionicons name={icon} size={18} color={accentColor} />
+      </View>
+      <View style={styles.discoveryUtilityTextBlock}>
+        <Text style={styles.discoveryUtilityTitle}>{title}</Text>
+        <Text style={styles.discoveryUtilitySubtitle} numberOfLines={2}>{subtitle}</Text>
+      </View>
+      <Feather name="arrow-up-right" size={15} color="rgba(255,255,255,0.68)" />
+    </Pressable>
+  );
+}
+
+function QuickDishCard({ item }: { item: QuickDishItem }) {
+  return (
+    <Pressable
+      style={styles.quickDishCard}
+      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: item.chefId } })}
+    >
+      <View style={styles.quickDishVisualWrap}>
+        {item.imageUrl ? (
+          <RNImage source={{ uri: item.imageUrl }} style={styles.quickDishVisual} />
+        ) : (
+          <View style={[styles.quickDishVisual, styles.quickDishVisualFallback]}>
+            <Ionicons name="fast-food" size={28} color={Colors.light.accent} />
+          </View>
+        )}
+      </View>
+      <Text style={styles.quickDishName} numberOfLines={1}>
+        {item.name}
       </Text>
-      <Text style={styles.suggestionMeta} numberOfLines={1}>
-        {chef.specialty}
+      <Text style={styles.quickDishPrice} numberOfLines={1}>
+        {item.price.toLocaleString("fr-FR")} FCFA
       </Text>
     </Pressable>
   );
@@ -205,149 +277,96 @@ function SuggestionCard({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const { chefs, favorites, toggleFavorite, user } = useApp();
+  const { width, height } = useWindowDimensions();
+  const { chefs, user } = useApp();
   const topInset = Platform.OS === "web" ? 64 : insets.top;
   const locationLabel = user?.location || "Abidjan";
-  const bubbleSize = Math.max(112, Math.min(136, Math.floor((width - 88) / 2)));
+  const compactHome = height < 860;
+  const bubbleSize = compactHome
+    ? Math.max(96, Math.min(108, Math.floor((width - 92) / 2)))
+    : Math.max(106, Math.min(122, Math.floor((width - 76) / 2)));
 
-  const recommendedChefs = [...chefs]
-    .sort((a, b) => b.rating - a.rating || b.reviewCount - a.reviewCount)
-    .slice(0, 8);
-
+  const quickDishes: QuickDishItem[] = chefs
+    .flatMap((chef) =>
+      chef.dishes.map((dish) => ({
+        chefId: chef.id,
+        name: dish.name,
+        price: dish.price,
+        imageUrl: getDishImage(dish),
+        prepMinutes: getPrepMinutes(dish.prepTime),
+        isPopular: Boolean(dish.isPopular),
+      }))
+    )
+    .sort((left, right) => {
+      const prepDiff = left.prepMinutes - right.prepMinutes;
+      if (prepDiff !== 0) return prepDiff;
+      const popularDiff = Number(right.isPopular) - Number(left.isPopular);
+      if (popularDiff !== 0) return popularDiff;
+      return left.price - right.price;
+    })
+    .slice(0, 6)
+    .map(({ chefId, name, price, imageUrl }) => ({ chefId, name, price, imageUrl }));
   const onlineCount = chefs.filter((chef) => chef.isOnline).length;
-  const verifiedCount = chefs.filter((chef) => chef.isVerified).length;
-  const paginationDots = Math.max(1, Math.min(3, Math.ceil(recommendedChefs.length / 4)));
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 110 }}
+      <Gradient
+        colors={[Colors.light.accent, Colors.light.tintLight, Colors.light.backgroundSecondary]}
+        style={[styles.heroSection, { paddingTop: topInset + (compactHome ? 6 : 10) }]}
       >
-        <Gradient
-          colors={[Colors.light.accent, Colors.light.tintLight, Colors.light.backgroundSecondary]}
-          style={[styles.heroSection, { paddingTop: topInset + 12 }]}
-        >
-          <View style={styles.heroTopBar}>
-            <Pressable style={styles.locationPill} onPress={() => router.push("/(tabs)/search")}>
-              <Ionicons name="location-outline" size={17} color={Colors.light.text} />
-              <Text style={styles.locationText} numberOfLines={1}>
-                {locationLabel}
-              </Text>
-              <Feather name="chevron-down" size={16} color={Colors.light.text} />
-            </Pressable>
-            <View style={styles.statusChip}>
-              <View style={styles.statusDot} />
-              <Text style={styles.statusChipText}>{onlineCount} en ligne</Text>
-            </View>
-          </View>
-
-          <View style={styles.serviceBubbleGrid}>
-            {SERVICES.map((service) => (
-              <ServiceBubble
-                key={service.id}
-                label={service.label}
-                primaryIcon={service.primaryIcon}
-                secondaryIcon={service.secondaryIcon}
-                accentColor={service.accentColor}
-                action={service.action}
-                bubbleSize={bubbleSize}
-              />
-            ))}
-          </View>
-        </Gradient>
-
-        <View style={styles.discoveryPanel}>
-          <View style={styles.discoveryPanelEdge} />
-
-          <View style={styles.discoveryHeader}>
-            <View>
-              <Text style={styles.discoveryTitle}>Ceci est pour vous</Text>
-              <Text style={styles.discoverySubtitle}>
-                Promos du moment, profils utiles et suggestions simples a parcourir.
-              </Text>
-            </View>
-            <Pressable style={styles.infoButton} onPress={() => router.push("/(tabs)/search")}>
-              <Ionicons name="information-circle-outline" size={20} color="rgba(255,255,255,0.82)" />
-            </Pressable>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.promoCanvasRow}
-          >
-            {PROMOS.map((promo) => (
-              <Pressable key={promo.id} style={styles.promoCanvasCard} onPress={promo.action}>
-                <Gradient
-                  colors={["rgba(247,194,123,0.26)", "rgba(212,97,26,0.10)"]}
-                  style={styles.promoCanvasGlow}
-                />
-                <View style={styles.promoCanvasContent}>
-                  <View style={styles.promoCanvasTextBlock}>
-                    <View style={styles.promoBadge}>
-                      <Text style={styles.promoBadgeText}>Promo</Text>
-                    </View>
-                    <Text style={styles.promoCanvasTitle}>{promo.title}</Text>
-                    <Text style={styles.promoCanvasSubtitle}>{promo.subtitle}</Text>
-                    <View style={styles.promoCanvasCta}>
-                      <Text style={styles.promoCanvasCtaText}>Voir</Text>
-                      <Feather name="arrow-up-right" size={14} color={Colors.light.text} />
-                    </View>
-                  </View>
-                  <View style={styles.promoCanvasArtWrap}>
-                    <View style={styles.promoCanvasArtHalo} />
-                    <RNImage source={promo.image} style={styles.promoCanvasArt} resizeMode="contain" />
-                  </View>
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-
-          <View style={styles.subsectionHeader}>
-            <Text style={styles.subsectionTitle}>Cheffes en vue</Text>
-            <Pressable onPress={() => router.push("/(tabs)/search")}>
-              <Text style={styles.subsectionLink}>Explorer</Text>
-            </Pressable>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.suggestionRow}
-          >
-            {recommendedChefs.map((chef) => (
-              <SuggestionCard
-                key={chef.id}
-                chef={chef}
-                isFavorite={favorites.includes(chef.id)}
-                onFavoriteToggle={() => toggleFavorite(chef.id)}
-              />
-            ))}
-          </ScrollView>
-
-          <View style={styles.paginationRow}>
-            {Array.from({ length: paginationDots }).map((_, index) => (
-              <View
-                key={index}
-                style={[styles.paginationDot, index === 0 ? styles.paginationDotActive : null]}
-              />
-            ))}
-          </View>
-
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>{recommendedChefs.length}</Text>
-              <Text style={styles.summaryLabel}>cheffes mises en avant</Text>
-            </View>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>{verifiedCount}</Text>
-              <Text style={styles.summaryLabel}>profils verifies</Text>
-            </View>
+        <View style={[styles.heroTopBar, compactHome ? styles.heroTopBarCompact : null]}>
+          <Pressable style={styles.locationPill} onPress={() => router.push("/(tabs)/search")}>
+            <Ionicons name="location-outline" size={17} color={Colors.light.text} />
+            <Text style={styles.locationText} numberOfLines={1}>
+              {locationLabel}
+            </Text>
+            <Feather name="chevron-down" size={16} color={Colors.light.text} />
+          </Pressable>
+          <View style={styles.statusChip}>
+            <View style={styles.statusDot} />
+            <Text style={styles.statusChipText}>{onlineCount} en ligne</Text>
           </View>
         </View>
-      </ScrollView>
+
+        <View style={[styles.serviceBubbleGrid, compactHome ? styles.serviceBubbleGridCompact : null]}>
+          {SERVICES.map((service) => (
+            <ServiceBubble
+              key={service.id}
+              label={service.label}
+              primaryIcon={service.primaryIcon}
+              secondaryIcon={service.secondaryIcon}
+              accentColor={service.accentColor}
+              action={service.action}
+              bubbleSize={bubbleSize}
+            />
+          ))}
+        </View>
+      </Gradient>
+
+      <View style={[styles.discoveryPanel, { paddingBottom: Platform.OS === "web" ? 18 : insets.bottom + 8 }]}>
+        <View style={styles.discoveryPanelEdge} />
+        <View style={[styles.discoveryHeader, compactHome ? styles.discoveryHeaderCompact : null]}>
+          <View>
+            <Text style={styles.discoveryTitle}>Pour vous</Text>
+            <Text style={styles.discoverySubtitle}>
+              Plats rapides disponibles maintenant.
+            </Text>
+          </View>
+          <Pressable style={styles.infoButton} onPress={() => router.push("/(tabs)/search")}>
+            <Ionicons name="information-circle-outline" size={20} color="rgba(255,255,255,0.82)" />
+          </Pressable>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.quickDishRow, compactHome ? styles.quickDishRowCompact : null]}
+        >
+          {quickDishes.map((item) => (
+            <QuickDishCard key={`${item.chefId}-${item.name}`} item={item} />
+          ))}
+        </ScrollView>
+      </View>
     </View>
   );
 }
@@ -355,19 +374,23 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    flexDirection: "column",
     backgroundColor: Colors.light.background,
   },
   heroSection: {
+    flex: 1,
     paddingHorizontal: 20,
-    paddingBottom: 92,
-    minHeight: 500,
+    paddingBottom: 26,
   },
   heroTopBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    marginBottom: 42,
+    marginBottom: 20,
+  },
+  heroTopBarCompact: {
+    marginBottom: 16,
   },
   locationPill: {
     flex: 1,
@@ -375,8 +398,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    minHeight: 54,
-    paddingHorizontal: 18,
+    minHeight: 48,
+    paddingHorizontal: 16,
     borderRadius: 27,
     backgroundColor: "rgba(255,250,245,0.72)",
     borderWidth: 1,
@@ -385,7 +408,7 @@ const styles = StyleSheet.create({
   locationText: {
     flex: 1,
     maxWidth: 190,
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.text,
   },
@@ -393,8 +416,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: 20,
     backgroundColor: "rgba(255,250,245,0.4)",
   },
@@ -405,7 +428,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.success,
   },
   statusChipText: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.text,
   },
@@ -413,17 +436,21 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    rowGap: 22,
+    rowGap: 14,
     columnGap: 12,
     paddingHorizontal: 4,
-    paddingTop: 28,
+    paddingTop: 12,
+  },
+  serviceBubbleGridCompact: {
+    rowGap: 12,
+    paddingTop: 8,
   },
   serviceBubbleItem: {
     width: "48%",
     alignItems: "center",
   },
   serviceBubbleOuter: {
-    padding: 8,
+    padding: 9,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,234,192,0.68)",
@@ -461,17 +488,17 @@ const styles = StyleSheet.create({
   },
   illustrationOrb: {
     position: "absolute",
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
   },
   illustrationOrbLeft: {
-    left: 18,
-    top: 26,
+    left: 16,
+    top: 22,
   },
   illustrationOrbRight: {
-    right: 18,
-    bottom: 24,
+    right: 16,
+    bottom: 22,
   },
   illustrationStroke: {
     position: "absolute",
@@ -480,15 +507,15 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   illustrationStrokeOne: {
-    width: 22,
-    top: 28,
-    left: 34,
+    width: 20,
+    top: 24,
+    left: 30,
     transform: [{ rotate: "28deg" }],
   },
   illustrationStrokeTwo: {
-    width: 18,
-    top: 38,
-    right: 34,
+    width: 16,
+    top: 34,
+    right: 30,
     transform: [{ rotate: "-24deg" }],
   },
   primaryBadge: {
@@ -499,8 +526,8 @@ const styles = StyleSheet.create({
   },
   secondaryBadge: {
     position: "absolute",
-    right: 24,
-    bottom: 26,
+    right: 20,
+    bottom: 20,
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -516,8 +543,8 @@ const styles = StyleSheet.create({
   },
   illustrationSpark: {
     position: "absolute",
-    top: 24,
-    right: 30,
+    top: 20,
+    right: 26,
     width: 10,
     height: 10,
     borderRadius: 5,
@@ -526,7 +553,7 @@ const styles = StyleSheet.create({
     marginTop: -10,
     backgroundColor: Colors.light.card,
     borderRadius: 18,
-    paddingHorizontal: 16,
+    paddingHorizontal: 15,
     paddingVertical: 6,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
@@ -539,15 +566,15 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_500Medium",
     color: Colors.light.text,
     textAlign: "center",
-    lineHeight: 17,
+    lineHeight: 16,
   },
   discoveryPanel: {
-    marginTop: -46,
+    marginTop: -32,
     backgroundColor: "#241F1B",
     borderTopLeftRadius: 38,
     borderTopRightRadius: 38,
-    paddingTop: 18,
-    paddingBottom: 26,
+    paddingTop: 8,
+    minHeight: 214,
   },
   discoveryPanelEdge: {
     alignSelf: "center",
@@ -555,7 +582,7 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 999,
     backgroundColor: "rgba(255,255,255,0.14)",
-    marginBottom: 18,
+    marginBottom: 8,
   },
   discoveryHeader: {
     flexDirection: "row",
@@ -563,19 +590,22 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 12,
     paddingHorizontal: 24,
-    paddingBottom: 18,
+    paddingBottom: 10,
+  },
+  discoveryHeaderCompact: {
+    paddingBottom: 8,
   },
   discoveryTitle: {
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: 13,
+    lineHeight: 16,
     fontFamily: "Poppins_700Bold",
     color: "#FFF9F2",
   },
   discoverySubtitle: {
     marginTop: 4,
     maxWidth: 260,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 9,
+    lineHeight: 12,
     fontFamily: "Poppins_400Regular",
     color: "rgba(255,255,255,0.68)",
   },
@@ -589,97 +619,192 @@ const styles = StyleSheet.create({
   },
   promoCanvasRow: {
     paddingHorizontal: 24,
-    gap: 14,
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
-  promoCanvasCard: {
-    width: 286,
-    minHeight: 156,
-    borderRadius: 28,
-    overflow: "hidden",
-    backgroundColor: "#2E2722",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
+  promoCanvasRowCompact: {
+    paddingBottom: 10,
   },
   promoCanvasGlow: {
     ...StyleSheet.absoluteFillObject,
   },
-  promoCanvasContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 18,
-    gap: 12,
-  },
-  promoCanvasTextBlock: {
-    flex: 1,
-    gap: 8,
-  },
   promoBadge: {
     alignSelf: "flex-start",
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     backgroundColor: "rgba(255,255,255,0.1)",
   },
   promoBadgeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.accent,
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
-  promoCanvasTitle: {
-    fontSize: 20,
-    lineHeight: 25,
+  discoveryFeatureCard: {
+    borderRadius: 24,
+    overflow: "hidden",
+    backgroundColor: "#2E2722",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    padding: 14,
+    gap: 12,
+  },
+  discoveryFeatureCardCompact: {
+    padding: 12,
+    gap: 10,
+  },
+  discoveryFeatureHeader: {
+    gap: 6,
+  },
+  discoveryFeatureTitle: {
+    fontSize: 18,
+    lineHeight: 22,
     fontFamily: "Poppins_700Bold",
     color: "#FFF9F2",
   },
-  promoCanvasSubtitle: {
-    fontSize: 12,
-    lineHeight: 18,
+  discoveryFeatureTitleCompact: {
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  discoveryFeatureSubtitle: {
+    fontSize: 11,
+    lineHeight: 16,
     fontFamily: "Poppins_400Regular",
-    color: "rgba(255,255,255,0.72)",
+    color: "rgba(255,255,255,0.68)",
   },
-  promoCanvasCta: {
-    marginTop: 4,
-    flexDirection: "row",
+  discoveryFeatureSubtitleCompact: {
+    fontSize: 10,
+    lineHeight: 15,
+  },
+  quickDishRow: {
+    paddingHorizontal: 24,
+    gap: 12,
+    paddingBottom: 0,
+  },
+  quickDishRowCompact: {
+    gap: 10,
+  },
+  quickDishCard: {
+    width: 84,
     alignItems: "center",
-    gap: 6,
+    gap: 5,
   },
-  promoCanvasCtaText: {
-    fontSize: 13,
-    fontFamily: "Poppins_600SemiBold",
-    color: "#FFF2E2",
+  quickDishVisualWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 20,
+    padding: 4,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
   },
-  promoCanvasArtWrap: {
-    width: 102,
-    height: 102,
+  quickDishVisual: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 18,
+  },
+  quickDishVisualFallback: {
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
   },
-  promoCanvasArtHalo: {
-    position: "absolute",
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: "rgba(255,255,255,0.12)",
+  quickDishName: {
+    width: "100%",
+    fontSize: 10,
+    textAlign: "center",
+    fontFamily: "Poppins_500Medium",
+    color: "#FFF8F0",
   },
-  promoCanvasArt: {
-    width: 96,
-    height: 96,
+  quickDishPrice: {
+    width: "100%",
+    marginTop: -4,
+    fontSize: 9,
+    textAlign: "center",
+    fontFamily: "Poppins_400Regular",
+    color: "rgba(255,255,255,0.56)",
+  },
+  discoveryActionList: {
+    gap: 10,
+  },
+  discoveryActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: 10,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+  discoveryActionLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  discoveryActionImageWrap: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  discoveryActionImage: {
+    width: 40,
+    height: 40,
+  },
+  discoveryActionTextBlock: {
+    flex: 1,
+    gap: 4,
+  },
+  discoveryActionPill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  discoveryActionPillText: {
+    fontSize: 9,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.accent,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  discoveryActionTitle: {
+    fontSize: 13,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#FFF8F0",
+  },
+  discoveryActionSubtitle: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontFamily: "Poppins_400Regular",
+    color: "rgba(255,255,255,0.6)",
   },
   subsectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 24,
-    paddingBottom: 14,
+    paddingBottom: 10,
+  },
+  subsectionHeaderCompact: {
+    paddingBottom: 8,
   },
   subsectionTitle: {
     fontSize: 16,
     fontFamily: "Poppins_600SemiBold",
     color: "#FFF7EE",
+  },
+  subsectionTitleCompact: {
+    fontSize: 15,
   },
   subsectionLink: {
     fontSize: 13,
@@ -688,19 +813,41 @@ const styles = StyleSheet.create({
   },
   suggestionRow: {
     paddingHorizontal: 24,
-    gap: 14,
   },
-  suggestionCard: {
-    width: 112,
+  suggestionRowCompact: {
+    paddingHorizontal: 24,
+  },
+  discoveryLowerGrid: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+    paddingHorizontal: 24,
+  },
+  discoveryLowerGridCompact: {
+    gap: 8,
+  },
+  discoveryUtilityStack: {
+    flex: 1,
     gap: 10,
   },
-  suggestionVisualWrap: {
+  discoveryChefCard: {
+    flex: 1.08,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 10,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  discoveryChefVisualWrap: {
     position: "relative",
   },
-  suggestionVisual: {
-    width: 112,
-    height: 100,
-    borderRadius: 24,
+  discoveryChefVisual: {
+    width: 74,
+    height: 66,
+    borderRadius: 16,
     backgroundColor: "#362E29",
     overflow: "hidden",
     alignItems: "center",
@@ -708,81 +855,91 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
-  suggestionVisualImage: {
-    width: 112,
-    height: 100,
+  discoveryChefVisualImage: {
+    width: 74,
+    height: 66,
   },
-  suggestionInitials: {
-    fontSize: 28,
+  discoveryChefBody: {
+    flex: 1,
+    gap: 4,
+  },
+  discoveryChefTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  discoveryChefInitials: {
+    fontSize: 20,
     fontFamily: "Poppins_700Bold",
     color: "#fff",
   },
-  favoriteButton: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  suggestionName: {
-    fontSize: 13,
+  discoveryChefName: {
+    fontSize: 11,
     fontFamily: "Poppins_600SemiBold",
     color: "#FFF8F0",
   },
-  suggestionMeta: {
-    marginTop: -6,
-    fontSize: 12,
+  discoveryChefRatingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  discoveryChefRatingText: {
+    fontSize: 10,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#FFF8F0",
+  },
+  discoveryChefMeta: {
+    fontSize: 10,
     fontFamily: "Poppins_400Regular",
     color: "rgba(255,255,255,0.58)",
   },
-  paginationRow: {
+  discoveryChefLocationRow: {
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    gap: 8,
-    paddingTop: 20,
+    gap: 5,
   },
-  paginationDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
-    backgroundColor: "rgba(255,255,255,0.22)",
-  },
-  paginationDotActive: {
-    width: 22,
-    backgroundColor: "#FFF4E7",
-  },
-  summaryRow: {
-    flexDirection: "row",
-    gap: 12,
-    paddingHorizontal: 24,
-    paddingTop: 24,
-  },
-  summaryCard: {
+  discoveryChefLocation: {
     flex: 1,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    fontSize: 10,
+    fontFamily: "Poppins_400Regular",
+    color: "rgba(255,255,255,0.54)",
+  },
+  discoveryUtilityCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.04)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
   },
-  summaryValue: {
-    fontSize: 18,
-    fontFamily: "Poppins_700Bold",
+  discoveryUtilityIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  discoveryUtilityTextBlock: {
+    flex: 1,
+    gap: 2,
+  },
+  discoveryUtilityTitle: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
     color: "#FFF8F0",
   },
-  summaryLabel: {
-    marginTop: 4,
-    fontSize: 11,
-    lineHeight: 16,
-    fontFamily: "Poppins_500Medium",
-    color: "rgba(255,255,255,0.64)",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+  discoveryUtilitySubtitle: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontFamily: "Poppins_400Regular",
+    color: "rgba(255,255,255,0.58)",
   },
 });

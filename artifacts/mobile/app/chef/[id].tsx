@@ -365,6 +365,11 @@ export default function ChefDetailScreen() {
                 <Pressable key={story.id} style={[styles.storyCard, { backgroundColor: story.bgColor || Colors.light.card }]}>
                   {story.imageUrl ? (
                     <Image source={{ uri: story.imageUrl }} style={styles.storyImage} />
+                  ) : story.videoUrl ? (
+                    <View style={[styles.storyImage, styles.storyVideoFallback]}>
+                      <Feather name="play-circle" size={30} color="#fff" />
+                      <Text style={styles.storyVideoText}>{story.videoDurationSeconds ? `${Math.round(story.videoDurationSeconds)} sec` : 'Video'}</Text>
+                    </View>
                   ) : null}
                   <View style={styles.storyHeader}>
                     <Text style={styles.storyCaption} numberOfLines={3}>{story.caption}</Text>
@@ -630,6 +635,17 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 180,
     borderRadius: 14,
+  },
+  storyVideoFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(36,31,27,0.82)",
+    gap: 8,
+  },
+  storyVideoText: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#fff",
   },
   storyHeader: { flexDirection: "row", alignItems: "flex-start", gap: 12, justifyContent: "space-between" },
   storyCaption: { flex: 1, fontSize: 15, fontFamily: "Poppins_500Medium", color: Colors.light.text, lineHeight: 22 },
