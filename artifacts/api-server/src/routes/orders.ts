@@ -234,7 +234,7 @@ router.post("/orders/:orderId/report-issue", requireClient, async (req: AuthRequ
     const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
 
     const recipients = [chefProfile?.userId, deliveryJob?.courierUserId].filter(
-      (value): value is number => Number.isInteger(value) && value > 0,
+      (value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0,
     );
 
     await notifyUsers({
