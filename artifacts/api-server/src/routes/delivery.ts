@@ -182,6 +182,8 @@ async function getDeliveryJobPayload(jobId: number) {
     return null;
   }
 
+  const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, job.orderId)).limit(1);
+
   const [chefProfile] = await db
     .select()
     .from(chefProfilesTable)
@@ -207,6 +209,7 @@ async function getDeliveryJobPayload(jobId: number) {
   return {
     id: String(job.id),
     orderId: String(job.orderId),
+    orderTotal: Number(order?.total ?? 0),
     chefProfileId: String(job.chefProfileId),
     clientId: String(job.clientId),
     courierUserId: job.courierUserId ? String(job.courierUserId) : null,
@@ -440,6 +443,30 @@ router.get("/delivery/jobs/current", requireCourier, async (req: AuthRequest, re
     return res.json({ jobs: payloads.filter(Boolean) });
   } catch (error) {
     console.error("current delivery jobs error", error);
+    return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.get("/delivery/jobs/history", requireCourier, async (req: AuthRequest, res) => {
+  try {
+    const jobs = await db
+      .select()
+      .from(deliveryJobsTable)
+      .where(
+        and(
+          eq(deliveryJobsTable.courierUserId, req.userId!),
+          or(
+            eq(deliveryJobsTable.status, "delivered"),
+            eq(deliveryJobsTable.status, "cancelled"),
+          ),
+        ),
+      )
+      .orderBy(desc(deliveryJobsTable.deliveredAt), desc(deliveryJobsTable.createdAt));
+
+    const payloads = await Promise.all(jobs.map((job) => getDeliveryJobPayload(job.id)));
+    return res.json({ jobs: payloads.filter(Boolean) });
+  } catch (error) {
+    console.error("history delivery jobs error", error);
     return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });
