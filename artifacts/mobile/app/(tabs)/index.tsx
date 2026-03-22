@@ -191,6 +191,7 @@ function ServiceBubble({
   action,
   bubbleSize,
   cardWidth,
+  labelMaxWidth,
 }: {
   label: string;
   primaryIcon: IoniconsName;
@@ -199,6 +200,7 @@ function ServiceBubble({
   action: () => void;
   bubbleSize: number;
   cardWidth: number;
+  labelMaxWidth?: number;
 }) {
   return (
     <Pressable style={[styles.serviceBubbleItem, { width: cardWidth }]} onPress={action}>
@@ -210,7 +212,7 @@ function ServiceBubble({
           size={bubbleSize}
         />
       </View>
-      <View style={[styles.serviceLabelPill, { maxWidth: bubbleSize + 8 }]}> 
+      <View style={[styles.serviceLabelPill, { maxWidth: labelMaxWidth ?? bubbleSize + 8 }]}> 
         <Text style={styles.serviceLabelText} numberOfLines={2}>{label}</Text>
       </View>
     </Pressable>
@@ -333,7 +335,11 @@ export default function HomeScreen() {
   const bubbleSize = compactHome
     ? Math.max(96, Math.min(108, Math.floor((width - 92) / 2)))
     : Math.max(106, Math.min(122, Math.floor((width - 76) / 2)));
-  const serviceCardWidth = Math.min(width - 92, 148);
+  const sideCardWidth = Math.max(132, Math.min((width - 64) / 2, 170));
+  const centerCardWidth = Math.max(150, Math.min(width - 108, 192));
+  const topServices = SERVICES.slice(0, 2);
+  const faqService = SERVICES[2];
+  const bottomServices = SERVICES.slice(3, 5);
 
   const quickDishes: QuickDishItem[] = chefs
     .flatMap((chef) =>
@@ -382,20 +388,9 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={styles.serviceCarouselSection}>
-          <View style={styles.serviceCarouselHeader}>
-            <Text style={styles.serviceCarouselTitle}>Vos 5 univers</Text>
-            <Text style={styles.serviceCarouselHint}>Faites glisser pour déplacer les bulles</Text>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            decelerationRate="fast"
-            snapToInterval={serviceCardWidth + 14}
-            snapToAlignment="start"
-            contentContainerStyle={[styles.serviceBubbleRail, compactHome ? styles.serviceBubbleRailCompact : null]}
-          >
-            {SERVICES.map((service) => (
+        <View style={[styles.serviceMatrix, compactHome ? styles.serviceMatrixCompact : null]}>
+          <View style={styles.serviceRow}>
+            {topServices.map((service) => (
               <ServiceBubble
                 key={service.id}
                 label={service.label}
@@ -404,10 +399,41 @@ export default function HomeScreen() {
                 accentColor={service.accentColor}
                 action={service.action}
                 bubbleSize={bubbleSize}
-                cardWidth={serviceCardWidth}
+                cardWidth={sideCardWidth}
+                labelMaxWidth={sideCardWidth}
               />
             ))}
-          </ScrollView>
+          </View>
+
+          <View style={styles.serviceCenterRow}>
+            <ServiceBubble
+              key={faqService.id}
+              label={faqService.label}
+              primaryIcon={faqService.primaryIcon}
+              secondaryIcon={faqService.secondaryIcon}
+              accentColor={faqService.accentColor}
+              action={faqService.action}
+              bubbleSize={bubbleSize + (compactHome ? 2 : 10)}
+              cardWidth={centerCardWidth}
+              labelMaxWidth={centerCardWidth}
+            />
+          </View>
+
+          <View style={styles.serviceRow}>
+            {bottomServices.map((service) => (
+              <ServiceBubble
+                key={service.id}
+                label={service.label}
+                primaryIcon={service.primaryIcon}
+                secondaryIcon={service.secondaryIcon}
+                accentColor={service.accentColor}
+                action={service.action}
+                bubbleSize={bubbleSize}
+                cardWidth={sideCardWidth}
+                labelMaxWidth={sideCardWidth}
+              />
+            ))}
+          </View>
         </View>
       </Gradient>
 
@@ -500,38 +526,27 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.text,
   },
-  serviceCarouselSection: {
+  serviceMatrix: {
+    flex: 1,
+    justifyContent: "space-evenly",
     paddingTop: 12,
+    paddingBottom: 10,
   },
-  serviceCarouselHeader: {
+  serviceMatrixCompact: {
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  serviceRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
     paddingHorizontal: 4,
-    marginBottom: 12,
   },
-  serviceCarouselTitle: {
-    fontSize: 14,
-    fontFamily: "Poppins_700Bold",
-    color: Colors.light.text,
-  },
-  serviceCarouselHint: {
-    flex: 1,
-    textAlign: "right",
-    fontSize: 11,
-    lineHeight: 15,
-    fontFamily: "Poppins_400Regular",
-    color: Colors.light.textSecondary,
-  },
-  serviceBubbleRail: {
-    gap: 14,
+  serviceCenterRow: {
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: 4,
-    paddingRight: 20,
-  },
-  serviceBubbleRailCompact: {
-    gap: 12,
-    paddingTop: 8,
   },
   serviceBubbleItem: {
     alignItems: "center",
