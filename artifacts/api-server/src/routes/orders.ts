@@ -8,6 +8,7 @@ import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
 
 const router: IRouter = Router();
+const ORDER_CLIENT_CANCEL_WINDOW_MS = 10_000;
 
 function normalizeRatingValue(input: unknown): number | null {
   const value = Number(input);
@@ -57,6 +58,13 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
     const result = await Promise.all(
       orders.map(async ({ orders: o, users: u }) => {
         const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, o.id));
+        const dishIds = items
+          .map((item) => item.dishId)
+          .filter((dishId): dishId is number => typeof dishId === "number" && Number.isInteger(dishId) && dishId > 0);
+        const dishes = dishIds.length > 0
+          ? await db.select().from(dishesTable).where(inArray(dishesTable.id, dishIds))
+          : [];
+        const dishesById = new Map(dishes.map((dish) => [dish.id, dish]));
         const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, o.id)).limit(1);
         const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.orderId, o.id)).limit(1);
         const [latestLocation] = deliveryJob
@@ -79,6 +87,10 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
           deliveryAddress: o.deliveryAddress,
           notes: o.notes,
           createdAt: o.createdAt.toISOString(),
+          cancelAvailableUntil:
+            o.status === "pending" && !deliveryJob
+              ? new Date(o.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS).toISOString()
+              : null,
           delivery: deliveryJob
             ? {
                 id: String(deliveryJob.id),
@@ -115,6 +127,8 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
             dishName: i.dishName,
             quantity: i.quantity,
             price: i.price,
+            imageUrl: i.dishId ? dishesById.get(i.dishId)?.imageUrl ?? null : null,
+            imageUrls: i.dishId ? dishesById.get(i.dishId)?.imageUrls ?? [] : [],
           })),
         };
       })
@@ -124,6 +138,52 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
   } catch (err) {
     console.error("list orders error:", err);
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/orders/:orderId/cancel", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: "BadRequest", message: "Commande invalide" });
+    }
+
+    const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, orderId)).limit(1);
+    if (!order || order.clientId !== req.userId) {
+      return res.status(404).json({ error: "NotFound", message: "Commande introuvable" });
+    }
+
+    const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
+    const deadline = order.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS;
+
+    if (deliveryJob || order.status !== "pending" || Date.now() > deadline) {
+      return res.status(409).json({ error: "Conflict", message: "Cette commande ne peut plus être annulée" });
+    }
+
+    const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, order.chefProfileId)).limit(1);
+    const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
+
+    await db.delete(orderItemsTable).where(eq(orderItemsTable.orderId, order.id));
+    await db.delete(ordersTable).where(eq(ordersTable.id, order.id));
+
+    if (chefProfile?.userId) {
+      await notifyUsers({
+        userIds: [chefProfile.userId],
+        type: "order",
+        title: "Commande annulée",
+        message: `${clientUser?.name ?? "Une cliente"} a annulé sa commande juste après validation.`,
+        orderId: order.id,
+        data: {
+          screen: "orders",
+          orderId: String(order.id),
+        },
+      });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("cancel order error:", err);
+    return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });
 

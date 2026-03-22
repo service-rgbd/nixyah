@@ -17,6 +17,7 @@ export default function CartScreen() {
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [savedAddress, setSavedAddress] = useState<SavedDeliveryAddress | null>(null);
+  const [cashAnswer, setCashAnswer] = useState<"yes" | "no" | null>(null);
 
   const loadDeliveryAddress = useCallback(async () => {
     const address = await loadSavedDeliveryAddress(addressScope);
@@ -86,6 +87,11 @@ export default function CartScreen() {
 
     try {
       setIsCheckingOut(true);
+      const notes = cashAnswer === "yes"
+        ? "Client indique avoir de la monnaie."
+        : cashAnswer === "no"
+          ? "Client indique ne pas avoir de monnaie."
+          : "";
       const res: any = await apiFetch(`/cart/checkout`, {
         method: "POST",
         token,
@@ -93,6 +99,7 @@ export default function CartScreen() {
           deliveryAddress: resolvedDeliveryAddress,
           deliveryLatitude: savedAddress?.latitude ?? null,
           deliveryLongitude: savedAddress?.longitude ?? null,
+          notes,
         }),
       });
       await Promise.all([loadCart(), refreshOrders()]);
@@ -161,6 +168,21 @@ export default function CartScreen() {
           </View>
         </View>
 
+        {cartItems.length > 0 ? (
+          <View style={styles.addressCard}>
+            <Text style={styles.addressTitle}>Avez-vous la monnaie ?</Text>
+            <Text style={styles.addressMeta}>Cette information est transmise avec la commande pour faciliter la livraison.</Text>
+            <View style={styles.cashChoiceRow}>
+              <Pressable style={[styles.cashChip, cashAnswer === "yes" && styles.cashChipActive]} onPress={() => setCashAnswer("yes")}>
+                <Text style={[styles.cashChipText, cashAnswer === "yes" && styles.cashChipTextActive]}>Oui, j'ai la monnaie</Text>
+              </Pressable>
+              <Pressable style={[styles.cashChip, cashAnswer === "no" && styles.cashChipActive]} onPress={() => setCashAnswer("no")}>
+                <Text style={[styles.cashChipText, cashAnswer === "no" && styles.cashChipTextActive]}>Non, je n'ai pas la monnaie</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {loading ? (
           <ActivityIndicator />
         ) : cartItems.length > 0 ? (
@@ -209,7 +231,7 @@ export default function CartScreen() {
           <Text style={styles.totalLabel}>Total</Text>
           <Text style={styles.totalValue}>{total.toLocaleString()} FCFA</Text>
         </View>
-        <Pressable style={[styles.checkoutBtn, (!cartItems.length || isCheckingOut) && styles.checkoutBtnDisabled]} onPress={checkout} disabled={!cartItems.length || isCheckingOut}>
+        <Pressable style={[styles.checkoutBtn, (!cartItems.length || isCheckingOut || !cashAnswer) && styles.checkoutBtnDisabled]} onPress={checkout} disabled={!cartItems.length || isCheckingOut || !cashAnswer}>
           <Text style={styles.checkoutText}>{isCheckingOut ? "Validation..." : "Valider la commande"}</Text>
         </Pressable>
       </View>
@@ -235,6 +257,11 @@ const styles = StyleSheet.create({
   addressMeta: { marginTop: 4, color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular" },
   addressLinkBtn: { paddingVertical: 6 },
   addressLinkText: { color: Colors.light.tint, fontFamily: "Poppins_600SemiBold" },
+  cashChoiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 },
+  cashChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.backgroundSecondary },
+  cashChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
+  cashChipText: { color: Colors.light.text, fontFamily: "Poppins_500Medium" },
+  cashChipTextActive: { color: "#fff" },
   item: { backgroundColor: Colors.light.card, padding: 12, borderRadius: 14, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 12 },
   itemName: { fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   itemQty: { color: Colors.light.textSecondary, marginTop: 6 },

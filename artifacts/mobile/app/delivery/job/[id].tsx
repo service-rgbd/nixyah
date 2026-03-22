@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Platform,
   Pressable,
@@ -19,6 +20,7 @@ import Colors from "@/constants/colors";
 import { apiFetch } from "@/constants/api";
 import { saveDeliveryAddress } from "@/constants/delivery-address";
 import { useApp } from "@/contexts/AppContext";
+import { ApiError } from "@/constants/api";
 
 type DeliveryJobDetail = {
   id: string;
@@ -221,17 +223,25 @@ export default function DeliveryJobScreen() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [updatingClientLocation, setUpdatingClientLocation] = useState(false);
+  const [jobAccessBlocked, setJobAccessBlocked] = useState(false);
   const isCourier = user?.type === "courier";
   const isClient = user?.type === "client";
 
   const loadJob = async () => {
-    if (!token || !jobId) return;
+    if (!token || !jobId || jobAccessBlocked) return;
     try {
       const data = await apiFetch<{ job: DeliveryJobDetail; locations: Array<{ latitude: number; longitude: number; createdAt: string }> }>(`/delivery/jobs/${jobId}`, { token });
       setJob(data.job);
       setLocations(data.locations ?? []);
     } catch (error) {
-      console.warn("Failed to load delivery job:", error);
+      if (error instanceof ApiError && ["Forbidden", "NotFound"].includes(error.code ?? "")) {
+        setJobAccessBlocked(true);
+        Alert.alert("Mission indisponible", "Cette mission n'est plus accessible pour ce compte.", [
+          { text: "Retour", onPress: () => router.back() },
+        ]);
+      } else {
+        console.warn("Failed to load delivery job:", error);
+      }
     } finally {
       setLoading(false);
     }
@@ -239,9 +249,12 @@ export default function DeliveryJobScreen() {
 
   useEffect(() => {
     loadJob();
+    if (jobAccessBlocked) {
+      return undefined;
+    }
     const interval = setInterval(loadJob, 5000);
     return () => clearInterval(interval);
-  }, [jobId, token]);
+  }, [jobAccessBlocked, jobId, token]);
 
   useEffect(() => {
     if (!isEditingClientPoint) {

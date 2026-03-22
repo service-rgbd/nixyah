@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -350,10 +351,14 @@ function DeliveryJobCard({
 function ClientHistoryCard({
   order,
   onReportIssue,
+  onCancelOrder,
+  cancelling,
   reporting,
 }: {
   order: Order;
   onReportIssue: (order: Order) => void;
+  onCancelOrder: (order: Order) => void;
+  cancelling?: boolean;
   reporting?: boolean;
 }) {
   const status = getClientOrderStatus(order);
@@ -361,13 +366,43 @@ function ClientHistoryCard({
   const primaryAddress = order.delivery?.restaurantAddress || order.chefName;
   const secondaryAddress = order.delivery?.deliveryAddress;
   const shouldPromptReview = Boolean(order.canReview && (order.status === "delivered" || order.delivery?.status === "delivered"));
+  const primaryDish = order.dishes[0]?.dish ?? null;
+  const primaryDishImage = primaryDish?.imageUrls?.[0] ?? primaryDish?.imageUrl ?? null;
+  const [cancelCountdown, setCancelCountdown] = useState(() => {
+    if (!order.cancelAvailableUntil) {
+      return 0;
+    }
+
+    return Math.max(0, Math.ceil((new Date(order.cancelAvailableUntil).getTime() - Date.now()) / 1000));
+  });
+
+  useEffect(() => {
+    if (!order.cancelAvailableUntil) {
+      setCancelCountdown(0);
+      return undefined;
+    }
+
+    const updateCountdown = () => {
+      setCancelCountdown(Math.max(0, Math.ceil((new Date(order.cancelAvailableUntil!).getTime() - Date.now()) / 1000)));
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [order.cancelAvailableUntil]);
+
+  const canCancel = order.status === "pending" && !order.delivery && cancelCountdown > 0;
 
   return (
     <View style={styles.historyCard}>
       <View style={styles.historyCardTopRow}>
-        <View style={[styles.historyCardIconWrap, order.delivery ? styles.historyDeliveryIconWrap : styles.historyMealIconWrap]}>
-          <Ionicons name={order.delivery ? "cube" : "restaurant"} size={18} color={order.delivery ? "#F24C1A" : "#D4611A"} />
-        </View>
+        {primaryDishImage ? (
+          <Image source={{ uri: primaryDishImage }} style={styles.historyDishThumb} />
+        ) : (
+          <View style={[styles.historyCardIconWrap, order.delivery ? styles.historyDeliveryIconWrap : styles.historyMealIconWrap]}>
+            <Ionicons name={order.delivery ? "cube" : "restaurant"} size={18} color={order.delivery ? "#F24C1A" : "#D4611A"} />
+          </View>
+        )}
         <View style={styles.historyCardMain}>
           <View style={styles.historyCardHeadlineRow}>
             <Text style={styles.historyCardTitle} numberOfLines={1}>{`${order.delivery ? "Livraison" : order.chefName}, ${orderTime}`}</Text>
@@ -379,6 +414,9 @@ function ClientHistoryCard({
           {status.label !== "Annulée" && secondaryAddress ? (
             <Text style={styles.historyCardSubline} numberOfLines={1}>{`${primaryAddress} → ${secondaryAddress}`}</Text>
           ) : null}
+          {primaryDish ? (
+            <Text style={styles.historyCardDishLine} numberOfLines={1}>{primaryDish.name}</Text>
+          ) : null}
         </View>
       </View>
 
@@ -387,6 +425,14 @@ function ClientHistoryCard({
           <Text style={[styles.historyStatusText, { color: status.color }]}>{status.label}</Text>
         </View>
         <View style={styles.historyActionsRow}>
+          {canCancel ? (
+            <Pressable style={styles.historyGhostBtn} onPress={() => onCancelOrder(order)} disabled={cancelling}>
+              {cancelling ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
+                <Feather name="x-circle" size={16} color="#1F1A17" />
+                <Text style={styles.historyGhostBtnText}>{`Annuler (${cancelCountdown}s)`}</Text>
+              </>}
+            </Pressable>
+          ) : null}
           <Pressable style={styles.historyGhostBtn} onPress={() => onReportIssue(order)} disabled={reporting}>
             {reporting ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
               <Feather name="headphones" size={16} color="#1F1A17" />
@@ -680,6 +726,7 @@ export default function OrdersScreen() {
   const [acceptingJobId, setAcceptingJobId] = useState<string | null>(null);
   const [chefActionKey, setChefActionKey] = useState<string | null>(null);
   const [reportingOrderId, setReportingOrderId] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [courierLoadNotice, setCourierLoadNotice] = useState<string | null>(null);
   const [courierFilter, setCourierFilter] = useState<CourierMissionFilter>("all");
   const [clientFilter, setClientFilter] = useState<ClientOrderFilter>("all");
@@ -987,6 +1034,33 @@ export default function OrdersScreen() {
     ]);
   };
 
+  const handleCancelOrder = (order: Order) => {
+    Alert.alert("Annuler la commande", "Cette annulation est uniquement possible dans les 10 secondes après validation.", [
+      { text: "Retour", style: "cancel" },
+      {
+        text: "Annuler la commande",
+        style: "destructive",
+        onPress: async () => {
+          if (!token) {
+            return;
+          }
+
+          setCancellingOrderId(order.id);
+          try {
+            await apiFetch(`/orders/${order.id}/cancel`, { method: "POST", token });
+            await refreshOrders();
+            Alert.alert("Commande annulée", "La commande a été annulée avant son traitement en cuisine.");
+          } catch (error: any) {
+            Alert.alert("Annulation impossible", error?.message ?? "Cette commande ne peut plus être annulée.");
+            await refreshOrders();
+          } finally {
+            setCancellingOrderId(null);
+          }
+        },
+      },
+    ]);
+  };
+
   if (!user && isDeliveryMode) {
     return (
       <View style={[styles.container, { paddingTop: topInset }]}> 
@@ -1220,7 +1294,7 @@ export default function OrdersScreen() {
             <View key={section.title} style={styles.daySectionBlock}>
               <Text style={styles.daySectionTitle}>{section.title}</Text>
               {section.items.map((order) => (
-                <ClientHistoryCard key={order.id} order={order} onReportIssue={handleReportIssue} reporting={reportingOrderId === order.id} />
+                <ClientHistoryCard key={order.id} order={order} onReportIssue={handleReportIssue} onCancelOrder={handleCancelOrder} cancelling={cancellingOrderId === order.id} reporting={reportingOrderId === order.id} />
               ))}
             </View>
           ))}
@@ -1660,6 +1734,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#FFF8F2",
   },
+  historyDishThumb: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: "#FFF8F2",
+  },
   historyDeliveryIconWrap: {
     backgroundColor: "#FFF2ED",
   },
@@ -1705,6 +1785,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: "Poppins_400Regular",
     color: "#91857D",
+  },
+  historyCardDishLine: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: "Poppins_500Medium",
+    color: "#4D443F",
   },
   historyBottomRow: {
     gap: 12,

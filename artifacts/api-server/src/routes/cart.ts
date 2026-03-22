@@ -1,9 +1,10 @@
 import express from "express";
 import { db } from "@workspace/db";
-import { cartsTable, cartItemsTable, dishesTable, ordersTable, orderItemsTable, usersTable } from "@workspace/db/schema";
+import { cartsTable, cartItemsTable, chefProfilesTable, dishesTable, ordersTable, orderItemsTable, usersTable } from "@workspace/db/schema";
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDishEffectivePrice } from "../lib/menu.js";
+import { notifyUsers } from "../lib/notifications.js";
 
 const router = express.Router();
 
@@ -169,6 +170,7 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
     const deliveryAddress = typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : "";
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
     const deliveryLatitude = Number(req.body?.deliveryLatitude ?? NaN);
     const deliveryLongitude = Number(req.body?.deliveryLongitude ?? NaN);
     const cart = await getOrCreateCart(userId);
@@ -216,7 +218,6 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
     const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
     const resolvedDeliveryAddress = deliveryAddress || clientUser?.location || "";
-
     const [order] = await db
       .insert(ordersTable)
       .values({
@@ -226,6 +227,7 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
         deliveryAddress: resolvedDeliveryAddress || null,
         deliveryLatitude: Number.isFinite(deliveryLatitude) ? deliveryLatitude : null,
         deliveryLongitude: Number.isFinite(deliveryLongitude) ? deliveryLongitude : null,
+        notes: notes || null,
       })
       .returning();
 
@@ -242,7 +244,29 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
     // clear cart
     await db.delete(cartItemsTable).where(eq(cartItemsTable.cartId, cart.id));
 
-    return res.status(201).json({ orderId: order.id, total, deliveryAddress: resolvedDeliveryAddress || null });
+    const [chefProfileOwner] = await db
+      .select({ userId: usersTable.id, name: usersTable.name })
+      .from(chefProfilesTable)
+      .innerJoin(usersTable, eq(chefProfilesTable.userId, usersTable.id))
+      .where(eq(chefProfilesTable.id, chefProfileId))
+      .limit(1);
+
+    if (chefProfileOwner?.userId) {
+      await notifyUsers({
+        userIds: [chefProfileOwner.userId],
+        type: "order",
+        title: "Nouvelle commande",
+        message: `${clientUser?.name ?? "Une cliente"} a passé une nouvelle commande.`,
+        orderId: order.id,
+        data: {
+          screen: "orders",
+          orderId: String(order.id),
+          total,
+        },
+      });
+    }
+
+    return res.status(201).json({ orderId: order.id, total, deliveryAddress: resolvedDeliveryAddress || null, cancelAvailableUntil: new Date(order.createdAt.getTime() + 10_000).toISOString() });
   } catch (err) {
     console.error("checkout error", err);
     return res.status(500).json({ error: "InternalError" });

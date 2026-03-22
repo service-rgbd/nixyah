@@ -107,18 +107,22 @@ function getPlayerPlayingState(player: ReturnType<typeof useVideoPlayer>) {
   try {
     return player.playing;
   } catch (error) {
-    console.warn("Failed to read player state", error);
+    if (!(error instanceof Error) || !error.message.includes("NativeSharedObjectNotFoundException")) {
+      console.warn("Failed to read player state", error);
+    }
     return false;
   }
 }
 
 function pausePlayerSafely(player: ReturnType<typeof useVideoPlayer>) {
   try {
-    if (player.playing) {
+    if (getPlayerPlayingState(player)) {
       player.pause();
     }
   } catch (error) {
-    console.warn("Failed to pause player", error);
+    if (!(error instanceof Error) || !error.message.includes("NativeSharedObjectNotFoundException")) {
+      console.warn("Failed to pause player", error);
+    }
   }
 }
 

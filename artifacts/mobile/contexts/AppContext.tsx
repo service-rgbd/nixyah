@@ -130,6 +130,7 @@ export interface Order {
   total: number;
   status: "pending" | "accepted" | "preparing" | "ready" | "delivered";
   createdAt: string;
+  cancelAvailableUntil?: string | null;
   occasion?: string;
   persons?: number;
   review?: {
@@ -489,8 +490,8 @@ function mapApiOrder(order: any): Order {
             price: Number(item.price ?? 0),
             category: "",
             prepTime: "",
-            imageUrl: null,
-            imageUrls: [],
+            imageUrl: normalizeRemoteUrl(item.imageUrl ?? null),
+            imageUrls: normalizeImageUrlList(item.imageUrls, item.imageUrl ?? null),
           },
           quantity: Number(item.quantity ?? 1),
         }))
@@ -498,6 +499,7 @@ function mapApiOrder(order: any): Order {
     total: Number(order.total ?? 0),
     status: order.status,
     createdAt: String(order.createdAt ?? new Date().toISOString()),
+    cancelAvailableUntil: order.cancelAvailableUntil ? String(order.cancelAvailableUntil) : null,
     occasion: order.occasion ?? undefined,
     persons: order.persons ?? undefined,
     review: order.review
@@ -711,6 +713,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const data = await apiFetch<{ requests: any[] }>("/custom-requests", { token });
       setCustomRequests((data.requests ?? []).map(mapApiCustomRequest));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      if (message.includes("Cannot GET /api/custom-requests") || message.includes("404")) {
+        setCustomRequests([]);
+        return;
+      }
       console.warn("Failed to load custom requests:", error);
     }
   }, [token, user?.type]);
@@ -721,6 +728,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const data = await apiFetch<{ requests: any[] }>("/chef/custom-requests", { token });
       setChefCustomRequests((data.requests ?? []).map(mapApiChefCustomRequest));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      if (message.includes("Cannot GET /api/chef/custom-requests") || message.includes("404")) {
+        setChefCustomRequests([]);
+        return;
+      }
       console.warn("Failed to load chef custom requests:", error);
     }
   }, [token, user?.type]);

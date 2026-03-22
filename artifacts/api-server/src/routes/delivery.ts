@@ -375,8 +375,25 @@ async function assertJobParticipant(req: AuthRequest, jobId: number) {
   if (req.userType === "client" && req.userId === job.clientId) {
     return { job };
   }
-  if (req.userType === "courier" && req.userId === job.courierUserId) {
-    return { job };
+  if (req.userType === "courier") {
+    if (req.userId === job.courierUserId) {
+      return { job };
+    }
+
+    const [offer] = await db
+      .select({ id: deliveryOffersTable.id })
+      .from(deliveryOffersTable)
+      .where(
+        and(
+          eq(deliveryOffersTable.deliveryJobId, job.id),
+          eq(deliveryOffersTable.courierUserId, req.userId!),
+          eq(deliveryOffersTable.status, "pending"),
+        ),
+      )
+      .limit(1);
+    if (offer) {
+      return { job };
+    }
   }
 
   return { error: "Forbidden" as const };
@@ -852,6 +869,24 @@ router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRe
 
     if (job.status === "picked_up") {
       await db.update(deliveryJobsTable).set({ status: "on_the_way" }).where(eq(deliveryJobsTable.id, job.id));
+
+      const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, job.chefProfileId)).limit(1);
+      const [chefUser] = chefProfile
+        ? await db.select().from(usersTable).where(eq(usersTable.id, chefProfile.userId)).limit(1)
+        : [];
+      await notifyUsers({
+        userIds: [job.clientId, chefUser?.id].filter((value): value is number => typeof value === "number"),
+        type: "order",
+        title: "Commande en route",
+        message: "Le livreur est maintenant en route vers le client.",
+        orderId: job.orderId,
+        deliveryJobId: job.id,
+        data: {
+          screen: "delivery-tracking",
+          orderId: String(job.orderId),
+          deliveryJobId: String(job.id),
+        },
+      });
     }
 
     return res.json({ ok: true });
