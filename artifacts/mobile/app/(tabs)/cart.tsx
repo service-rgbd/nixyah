@@ -11,6 +11,7 @@ import { formatAddressTimestamp, loadSavedDeliveryAddress, type SavedDeliveryAdd
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const { user, token, refreshOrders } = useApp();
+  const addressScope = user?.id ? `user:${user.id}` : "guest";
   const [cart, setCart] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [updatingItemId, setUpdatingItemId] = useState<number | null>(null);
@@ -18,9 +19,9 @@ export default function CartScreen() {
   const [savedAddress, setSavedAddress] = useState<SavedDeliveryAddress | null>(null);
 
   const loadDeliveryAddress = useCallback(async () => {
-    const address = await loadSavedDeliveryAddress();
+    const address = await loadSavedDeliveryAddress(addressScope);
     setSavedAddress(address);
-  }, []);
+  }, [addressScope]);
 
   const loadCart = useCallback(async () => {
     if (!user || user.type !== "client" || !token) {

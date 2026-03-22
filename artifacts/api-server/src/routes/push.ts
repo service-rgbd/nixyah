@@ -2,7 +2,7 @@ import express from "express";
 import { db } from "@workspace/db";
 import { pushSubscriptionsTable } from "@workspace/db/schema";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { notifyUsers } from "../lib/notifications.js";
 
 const router = express.Router();
@@ -43,9 +43,14 @@ router.post("/subscribe", requireAuth, async (req: AuthRequest, res) => {
 // POST /api/push/unsubscribe
 router.post("/unsubscribe", requireAuth, async (req: AuthRequest, res) => {
   try {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
     const { endpoint } = req.body;
     if (!endpoint) return res.status(400).json({ error: "Missing endpoint" });
-    await db.delete(pushSubscriptionsTable).where(eq(pushSubscriptionsTable.endpoint, String(endpoint)));
+    await db
+      .delete(pushSubscriptionsTable)
+      .where(and(eq(pushSubscriptionsTable.endpoint, String(endpoint)), eq(pushSubscriptionsTable.userId, userId)));
     return res.json({ ok: true });
   } catch (err) {
     console.error("unsubscribe error", err);
@@ -57,12 +62,23 @@ router.post("/unsubscribe", requireAuth, async (req: AuthRequest, res) => {
 // Body: { userId?, title, message, data?, targets?: [userId] }
 router.post("/send", requireAuth, async (req: AuthRequest, res) => {
   try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
     const { userId: targetUserId, title, message, data, targets } = req.body;
 
-    const targetIds: number[] = Array.isArray(targets) ? targets.map(Number) : (targetUserId ? [Number(targetUserId)] : []);
+    const targetIds: number[] = Array.isArray(targets) ? targets.map(Number) : (targetUserId ? [Number(targetUserId)] : [currentUserId]);
     if (targetIds.length === 0) return res.status(400).json({ error: "No targets provided" });
+
+    const hasForeignTarget = targetIds.some((targetId) => !Number.isInteger(targetId) || targetId !== currentUserId);
+    if (hasForeignTarget) {
+      return res.status(403).json({ error: "Forbidden", message: "Vous ne pouvez envoyer qu'un test push à votre propre compte." });
+    }
+
     const results = await notifyUsers({
-      userIds: targetIds,
+      userIds: [currentUserId],
       type: "system",
       title: String(title ?? ""),
       message: String(message ?? ""),

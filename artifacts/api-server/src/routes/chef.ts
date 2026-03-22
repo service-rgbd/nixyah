@@ -131,7 +131,7 @@ const CHEF_ORDER_TRANSITIONS: Record<string, string[]> = {
   pending: ["accepted"],
   accepted: ["preparing", "ready"],
   preparing: ["ready"],
-  ready: ["delivered"],
+  ready: [],
   delivered: [],
 };
 
@@ -146,11 +146,7 @@ const CHEF_ORDER_NOTIFICATIONS: Record<string, { title: string; message: string 
   },
   ready: {
     title: "Commande prete",
-    message: "Votre commande est prete. Vous pouvez la recuperer ou attendre le livreur.",
-  },
-  delivered: {
-    title: "Commande terminee",
-    message: "Votre commande a ete marquee comme finalisee.",
+    message: "Votre commande est prete. La cuisiniere peut maintenant lancer la recherche d'un livreur.",
   },
 };
 
@@ -336,9 +332,6 @@ router.patch("/orders/:orderId/status", requireChef, async (req: AuthRequest, re
     }
 
     const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
-    if (nextStatus === "delivered" && deliveryJob && deliveryJob.status !== "delivered") {
-      return res.status(400).json({ error: "BadRequest", message: "La livraison doit etre terminee avant de cloturer la commande" });
-    }
 
     await db.update(ordersTable).set({ status: nextStatus as any }).where(eq(ordersTable.id, order.id));
     const [updatedOrder] = await db.select().from(ordersTable).where(eq(ordersTable.id, order.id)).limit(1);

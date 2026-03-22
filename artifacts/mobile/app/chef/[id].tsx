@@ -216,6 +216,94 @@ function StoryCard({ story, prominent = false }: { story: Story; prominent?: boo
   );
 }
 
+function MenuTile({
+  dish,
+  quantity,
+  onAdd,
+  onRemove,
+  isLoading,
+  orderingEnabled,
+}: {
+  dish: Dish;
+  quantity: number;
+  onAdd: () => void;
+  onRemove: () => void;
+  isLoading?: boolean;
+  orderingEnabled: boolean;
+}) {
+  const imageUri = getDishPrimaryImage(dish);
+
+  return (
+    <View style={styles.menuTile}>
+      <View style={styles.menuTileVisual}>
+        {imageUri ? (
+          <Image source={{ uri: imageUri }} style={styles.menuTileImage} />
+        ) : (
+          <View style={styles.menuTileFallback}>
+            <Feather name="image" size={18} color={Colors.light.textTertiary} />
+          </View>
+        )}
+        {dish.isPopular ? (
+          <View style={styles.menuTileBadge}>
+            <Text style={styles.menuTileBadgeText}>Rapide</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.menuTileBody}>
+        <Text style={styles.menuTileName} numberOfLines={2}>{dish.name}</Text>
+        <Text style={styles.menuTileMeta}>{dish.prepTime}</Text>
+        <Text style={styles.menuTilePrice}>{formatPrice(getDishCurrentPrice(dish))}</Text>
+        {orderingEnabled ? (
+          quantity > 0 ? (
+            <View style={styles.menuQtyControl}>
+              <Pressable style={styles.qtyBtn} onPress={onRemove} disabled={isLoading}>
+                <Feather name="minus" size={15} color={Colors.light.tint} />
+              </Pressable>
+              <Text style={styles.qtyText}>{quantity}</Text>
+              <Pressable style={styles.qtyBtn} onPress={onAdd} disabled={isLoading}>
+                <Feather name="plus" size={15} color={Colors.light.tint} />
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable style={styles.menuTileBtn} onPress={onAdd} disabled={isLoading}>
+              <Text style={styles.menuTileBtnText}>Ajouter</Text>
+            </Pressable>
+          )
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function StoryTile({ story }: { story: Story }) {
+  return (
+    <Pressable style={styles.storyTile} onPress={() => router.push("/(tabs)/stories")}>
+      {story.imageUrl ? (
+        <Image source={{ uri: story.imageUrl }} style={styles.storyTileImage} />
+      ) : (
+        <View style={styles.storyTileFallback}>
+          <Feather name={story.videoUrl ? "play-circle" : "camera"} size={28} color="#fff" />
+        </View>
+      )}
+      <View style={styles.storyTileOverlay}>
+        <View style={styles.storyTileTopRow}>
+          <Text style={styles.storyTileDate}>{formatStoryDate(story.createdAt)}</Text>
+          {story.videoUrl ? (
+            <View style={styles.storyTileVideoPill}>
+              <Feather name="play" size={10} color="#fff" />
+              <Text style={styles.storyTileVideoText}>
+                {story.videoDurationSeconds ? `${Math.round(story.videoDurationSeconds)}s` : "Video"}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <Text style={styles.storyTileCaption} numberOfLines={3}>{story.caption || "Story de la cheffe"}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function ChefDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -229,6 +317,8 @@ export default function ChefDetailScreen() {
   const isFav = favorites.includes(id ?? "");
   const isCourier = user?.type === "courier";
   const orderingEnabled = Boolean(user?.type === "client" || !user);
+  const chefDishes = chef?.dishes ?? [];
+  const chefStories = chef?.stories ?? [];
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const bottomInset = Platform.OS === "web" ? 34 : insets.bottom;
@@ -318,26 +408,21 @@ export default function ChefDetailScreen() {
     }
   }, [cart, loadCart, token]);
 
-  if (!chef) {
-    return (
-      <View style={styles.emptyScreen}>
-        <Text style={styles.emptyScreenText}>Cuisiniere introuvable</Text>
-      </View>
-    );
-  }
-
   const heroImage =
-    chef.heroImageUrl ??
-    chef.dishes.find((dish) => dish.imageUrls?.[0])?.imageUrls?.[0] ??
-    chef.dishes.find((dish) => dish.imageUrl)?.imageUrl ??
-    chef.stories?.find((story) => story.imageUrl)?.imageUrl ??
+    chef?.heroImageUrl ??
+    chefDishes.find((dish) => dish.imageUrls?.[0])?.imageUrls?.[0] ??
+    chefDishes.find((dish) => dish.imageUrl)?.imageUrl ??
+    chefStories.find((story) => story.imageUrl)?.imageUrl ??
     null;
 
-  const initials = getInitials(chef.name);
-  const stories = [...(chef.stories ?? [])].sort(
+  const initials = getInitials(chef?.name ?? "Cuisiniere");
+  const stories = [...chefStories].sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   );
-  const highlightedDishes = [...chef.dishes]
+  const customPackages = chefDishes.filter((dish) => dish.category === "Evenements");
+  const hasCustomService = customPackages.length > 0;
+  const menuDishes = chefDishes.filter((dish) => dish.category !== "Evenements");
+  const highlightedDishes = [...menuDishes]
     .sort((left, right) => {
       const leftScore = (left.isPopular ? 3 : 0) + (getDishDiscountPercent(left) > 0 ? 1 : 0);
       const rightScore = (right.isPopular ? 3 : 0) + (getDishDiscountPercent(right) > 0 ? 1 : 0);
@@ -347,14 +432,14 @@ export default function ChefDetailScreen() {
 
   const categoryOrder = useMemo(() => {
     const usedCategories = new Set(
-      chef.dishes.map((dish) => dish.category?.trim()).filter(Boolean) as string[],
+      chefDishes.map((dish) => dish.category?.trim()).filter(Boolean) as string[],
     );
     const ordered = CHEF_MENU_CATEGORIES.filter((category) => usedCategories.has(category));
     const extras = [...usedCategories].filter(
       (category) => !CHEF_MENU_CATEGORIES.includes(category as (typeof CHEF_MENU_CATEGORIES)[number]),
     );
     return ["Tous", ...ordered, ...extras.sort((left, right) => left.localeCompare(right, "fr"))];
-  }, [chef.dishes]);
+  }, [chefDishes]);
 
   useEffect(() => {
     if (!categoryOrder.includes(activeCategory)) {
@@ -363,9 +448,8 @@ export default function ChefDetailScreen() {
   }, [activeCategory, categoryOrder]);
 
   const filteredMenuDishes = useMemo(() => {
-    const visibleDishes = activeCategory === "Tous"
-      ? chef.dishes
-      : chef.dishes.filter((dish) => dish.category === activeCategory);
+    const source = activeCategory === "Tous" ? menuDishes : chefDishes.filter((dish) => dish.category === activeCategory);
+    const visibleDishes = source.filter((dish) => activeCategory === "Evenements" || dish.category !== "Evenements");
 
     return [...visibleDishes].sort((left, right) => {
       const leftScore = (left.isPopular ? 2 : 0) + (getDishDiscountPercent(left) > 0 ? 1 : 0);
@@ -376,22 +460,30 @@ export default function ChefDetailScreen() {
 
       return getDishCurrentPrice(left) - getDishCurrentPrice(right);
     });
-  }, [activeCategory, chef.dishes]);
+  }, [activeCategory, chefDishes, menuDishes]);
 
-  const topCategories = useMemo(() => getTopCategories(chef.dishes), [chef.dishes]);
-  const discountedCount = chef.dishes.filter((dish) => getDishDiscountPercent(dish) > 0).length;
+  const topCategories = useMemo(() => getTopCategories(menuDishes), [menuDishes]);
+  const discountedCount = chefDishes.filter((dish) => getDishDiscountPercent(dish) > 0).length;
   const totalItems = Object.values(cart).reduce((sum, item) => sum + item.quantity, 0);
-  const totalPrice = chef.dishes.reduce(
+  const totalPrice = chefDishes.reduce(
     (sum, dish) => sum + (cart[dish.id]?.quantity || 0) * dish.price,
     0,
   );
 
   const summaryCards = [
-    { label: "plats actifs", value: String(chef.dishes.length), icon: "grid" as const },
+    { label: "plats actifs", value: String(menuDishes.length), icon: "grid" as const },
     { label: "categories", value: String(Math.max(0, categoryOrder.length - 1)), icon: "layers" as const },
     { label: "promos", value: String(discountedCount), icon: "tag" as const },
-    { label: "stories", value: String(stories.length), icon: "camera" as const },
+    { label: hasCustomService ? "formules" : "stories", value: String(hasCustomService ? customPackages.length : stories.length), icon: hasCustomService ? "briefcase" as const : "camera" as const },
   ];
+
+  if (!chef) {
+    return (
+      <View style={styles.emptyScreen}>
+        <Text style={styles.emptyScreenText}>Cuisiniere introuvable</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -527,10 +619,7 @@ export default function ChefDetailScreen() {
           <View style={styles.sectionWrap}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionEyebrow}>Plats rapides</Text>
-              <Text style={styles.sectionTitle}>Ce qui ressort en premier sur la vitrine</Text>
-              <Text style={styles.sectionBody}>
-                Une selection courte, lisible et synchronisee avec les categories du menu public.
-              </Text>
+              <Text style={styles.sectionTitle}>Les choix qui comptent tout de suite</Text>
             </View>
 
             {highlightedDishes.length > 0 ? (
@@ -554,63 +643,48 @@ export default function ChefDetailScreen() {
             )}
 
             <View style={styles.panelCard}>
-              <Text style={styles.panelTitle}>Lecture rapide du menu</Text>
+              <Text style={styles.panelTitle}>Repères rapides</Text>
               <View style={styles.categoryPreviewList}>
                 {topCategories.length > 0 ? (
                   topCategories.map(([category, count]) => (
                     <View key={category} style={styles.categoryPreviewItem}>
                       <Text style={styles.categoryPreviewName}>{category}</Text>
-                      <Text style={styles.categoryPreviewCount}>{count} plat(s)</Text>
+                      <Text style={styles.categoryPreviewCount}>{count}</Text>
                     </View>
                   ))
                 ) : (
-                  <Text style={styles.categoryPreviewEmpty}>Les categories apparaitront ici des que le menu sera alimente.</Text>
+                  <Text style={styles.categoryPreviewEmpty}>Les catégories du menu apparaîtront ici.</Text>
                 )}
               </View>
             </View>
 
-            <View style={styles.serviceGrid}>
-              <View style={styles.serviceCard}>
-                <Text style={styles.serviceTitle}>Repas personnalise</Text>
-                <Text style={styles.serviceBody}>
-                  Demandez une formule sur-mesure pour un anniversaire, un diner prive ou un besoin specifique.
-                </Text>
+            {hasCustomService ? (
+              <View style={styles.serviceCardCompact}>
+                <View style={styles.serviceCardCompactCopy}>
+                  <Text style={styles.serviceCardCompactEyebrow}>Sur-mesure</Text>
+                  <Text style={styles.serviceCardCompactTitle}>{customPackages.length} formule(s) événement publiées</Text>
+                  <Text style={styles.serviceCardCompactMeta}>
+                    À partir de {formatPrice(Math.min(...customPackages.map((dish) => getDishCurrentPrice(dish))))} / pers.
+                  </Text>
+                </View>
                 {!isCourier ? (
                   <Pressable
                     style={styles.serviceBtn}
                     onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
                   >
-                    <Text style={styles.serviceBtnText}>Creer ma demande</Text>
+                    <Text style={styles.serviceBtnText}>Demander un devis</Text>
                   </Pressable>
                 ) : null}
               </View>
-
-              <View style={styles.serviceCard}>
-                <Text style={styles.serviceTitle}>Chef a domicile</Text>
-                <Text style={styles.serviceBody}>
-                  Reservez {chef.name.split(" ")[0]} pour cuisiner en direct chez vous ou sur votre evenement.
-                </Text>
-                {!isCourier ? (
-                  <Pressable
-                    style={[styles.serviceBtn, styles.serviceBtnSecondary]}
-                    onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
-                  >
-                    <Text style={styles.serviceBtnText}>Reserver un chef</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            </View>
+            ) : null}
           </View>
         ) : null}
 
         {activeTab === 1 ? (
           <View style={styles.sectionWrap}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionEyebrow}>Menu structure</Text>
-              <Text style={styles.sectionTitle}>Carte complete par categories</Text>
-              <Text style={styles.sectionBody}>
-                Les plats sont regroupes pour rester courts a parcourir et plus faciles a filtrer cote client.
-              </Text>
+              <Text style={styles.sectionEyebrow}>Menu</Text>
+              <Text style={styles.sectionTitle}>Carte simple à parcourir</Text>
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
@@ -629,17 +703,16 @@ export default function ChefDetailScreen() {
             </ScrollView>
 
             <View style={styles.menuInsightCard}>
-              <Text style={styles.menuInsightTitle}>
-                {activeCategory === "Tous" ? "Toute la carte" : activeCategory}
-              </Text>
+              <Text style={styles.menuInsightTitle}>{activeCategory === "Tous" ? "Toute la carte" : activeCategory}</Text>
               <Text style={styles.menuInsightBody}>
-                {filteredMenuDishes.length} plat(s) affiches {discountedCount > 0 ? `· ${discountedCount} reduction(s) actives sur le menu` : "· aucune reduction active"}
+                {filteredMenuDishes.length} choix · {discountedCount > 0 ? `${discountedCount} promo(s)` : "aucune promo"}
               </Text>
             </View>
 
             {filteredMenuDishes.length > 0 ? (
-              filteredMenuDishes.map((dish) => (
-                <DishCard
+              <View style={styles.menuGrid}>
+                {filteredMenuDishes.map((dish) => (
+                  <MenuTile
                   key={dish.id}
                   dish={dish}
                   quantity={isCourier ? 0 : (cart[dish.id]?.quantity || 0)}
@@ -648,7 +721,8 @@ export default function ChefDetailScreen() {
                   isLoading={changingDishId === dish.id}
                   orderingEnabled={orderingEnabled && !isCourier}
                 />
-              ))
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyState}>
                 <Feather name="layers" size={42} color={Colors.light.textTertiary} />
@@ -663,23 +737,15 @@ export default function ChefDetailScreen() {
           <View style={styles.sectionWrap}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionEyebrow}>Stories</Text>
-              <Text style={styles.sectionTitle}>Stories propres et bien structurees</Text>
-              <Text style={styles.sectionBody}>
-                Les couleurs de fond des stories ne pilotent plus la lecture ici. Tout est ramene sur une presentation neutre et premium.
-              </Text>
+              <Text style={styles.sectionTitle}>Mosaïque vidéo de la cheffe</Text>
             </View>
 
             {stories.length > 0 ? (
-              <>
-                <StoryCard story={stories[0]} prominent />
-                {stories.length > 1 ? (
-                  <View style={styles.storyList}>
-                    {stories.slice(1).map((story) => (
-                      <StoryCard key={story.id} story={story} />
-                    ))}
-                  </View>
-                ) : null}
-              </>
+              <View style={styles.storyGrid}>
+                {stories.map((story) => (
+                  <StoryTile key={story.id} story={story} />
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyState}>
                 <Feather name="camera" size={42} color={Colors.light.textTertiary} />
@@ -694,7 +760,7 @@ export default function ChefDetailScreen() {
           <View style={styles.sectionWrap}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionEyebrow}>A propos</Text>
-              <Text style={styles.sectionTitle}>Profil, rythme de service et reperes client</Text>
+              <Text style={styles.sectionTitle}>Tout le détail du profil</Text>
             </View>
 
             <View style={styles.aboutCard}>
@@ -707,6 +773,28 @@ export default function ChefDetailScreen() {
                     <Text style={styles.specialtyChipText}>{item}</Text>
                   </View>
                 ))}
+              </View>
+            </View>
+
+            <View style={styles.aboutCard}>
+              <Text style={styles.aboutTitle}>Services</Text>
+              <View style={styles.aboutInfoGrid}>
+                <View style={styles.aboutInfoItem}>
+                  <Text style={styles.aboutInfoLabel}>Menu</Text>
+                  <Text style={styles.aboutInfoValue}>{menuDishes.length} plats</Text>
+                </View>
+                <View style={styles.aboutInfoItem}>
+                  <Text style={styles.aboutInfoLabel}>Stories</Text>
+                  <Text style={styles.aboutInfoValue}>{stories.length} publiées</Text>
+                </View>
+                <View style={styles.aboutInfoItem}>
+                  <Text style={styles.aboutInfoLabel}>Sur-mesure</Text>
+                  <Text style={styles.aboutInfoValue}>{hasCustomService ? `${customPackages.length} formule(s)` : "Non proposé"}</Text>
+                </View>
+                <View style={styles.aboutInfoItem}>
+                  <Text style={styles.aboutInfoLabel}>Catégories fortes</Text>
+                  <Text style={styles.aboutInfoValue}>{topCategories.map(([category]) => category).join(", ") || "À venir"}</Text>
+                </View>
               </View>
             </View>
 
@@ -779,7 +867,7 @@ export default function ChefDetailScreen() {
             <Text style={styles.messageBtnText}>Message</Text>
           </Pressable>
 
-          {!isCourier ? (
+          {!isCourier && hasCustomService ? (
             <Pressable
               style={styles.orderBtn}
               onPress={() => router.push({ pathname: "/order/[chefId]", params: { chefId: chef.id } })}
@@ -884,6 +972,11 @@ const styles = StyleSheet.create({
   serviceBtn: { alignSelf: "flex-start", borderRadius: 14, backgroundColor: Colors.light.tint, paddingHorizontal: 14, paddingVertical: 11 },
   serviceBtnSecondary: { backgroundColor: Colors.light.tintDark },
   serviceBtnText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  serviceCardCompact: { borderRadius: 22, backgroundColor: "#2A2017", padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16 },
+  serviceCardCompactCopy: { flex: 1, gap: 4 },
+  serviceCardCompactEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.72)", textTransform: "uppercase", letterSpacing: 0.8 },
+  serviceCardCompactTitle: { fontSize: 17, fontFamily: "Poppins_700Bold", color: "#fff" },
+  serviceCardCompactMeta: { fontSize: 12, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.78)" },
   filterRow: { gap: 10, paddingRight: 12 },
   filterChip: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 11, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.card },
   filterChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
@@ -892,6 +985,20 @@ const styles = StyleSheet.create({
   menuInsightCard: { borderRadius: 18, backgroundColor: Colors.light.backgroundSecondary, padding: 14, gap: 4 },
   menuInsightTitle: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   menuInsightBody: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  menuGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
+  menuTile: { width: "48%", borderRadius: 20, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden" },
+  menuTileVisual: { position: "relative" },
+  menuTileImage: { width: "100%", height: 122, backgroundColor: Colors.light.backgroundSecondary },
+  menuTileFallback: { width: "100%", height: 122, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
+  menuTileBadge: { position: "absolute", top: 10, left: 10, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.92)", paddingHorizontal: 9, paddingVertical: 5 },
+  menuTileBadgeText: { fontSize: 10, fontFamily: "Poppins_700Bold", color: Colors.light.tint },
+  menuTileBody: { padding: 12, gap: 6 },
+  menuTileName: { fontSize: 14, fontFamily: "Poppins_700Bold", color: Colors.light.text, minHeight: 38 },
+  menuTileMeta: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
+  menuTilePrice: { fontSize: 14, fontFamily: "Poppins_700Bold", color: Colors.light.tint },
+  menuTileBtn: { marginTop: 4, borderRadius: 12, backgroundColor: Colors.light.tint, alignItems: "center", paddingVertical: 9 },
+  menuTileBtnText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  menuQtyControl: { marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: Colors.light.backgroundSecondary, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6 },
   storyList: { gap: 12 },
   storyCard: { borderRadius: 22, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden" },
   storyCardProminent: { shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 12, elevation: 2 },
@@ -909,9 +1016,23 @@ const styles = StyleSheet.create({
   storyDishCard: { borderRadius: 14, backgroundColor: Colors.light.backgroundSecondary, padding: 12, gap: 4 },
   storyDishName: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   storyDishPrice: { fontSize: 12, fontFamily: "Poppins_700Bold", color: Colors.light.tint },
+  storyGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
+  storyTile: { width: "48%", height: 220, borderRadius: 22, overflow: "hidden", backgroundColor: "#1F2937" },
+  storyTileImage: { width: "100%", height: "100%" },
+  storyTileFallback: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#1F2937" },
+  storyTileOverlay: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: "rgba(0,0,0,0.34)", gap: 8 },
+  storyTileTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  storyTileDate: { fontSize: 10, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.86)", textTransform: "uppercase", letterSpacing: 0.6 },
+  storyTileVideoPill: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.2)", paddingHorizontal: 8, paddingVertical: 4 },
+  storyTileVideoText: { fontSize: 10, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  storyTileCaption: { fontSize: 13, lineHeight: 18, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   aboutCard: { borderRadius: 22, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, gap: 12 },
   aboutTitle: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   aboutBody: { fontSize: 13, lineHeight: 21, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  aboutInfoGrid: { gap: 10 },
+  aboutInfoItem: { borderRadius: 14, backgroundColor: Colors.light.backgroundSecondary, padding: 12, gap: 4 },
+  aboutInfoLabel: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.textTertiary, textTransform: "uppercase", letterSpacing: 0.6 },
+  aboutInfoValue: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   specialtyRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   specialtyChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 9, backgroundColor: Colors.light.backgroundSecondary },
   specialtyChipText: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.text },

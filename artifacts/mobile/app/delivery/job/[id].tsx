@@ -209,6 +209,7 @@ export default function DeliveryJobScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const { token, user } = useApp();
+  const addressScope = user?.id ? `user:${user.id}` : "guest";
   const jobId = String(params.id ?? "");
   const [job, setJob] = useState<DeliveryJobDetail | null>(null);
   const [locations, setLocations] = useState<Array<{ latitude: number; longitude: number; createdAt: string }>>([]);
@@ -473,7 +474,7 @@ export default function DeliveryJobScreen() {
         latitude: pendingClientPoint.latitude,
         longitude: pendingClientPoint.longitude,
         updatedAt: new Date().toISOString(),
-      });
+      }, addressScope);
       Alert.alert("Position mise a jour", "Le livreur suit maintenant votre dernier point exact.");
     } catch (error: any) {
       Alert.alert("Erreur", error?.message ?? "Impossible de mettre a jour votre position exacte");

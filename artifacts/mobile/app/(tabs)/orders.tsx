@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
 import { ApiError, apiFetch } from "@/constants/api";
-import { Order, ReceivedOrder, useApp } from "@/contexts/AppContext";
+import { CustomRequest, Order, ReceivedCustomRequest, ReceivedOrder, useApp } from "@/contexts/AppContext";
 
 const STATUS_CONFIG = {
   pending: { label: "En attente", color: "#F39C12", icon: "clock" as const },
@@ -34,6 +34,14 @@ const DELIVERY_STATUS_CONFIG = {
   on_the_way: { label: "En livraison", color: "#059669" },
   delivered: { label: "Livrée", color: "#374151" },
   cancelled: { label: "Annulée", color: "#DC2626" },
+};
+
+const CUSTOM_REQUEST_STATUS_CONFIG = {
+  pending: { label: "À étudier", color: "#D97706" },
+  quoted: { label: "Devis envoyé", color: "#2563EB" },
+  accepted: { label: "Acceptée", color: "#059669" },
+  rejected: { label: "Refusée", color: "#DC2626" },
+  cancelled: { label: "Annulée", color: "#6B7280" },
 };
 
 type DeliveryJob = {
@@ -57,7 +65,7 @@ type DeliveryJob = {
 };
 
 type CourierMissionFilter = "all" | "current" | "available" | "history";
-type ClientOrderFilter = "all" | "meal" | "delivery";
+type ClientOrderFilter = "all" | "meal" | "delivery" | "custom";
 
 function formatChefOrderMoment(value?: string | null) {
   if (!value) {
@@ -407,6 +415,59 @@ function ClientHistoryCard({
   );
 }
 
+function CustomRequestHistoryCard({ request }: { request: CustomRequest }) {
+  const status = CUSTOM_REQUEST_STATUS_CONFIG[request.status];
+
+  return (
+    <View style={styles.historyCard}>
+      <View style={styles.historyCardTopRow}>
+        <View style={[styles.historyCardIconWrap, styles.historyMealIconWrap]}>
+          <Feather name="clipboard" size={18} color="#D4611A" />
+        </View>
+        <View style={styles.historyCardMain}>
+          <View style={styles.historyCardHeadlineRow}>
+            <Text style={styles.historyCardTitle} numberOfLines={1}>{request.packageName}</Text>
+            <Text style={styles.historyCardAmount}>{`${Math.round(request.estimatedTotal).toLocaleString("fr-FR")}F`}</Text>
+          </View>
+          <Text style={styles.historyCardMeta} numberOfLines={1}>{request.chefName}</Text>
+          <Text style={styles.historyCardSubline} numberOfLines={1}>{`${request.estimatedPersons} pers. · ${request.occasion || "Demande sur-mesure"}`}</Text>
+        </View>
+      </View>
+
+      <View style={styles.historyBottomRow}>
+        <View style={[styles.historyStatusPill, { backgroundColor: `${status.color}18` }]}> 
+          <Text style={[styles.historyStatusText, { color: status.color }]}>{status.label}</Text>
+        </View>
+        <View style={styles.historyActionsRow}>
+          {request.chefResponse ? (
+            <View style={styles.historyGhostBtnStatic}>
+              <Feather name="message-square" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>Réponse reçue</Text>
+            </View>
+          ) : null}
+          <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/chat/[chatId]", params: { chatId: `chat-${request.chefId}`, chefId: request.chefId, chefName: request.chefName, chefSpecialty: "", coverColor: "#C4522A" } })}>
+            <Feather name="message-circle" size={16} color="#1F1A17" />
+            <Text style={styles.historyGhostBtnText}>Contacter</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {request.notes ? (
+        <View style={styles.chefBriefCard}>
+          <Text style={styles.chefBriefLabel}>Brief envoyé</Text>
+          <Text style={styles.chefBriefText}>{request.notes}</Text>
+        </View>
+      ) : null}
+      {request.chefResponse ? (
+        <View style={styles.chefBriefCard}>
+          <Text style={styles.chefBriefLabel}>Réponse de la cheffe</Text>
+          <Text style={styles.chefBriefText}>{request.chefResponse}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function ChefOrderCard({
   order,
   onAdvance,
@@ -434,9 +495,7 @@ function ChefOrderCard({
         ? { label: "Lancer la préparation", status: "preparing" as const }
         : order.status === "preparing"
           ? { label: "Marquer prête", status: "ready" as const }
-          : order.status === "ready" && !order.delivery
-            ? { label: "Terminer la commande", status: "delivered" as const }
-            : null;
+          : null;
 
   return (
     <View style={[styles.chefCard, order.status === "pending" && styles.chefCardPriority]}>
@@ -531,6 +590,58 @@ function ChefOrderCard({
   );
 }
 
+function ChefCustomRequestCard({ request }: { request: ReceivedCustomRequest }) {
+  const status = CUSTOM_REQUEST_STATUS_CONFIG[request.status];
+
+  return (
+    <View style={styles.chefCard}>
+      <View style={styles.chefCardTopRow}>
+        <View style={styles.chefCardIdentityRow}>
+          <View style={[styles.chefCardIconWrap, styles.historyMealIconWrap]}>
+            <Feather name="clipboard" size={18} color="#D4611A" />
+          </View>
+          <View style={styles.chefCardMain}>
+            <View style={styles.chefCardHeadlineRow}>
+              <Text style={styles.chefCardTitle} numberOfLines={1}>{request.clientName}</Text>
+              <Text style={styles.chefCardAmount}>{`${Math.round(request.estimatedTotal).toLocaleString("fr-FR")}F`}</Text>
+            </View>
+            <Text style={styles.chefCardDate}>{formatChefOrderMoment(request.createdAt)}</Text>
+            <Text style={styles.chefCardMeta}>{`${request.packageName} · ${request.estimatedPersons} pers.`}</Text>
+          </View>
+        </View>
+
+        <View style={[styles.historyStatusPill, { backgroundColor: `${status.color}18` }]}> 
+          <Text style={[styles.historyStatusText, { color: status.color }]}>{status.label}</Text>
+        </View>
+      </View>
+
+      <View style={styles.chefCardTagRow}>
+        {request.occasion ? <View style={styles.chefInfoChip}><Text style={styles.chefInfoChipText}>{request.occasion}</Text></View> : null}
+        {request.budget ? <View style={styles.chefInfoChip}><Text style={styles.chefInfoChipText}>{request.budget}</Text></View> : null}
+      </View>
+
+      <View style={styles.chefBriefCard}>
+        <Text style={styles.chefBriefLabel}>Brief client</Text>
+        <Text style={styles.chefBriefText}>{request.notes || "Aucun détail complémentaire."}</Text>
+      </View>
+
+      {request.preferences.length > 0 ? (
+        <View style={styles.chefItemsCard}>
+          <Text style={styles.chefBriefLabel}>Préférences</Text>
+          <Text style={styles.chefBriefText}>{request.preferences.join(" • ")}</Text>
+        </View>
+      ) : null}
+
+      {request.chefResponse ? (
+        <View style={styles.chefBriefCard}>
+          <Text style={styles.chefBriefLabel}>Réponse envoyée</Text>
+          <Text style={styles.chefBriefText}>{request.chefResponse}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <View style={styles.sectionHeader}>
@@ -545,11 +656,15 @@ export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
   const {
     orders,
+    customRequests,
     chefOrders,
+    chefCustomRequests,
     token,
     user,
     refreshOrders,
+    fetchCustomRequests,
     fetchChefOrders,
+    fetchChefCustomRequests,
     updateChefOrderStatus,
     requestDeliveryForOrder,
     isLoadingChefOrders,
@@ -678,15 +793,17 @@ export default function OrdersScreen() {
         }
         if (isChef) {
           void fetchChefOrders();
+          void fetchChefCustomRequests();
           return;
         }
         void refreshOrders();
+        void fetchCustomRequests();
       };
 
       runRefresh();
       const interval = setInterval(runRefresh, isCourier ? 8000 : isChef ? 10000 : 12000);
       return () => clearInterval(interval);
-    }, [token, isCourier, isChef, refreshOrders, fetchChefOrders])
+    }, [token, isCourier, isChef, refreshOrders, fetchCustomRequests, fetchChefOrders, fetchChefCustomRequests])
   );
 
   const acceptJob = async (jobId: string) => {
@@ -710,20 +827,27 @@ export default function OrdersScreen() {
     pending: chefOrders.filter((order) => order.status === "pending").length,
     active: chefOrders.filter((order) => ["accepted", "preparing"].includes(order.status)).length,
     ready: chefOrders.filter((order) => order.status === "ready").length,
+    custom: chefCustomRequests.filter((request) => request.status === "pending").length,
     delivered: chefOrders.filter((order) => order.status === "delivered").length,
-  }), [chefOrders]);
+  }), [chefCustomRequests, chefOrders]);
 
   const clientSummary = useMemo(() => ({
     active: orders.filter((order) => ["pending", "accepted", "preparing", "ready"].includes(order.status)).length,
     inDelivery: orders.filter((order) => order.delivery && ["accepted", "picked_up", "on_the_way"].includes(order.delivery.status)).length,
     delivered: orders.filter((order) => order.status === "delivered" || order.delivery?.status === "delivered").length,
+    custom: customRequests.length,
     totalSpent: orders.reduce((sum, order) => sum + order.total, 0),
-  }), [orders]);
+  }), [customRequests.length, orders]);
 
   const priorityOrders = chefOrders.filter((order) => ["pending", "accepted", "preparing"].includes(order.status));
   const readyOrders = chefOrders.filter((order) => order.status === "ready");
   const archivedOrders = chefOrders.filter((order) => order.status === "delivered");
+  const pendingCustomRequests = chefCustomRequests.filter((request) => ["pending", "quoted"].includes(request.status));
+  const archivedCustomRequests = chefCustomRequests.filter((request) => ["accepted", "rejected", "cancelled"].includes(request.status));
   const filteredClientOrders = useMemo(() => {
+    if (clientFilter === "custom") {
+      return [];
+    }
     if (clientFilter === "all") {
       return orders;
     }
@@ -737,6 +861,11 @@ export default function OrdersScreen() {
   const clientOrderSections = useMemo(
     () => groupItemsByDay(filteredClientOrders, (order) => order.createdAt),
     [filteredClientOrders],
+  );
+  const filteredCustomRequests = useMemo(() => clientFilter === "all" || clientFilter === "custom" ? customRequests : [], [clientFilter, customRequests]);
+  const clientCustomRequestSections = useMemo(
+    () => groupItemsByDay(filteredCustomRequests, (request) => request.createdAt),
+    [filteredCustomRequests],
   );
   const filteredCurrentJobs = useMemo(
     () => courierFilter === "available" || courierFilter === "history" ? [] : currentJobs,
@@ -766,9 +895,16 @@ export default function OrdersScreen() {
       {
         key: "ready",
         title: "Prêtes à sortir",
-        subtitle: "Déclenchez un livreur ou clôturez la remise si la cliente récupère sur place.",
+        subtitle: "Déclenchez la recherche d'un livreur puis suivez la prise en charge jusqu'à la livraison.",
         items: readyOrders,
         empty: "Aucune commande prête pour le moment.",
+      },
+      {
+        key: "custom",
+        title: "Demandes sur-mesure",
+        subtitle: "Ces briefs sont séparés des commandes classiques et restent à traiter comme demandes personnalisées.",
+        items: pendingCustomRequests,
+        empty: "Aucune demande sur-mesure active.",
       },
       {
         key: "history",
@@ -777,8 +913,15 @@ export default function OrdersScreen() {
         items: archivedOrders,
         empty: "Aucune commande finalisée pour l'instant.",
       },
+      {
+        key: "custom-history",
+        title: "Demandes clôturées",
+        subtitle: "Archive des demandes personnalisées déjà traitées.",
+        items: archivedCustomRequests,
+        empty: "Aucune demande sur-mesure clôturée.",
+      },
     ],
-    [archivedOrders, priorityOrders, readyOrders],
+    [archivedCustomRequests, archivedOrders, pendingCustomRequests, priorityOrders, readyOrders],
   );
 
   const handleAdvanceChefOrder = async (order: ReceivedOrder) => {
@@ -789,9 +932,7 @@ export default function OrdersScreen() {
           ? "preparing"
           : order.status === "preparing"
             ? "ready"
-            : order.status === "ready"
-              ? "delivered"
-              : null;
+            : null;
     if (!nextStatus) return;
     setChefActionKey(`${order.id}:status`);
     try {
@@ -971,8 +1112,8 @@ export default function OrdersScreen() {
               <Text style={styles.summaryLabel}>Prêtes</Text>
             </View>
             <View style={styles.summaryCardSoft}>
-              <Text style={styles.summaryValue}>{chefSummary.delivered}</Text>
-              <Text style={styles.summaryLabel}>Terminées</Text>
+              <Text style={styles.summaryValue}>{chefSummary.custom}</Text>
+              <Text style={styles.summaryLabel}>Sur-mesure</Text>
             </View>
           </View>
         </View>
@@ -999,16 +1140,20 @@ export default function OrdersScreen() {
                     <View style={styles.emptyInline}>
                       <Text style={styles.emptyDesc}>{section.empty}</Text>
                     </View>
-                  ) : section.items.map((order) => (
-                    <ChefOrderCard
-                      key={order.id}
-                      order={order}
-                      onAdvance={handleAdvanceChefOrder}
-                      onRequestDelivery={handleRequestDelivery}
-                      onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
-                      loadingAction={chefActionKey}
-                    />
-                  ))}
+                  ) : section.key.startsWith("custom")
+                    ? section.items.map((request) => (
+                        <ChefCustomRequestCard key={request.id} request={request as ReceivedCustomRequest} />
+                      ))
+                    : section.items.map((order) => (
+                        <ChefOrderCard
+                          key={(order as ReceivedOrder).id}
+                          order={order as ReceivedOrder}
+                          onAdvance={handleAdvanceChefOrder}
+                          onRequestDelivery={handleRequestDelivery}
+                          onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
+                          loadingAction={chefActionKey}
+                        />
+                      ))}
                 </View>
               ))
             )}
@@ -1022,15 +1167,16 @@ export default function OrdersScreen() {
     <View style={[styles.courierHistoryScreen, { paddingTop: topInset }]}> 
       <View style={styles.historyHeader}>
         <Text style={styles.historyScreenTitle}>Mes courses et commandes</Text>
-        <Text style={styles.historyScreenSubtitle}>{orders.length} commande{orders.length !== 1 ? "s" : ""}</Text>
+        <Text style={styles.historyScreenSubtitle}>{orders.length} commande{orders.length !== 1 ? "s" : ""} · {customRequests.length} demande{customRequests.length !== 1 ? "s" : ""} sur-mesure</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
           <FilterChip label="Tout" active={clientFilter === "all"} onPress={() => setClientFilter("all")} />
           <FilterChip label="Repas" active={clientFilter === "meal"} onPress={() => setClientFilter("meal")} />
           <FilterChip label="Livraison" active={clientFilter === "delivery"} onPress={() => setClientFilter("delivery")} />
+          <FilterChip label="Sur-mesure" active={clientFilter === "custom"} onPress={() => setClientFilter("custom")} />
         </ScrollView>
       </View>
 
-      {filteredClientOrders.length === 0 ? (
+      {filteredClientOrders.length === 0 && filteredCustomRequests.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIcon}>
             <Feather name="shopping-bag" size={36} color={Colors.light.tabIconDefault} />
@@ -1065,8 +1211,8 @@ export default function OrdersScreen() {
               <Text style={styles.summaryLabel}>Livrées</Text>
             </View>
             <View style={styles.summaryCardSoft}>
-              <Text style={styles.summaryValue}>{Math.round(clientSummary.totalSpent / 1000)}k</Text>
-              <Text style={styles.summaryLabel}>Dépensés</Text>
+              <Text style={styles.summaryValue}>{clientSummary.custom}</Text>
+              <Text style={styles.summaryLabel}>Sur-mesure</Text>
             </View>
           </View>
 
@@ -1075,6 +1221,15 @@ export default function OrdersScreen() {
               <Text style={styles.daySectionTitle}>{section.title}</Text>
               {section.items.map((order) => (
                 <ClientHistoryCard key={order.id} order={order} onReportIssue={handleReportIssue} reporting={reportingOrderId === order.id} />
+              ))}
+            </View>
+          ))}
+
+          {clientCustomRequestSections.map((section) => (
+            <View key={`custom-${section.title}`} style={styles.daySectionBlock}>
+              <Text style={styles.daySectionTitle}>{`${section.title} · sur-mesure`}</Text>
+              {section.items.map((request) => (
+                <CustomRequestHistoryCard key={request.id} request={request} />
               ))}
             </View>
           ))}
@@ -1573,6 +1728,16 @@ const styles = StyleSheet.create({
     minHeight: 56,
     borderRadius: 18,
     backgroundColor: "#EBE7E3",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+  },
+  historyGhostBtnStatic: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 18,
+    backgroundColor: "#F3EDE6",
     alignItems: "center",
     justifyContent: "center",
     gap: 4,

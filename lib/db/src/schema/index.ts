@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 export const userTypeEnum = pgEnum("user_type", ["client", "chef", "courier"]);
 export const orderStatusEnum = pgEnum("order_status", ["pending", "accepted", "preparing", "ready", "delivered"]);
+export const customRequestStatusEnum = pgEnum("custom_request_status", ["pending", "quoted", "accepted", "rejected", "cancelled"]);
 export const deliveryStatusEnum = pgEnum("delivery_status", [
   "broadcasting",
   "available",
@@ -131,6 +132,29 @@ export const ordersTable = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const customRequestsTable = pgTable("custom_requests", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => usersTable.id),
+  chefProfileId: integer("chef_profile_id").notNull().references(() => chefProfilesTable.id),
+  packageDishId: integer("package_dish_id").references(() => dishesTable.id),
+  packageName: text("package_name").notNull(),
+  packageDescription: text("package_description").notNull().default(""),
+  unitPrice: real("unit_price").notNull().default(0),
+  estimatedPersons: integer("estimated_persons").notNull().default(1),
+  estimatedTotal: real("estimated_total").notNull().default(0),
+  occasion: text("occasion"),
+  budget: text("budget"),
+  preferences: text("preferences").array().notNull().default([]),
+  storyReference: text("story_reference"),
+  deliveryAddress: text("delivery_address"),
+  notes: text("notes"),
+  chefResponse: text("chef_response"),
+  status: customRequestStatusEnum("status").notNull().default("pending"),
+  respondedAt: timestamp("responded_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const orderItemsTable = pgTable("order_items", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id").notNull().references(() => ordersTable.id),
@@ -228,6 +252,7 @@ export const notificationsTable = pgTable("notifications", {
   title: text("title").notNull(),
   message: text("message").notNull(),
   orderId: integer("order_id").references(() => ordersTable.id),
+  customRequestId: integer("custom_request_id").references(() => customRequestsTable.id),
   deliveryJobId: integer("delivery_job_id").references(() => deliveryJobsTable.id),
   isRead: boolean("is_read").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -324,6 +349,7 @@ export const insertCourierProfileSchema = createInsertSchema(courierProfilesTabl
 export const insertDishSchema = createInsertSchema(dishesTable).omit({ id: true, createdAt: true });
 export const insertStorySchema = createInsertSchema(storiesTable).omit({ id: true });
 export const insertOrderSchema = createInsertSchema(ordersTable).omit({ id: true, createdAt: true });
+export const insertCustomRequestSchema = createInsertSchema(customRequestsTable).omit({ id: true, createdAt: true, updatedAt: true, respondedAt: true });
 export const insertMessageSchema = createInsertSchema(messagesTable).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notificationsTable).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviewsTable).omit({ id: true, createdAt: true });
@@ -340,6 +366,7 @@ export type InsertCourierProfile = z.infer<typeof insertCourierProfileSchema>;
 export type Dish = typeof dishesTable.$inferSelect;
 export type Story = typeof storiesTable.$inferSelect;
 export type Order = typeof ordersTable.$inferSelect;
+export type CustomRequest = typeof customRequestsTable.$inferSelect;
 export type Message = typeof messagesTable.$inferSelect;
 export type Notification = typeof notificationsTable.$inferSelect;
 export type Review = typeof reviewsTable.$inferSelect;

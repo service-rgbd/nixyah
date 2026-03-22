@@ -2,6 +2,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const DELIVERY_ADDRESS_STORAGE_KEY = "nixyah_delivery_address";
 
+function getDeliveryAddressStorageKey(scope = "guest") {
+  return `${DELIVERY_ADDRESS_STORAGE_KEY}:${scope}`;
+}
+
 export interface SavedDeliveryAddress {
   label: string;
   latitude?: number | null;
@@ -9,8 +13,8 @@ export interface SavedDeliveryAddress {
   updatedAt: string;
 }
 
-export async function loadSavedDeliveryAddress(): Promise<SavedDeliveryAddress | null> {
-  const rawValue = await AsyncStorage.getItem(DELIVERY_ADDRESS_STORAGE_KEY);
+export async function loadSavedDeliveryAddress(scope = "guest"): Promise<SavedDeliveryAddress | null> {
+  const rawValue = await AsyncStorage.getItem(getDeliveryAddressStorageKey(scope));
   if (!rawValue) {
     return null;
   }
@@ -26,8 +30,8 @@ export async function loadSavedDeliveryAddress(): Promise<SavedDeliveryAddress |
   }
 }
 
-export async function saveDeliveryAddress(address: SavedDeliveryAddress): Promise<void> {
-  await AsyncStorage.setItem(DELIVERY_ADDRESS_STORAGE_KEY, JSON.stringify(address));
+export async function saveDeliveryAddress(address: SavedDeliveryAddress, scope = "guest"): Promise<void> {
+  await AsyncStorage.setItem(getDeliveryAddressStorageKey(scope), JSON.stringify(address));
 }
 
 export function formatAddressTimestamp(value?: string | null): string {

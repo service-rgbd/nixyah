@@ -9,6 +9,18 @@ import React, {
 } from "react";
 import { apiFetch, normalizeRemoteUrl } from "@/constants/api";
 
+const FAVORITES_STORAGE_KEY = "nixyah_favorites";
+const ORDERS_STORAGE_KEY = "nixyah_orders";
+const CHATS_STORAGE_KEY = "nixyah_chats";
+
+function getStorageScope(userId?: string | null) {
+  return userId ? `user:${userId}` : "guest";
+}
+
+function getScopedStorageKey(baseKey: string, userId?: string | null) {
+  return `${baseKey}:${getStorageScope(userId)}`;
+}
+
 export interface Chef {
   id: string;
   name: string;
@@ -145,6 +157,54 @@ export interface Order {
   } | null;
 }
 
+export interface CustomRequest {
+  id: string;
+  chefId: string;
+  chefName: string;
+  chefLocation: string;
+  packageDishId?: string | null;
+  packageName: string;
+  packageDescription: string;
+  unitPrice: number;
+  estimatedPersons: number;
+  estimatedTotal: number;
+  occasion?: string;
+  budget?: string;
+  preferences: string[];
+  storyReference?: string;
+  deliveryAddress?: string;
+  notes?: string;
+  chefResponse?: string;
+  status: "pending" | "quoted" | "accepted" | "rejected" | "cancelled";
+  respondedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReceivedCustomRequest {
+  id: string;
+  clientId: string;
+  clientName: string;
+  clientLocation: string;
+  packageDishId?: string | null;
+  packageName: string;
+  packageDescription: string;
+  unitPrice: number;
+  estimatedPersons: number;
+  estimatedTotal: number;
+  occasion?: string;
+  budget?: string;
+  preferences: string[];
+  storyReference?: string;
+  deliveryAddress?: string;
+  notes?: string;
+  chefResponse?: string;
+  status: "pending" | "quoted" | "accepted" | "rejected" | "cancelled";
+  respondedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ReceivedOrder {
   id: string;
   clientId: string;
@@ -220,7 +280,9 @@ interface AppContextValue {
   chefs: Chef[];
   stories: Story[];
   orders: Order[];
+  customRequests: CustomRequest[];
   chefOrders: ReceivedOrder[];
+  chefCustomRequests: ReceivedCustomRequest[];
   chats: Chat[];
   notifications: Notification[];
   chefStats: ChefStats | null;
@@ -238,6 +300,27 @@ interface AppContextValue {
   registerChef: (data: RegisterChefData) => Promise<AuthRegistrationResult>;
   registerCourier: (data: RegisterCourierData) => Promise<AuthRegistrationResult>;
   addOrder: (order: Order) => void;
+  createOrder: (data: {
+    chefId: string;
+    items: Array<{ dishId: string; quantity: number }>;
+    occasion?: string;
+    persons?: number;
+    budget?: string;
+    notes?: string;
+    deliveryAddress?: string;
+  }) => Promise<Order>;
+  createCustomRequest: (data: {
+    chefId: string;
+    packageDishId: string;
+    estimatedPersons: number;
+    estimatedTotal: number;
+    occasion?: string;
+    budget?: string;
+    preferences?: string[];
+    storyReference?: string;
+    notes?: string;
+    deliveryAddress?: string;
+  }) => Promise<CustomRequest>;
   toggleFavorite: (chefId: string) => void;
   sendMessage: (chatId: string, chefId: string, text: string, chefName: string, chefSpecialty: string, coverColor: string) => void;
   getChef: (id: string) => Chef | undefined;
@@ -252,6 +335,9 @@ interface AppContextValue {
   updateChefDish: (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean; discountPercent?: number; discountLabel?: string }) => Promise<void>;
   deleteChefDish: (dishId: string) => Promise<void>;
   fetchChefOrders: () => Promise<void>;
+  fetchCustomRequests: () => Promise<void>;
+  fetchChefCustomRequests: () => Promise<void>;
+  updateChefCustomRequestStatus: (requestId: string, data: { status: ReceivedCustomRequest["status"]; chefResponse?: string }) => Promise<void>;
   updateChefOrderStatus: (orderId: string, status: ReceivedOrder["status"]) => Promise<void>;
   requestDeliveryForOrder: (orderId: string) => Promise<void>;
   fetchNotifications: () => Promise<void>;
@@ -446,6 +532,58 @@ function mapApiOrder(order: any): Order {
   };
 }
 
+function mapApiCustomRequest(request: any): CustomRequest {
+  return {
+    id: String(request.id),
+    chefId: String(request.chefId),
+    chefName: String(request.chefName ?? ""),
+    chefLocation: String(request.chefLocation ?? ""),
+    packageDishId: request.packageDishId ? String(request.packageDishId) : null,
+    packageName: String(request.packageName ?? ""),
+    packageDescription: String(request.packageDescription ?? ""),
+    unitPrice: Number(request.unitPrice ?? 0),
+    estimatedPersons: Number(request.estimatedPersons ?? 1),
+    estimatedTotal: Number(request.estimatedTotal ?? 0),
+    occasion: request.occasion ?? "",
+    budget: request.budget ?? "",
+    preferences: Array.isArray(request.preferences) ? request.preferences.map(String) : [],
+    storyReference: request.storyReference ?? "",
+    deliveryAddress: request.deliveryAddress ?? "",
+    notes: request.notes ?? "",
+    chefResponse: request.chefResponse ?? "",
+    status: request.status,
+    respondedAt: request.respondedAt ?? null,
+    createdAt: String(request.createdAt ?? new Date().toISOString()),
+    updatedAt: String(request.updatedAt ?? request.createdAt ?? new Date().toISOString()),
+  };
+}
+
+function mapApiChefCustomRequest(request: any): ReceivedCustomRequest {
+  return {
+    id: String(request.id),
+    clientId: String(request.clientId),
+    clientName: String(request.clientName ?? "Cliente"),
+    clientLocation: String(request.clientLocation ?? ""),
+    packageDishId: request.packageDishId ? String(request.packageDishId) : null,
+    packageName: String(request.packageName ?? ""),
+    packageDescription: String(request.packageDescription ?? ""),
+    unitPrice: Number(request.unitPrice ?? 0),
+    estimatedPersons: Number(request.estimatedPersons ?? 1),
+    estimatedTotal: Number(request.estimatedTotal ?? 0),
+    occasion: request.occasion ?? "",
+    budget: request.budget ?? "",
+    preferences: Array.isArray(request.preferences) ? request.preferences.map(String) : [],
+    storyReference: request.storyReference ?? "",
+    deliveryAddress: request.deliveryAddress ?? "",
+    notes: request.notes ?? "",
+    chefResponse: request.chefResponse ?? "",
+    status: request.status,
+    respondedAt: request.respondedAt ?? null,
+    createdAt: String(request.createdAt ?? new Date().toISOString()),
+    updatedAt: String(request.updatedAt ?? request.createdAt ?? new Date().toISOString()),
+  };
+}
+
 function mapApiChefOrder(order: any): ReceivedOrder {
   return {
     id: String(order.id),
@@ -492,7 +630,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [chefs, setChefs] = useState<Chef[]>([]);
   const [stories, setStories] = useState<Story[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [customRequests, setCustomRequests] = useState<CustomRequest[]>([]);
   const [chefOrders, setChefOrders] = useState<ReceivedOrder[]>([]);
+  const [chefCustomRequests, setChefCustomRequests] = useState<ReceivedCustomRequest[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [chefStats, setChefStats] = useState<ChefStats | null>(null);
@@ -565,6 +705,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [token, user?.type]);
 
+  const fetchCustomRequests = useCallback(async () => {
+    if (!token || user?.type !== "client") return;
+    try {
+      const data = await apiFetch<{ requests: any[] }>("/custom-requests", { token });
+      setCustomRequests((data.requests ?? []).map(mapApiCustomRequest));
+    } catch (error) {
+      console.warn("Failed to load custom requests:", error);
+    }
+  }, [token, user?.type]);
+
+  const fetchChefCustomRequests = useCallback(async () => {
+    if (!token || user?.type !== "chef") return;
+    try {
+      const data = await apiFetch<{ requests: any[] }>("/chef/custom-requests", { token });
+      setChefCustomRequests((data.requests ?? []).map(mapApiChefCustomRequest));
+    } catch (error) {
+      console.warn("Failed to load chef custom requests:", error);
+    }
+  }, [token, user?.type]);
+
+  const fetchChefOrders = useCallback(async () => {
+    if (!token || user?.type !== "chef") return;
+    try {
+      setIsLoadingChefOrders(true);
+      const data = await apiFetch<{ orders: any[] }>("/chef/orders", { token });
+      setChefOrders((data.orders ?? []).map(mapApiChefOrder));
+    } catch (error) {
+      console.warn("Failed to load chef orders:", error);
+    } finally {
+      setIsLoadingChefOrders(false);
+    }
+  }, [token, user?.type]);
+
   const likeStory = useCallback(async (storyId: string) => {
     try {
       const response = await apiFetch<{ liked: boolean; likeCount: number }>(`/stories/${storyId}/like`, { method: "POST", token: token ?? undefined });
@@ -622,15 +795,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      // favorites can be kept locally regardless of auth
-      try {
-        const fav = await AsyncStorage.getItem("nixyah_favorites");
-        if (fav) setFavorites(JSON.parse(fav));
-      } catch (e) {
-        console.warn("Failed to load favorites:", e);
-      }
-
-      // Check auth token and only load orders/chats for authenticated users
       try {
         const savedToken = await AsyncStorage.getItem("nixyah_token");
         if (savedToken) {
@@ -638,13 +802,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const me = await apiFetch<AuthUser>("/auth/me", { token: savedToken });
             setUser(mapApiAuthUser(me));
             setToken(savedToken);
-
-            // restore persisted orders/chats only for authenticated user
-            const ordersStr = await AsyncStorage.getItem("nixyah_orders");
-            if (ordersStr) setOrders(JSON.parse(ordersStr));
-
-            const chatsStr = await AsyncStorage.getItem("nixyah_chats");
-            if (chatsStr) setChats(JSON.parse(chatsStr));
           } catch (err) {
             await AsyncStorage.removeItem("nixyah_token");
           }
@@ -661,16 +818,105 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [refreshChefs, refreshStories]);
 
   useEffect(() => {
+    if (isLoadingAuth) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadScopedState = async () => {
+      try {
+        const favoritesValue = await AsyncStorage.getItem(getScopedStorageKey(FAVORITES_STORAGE_KEY, user?.id));
+        if (!isCancelled) {
+          setFavorites(favoritesValue ? JSON.parse(favoritesValue) : []);
+        }
+      } catch (error) {
+        console.warn("Failed to load favorites:", error);
+        if (!isCancelled) {
+          setFavorites([]);
+        }
+      }
+
+      if (!user) {
+        if (!isCancelled) {
+          setOrders([]);
+          setCustomRequests([]);
+          setChats([]);
+          setChefOrders([]);
+          setChefCustomRequests([]);
+          setNotifications([]);
+          setChefStats(null);
+        }
+        return;
+      }
+
+      try {
+        const [ordersValue, chatsValue] = await Promise.all([
+          user.type === "client" ? AsyncStorage.getItem(getScopedStorageKey(ORDERS_STORAGE_KEY, user.id)) : Promise.resolve(null),
+          AsyncStorage.getItem(getScopedStorageKey(CHATS_STORAGE_KEY, user.id)),
+        ]);
+
+        if (!isCancelled) {
+          setOrders(user.type === "client" && ordersValue ? JSON.parse(ordersValue) : []);
+          setChats(chatsValue ? JSON.parse(chatsValue) : []);
+          setCustomRequests([]);
+          setChefCustomRequests([]);
+        }
+      } catch (error) {
+        console.warn("Failed to load scoped user data:", error);
+        if (!isCancelled) {
+          setOrders([]);
+          setCustomRequests([]);
+          setChats([]);
+          setChefCustomRequests([]);
+        }
+      }
+    };
+
+    void loadScopedState();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isLoadingAuth, user?.id, user?.type]);
+
+  useEffect(() => {
+    if (isLoadingAuth) {
+      return;
+    }
+
+    void AsyncStorage.setItem(getScopedStorageKey(FAVORITES_STORAGE_KEY, user?.id), JSON.stringify(favorites));
+  }, [favorites, isLoadingAuth, user?.id]);
+
+  useEffect(() => {
+    if (isLoadingAuth || !user || user.type !== "client") {
+      return;
+    }
+
+    void AsyncStorage.setItem(getScopedStorageKey(ORDERS_STORAGE_KEY, user.id), JSON.stringify(orders));
+  }, [isLoadingAuth, orders, user?.id, user?.type]);
+
+  useEffect(() => {
+    if (isLoadingAuth || !user) {
+      return;
+    }
+
+    void AsyncStorage.setItem(getScopedStorageKey(CHATS_STORAGE_KEY, user.id), JSON.stringify(chats));
+  }, [chats, isLoadingAuth, user?.id]);
+
+  useEffect(() => {
     if (token && user?.type === "client") {
       refreshOrders();
+      fetchCustomRequests();
     }
-  }, [token, user?.type, refreshOrders]);
+  }, [token, user?.type, refreshOrders, fetchCustomRequests]);
 
   useEffect(() => {
     if (token && user?.type === "chef") {
       fetchChefOrders();
+      fetchChefCustomRequests();
     }
-  }, [token, user?.type]);
+  }, [token, user?.type, fetchChefCustomRequests, fetchChefOrders]);
 
   const login = useCallback(async (emailOrPhone: string, password: string) => {
     const data = await apiFetch<{ token: string; user: AuthUser }>("/auth/login", {
@@ -686,6 +932,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.removeItem("nixyah_token");
     setToken(null);
     setUser(null);
+    setOrders([]);
+    setCustomRequests([]);
+    setChats([]);
+    setFavorites([]);
+    setChefOrders([]);
+    setChefCustomRequests([]);
+    setNotifications([]);
+    setChefStats(null);
   }, []);
 
   const registerClient = useCallback(async (data: RegisterClientData) => {
@@ -764,21 +1018,88 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [token, refreshChefs, refreshStories]);
 
   const addOrder = useCallback((order: Order) => {
-    setOrders((prev) => {
-      const next = [order, ...prev];
-      AsyncStorage.setItem("nixyah_orders", JSON.stringify(next));
-      return next;
-    });
+    setOrders((prev) => [order, ...prev]);
   }, []);
 
-  const toggleFavorite = useCallback((chefId: string) => {
-    setFavorites((prev) => {
-      const next = prev.includes(chefId)
-        ? prev.filter((id) => id !== chefId)
-        : [...prev, chefId];
-      AsyncStorage.setItem("nixyah_favorites", JSON.stringify(next));
-      return next;
+  const createOrder = useCallback(async (data: {
+    chefId: string;
+    items: Array<{ dishId: string; quantity: number }>;
+    occasion?: string;
+    persons?: number;
+    budget?: string;
+    notes?: string;
+    deliveryAddress?: string;
+  }) => {
+    if (!token || user?.type !== "client") {
+      throw new Error("Non connecté");
+    }
+
+    const response = await apiFetch<any>("/orders", {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        chefId: Number(data.chefId),
+        items: data.items.map((item) => ({
+          dishId: Number(item.dishId),
+          quantity: Number(item.quantity),
+        })),
+        occasion: data.occasion ?? null,
+        persons: data.persons ?? null,
+        budget: data.budget ?? null,
+        notes: data.notes ?? null,
+        deliveryAddress: data.deliveryAddress ?? user.location ?? null,
+      }),
     });
+
+    const mappedOrder = mapApiOrder(response);
+    setOrders((prev) => [mappedOrder, ...prev.filter((order) => order.id !== mappedOrder.id)]);
+    return mappedOrder;
+  }, [token, user?.location, user?.type]);
+
+  const createCustomRequest = useCallback(async (data: {
+    chefId: string;
+    packageDishId: string;
+    estimatedPersons: number;
+    estimatedTotal: number;
+    occasion?: string;
+    budget?: string;
+    preferences?: string[];
+    storyReference?: string;
+    notes?: string;
+    deliveryAddress?: string;
+  }) => {
+    if (!token || user?.type !== "client") {
+      throw new Error("Non connecté");
+    }
+
+    const response = await apiFetch<{ request: any }>("/custom-requests", {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        chefId: Number(data.chefId),
+        packageDishId: Number(data.packageDishId),
+        estimatedPersons: Number(data.estimatedPersons),
+        estimatedTotal: Number(data.estimatedTotal),
+        occasion: data.occasion ?? null,
+        budget: data.budget ?? null,
+        preferences: data.preferences ?? [],
+        storyReference: data.storyReference ?? null,
+        notes: data.notes ?? null,
+        deliveryAddress: data.deliveryAddress ?? user.location ?? null,
+      }),
+    });
+
+    const mappedRequest = mapApiCustomRequest(response.request);
+    setCustomRequests((prev) => [mappedRequest, ...prev.filter((request) => request.id !== mappedRequest.id)]);
+    return mappedRequest;
+  }, [token, user?.location, user?.type]);
+
+  const toggleFavorite = useCallback((chefId: string) => {
+    setFavorites((prev) =>
+      prev.includes(chefId)
+        ? prev.filter((id) => id !== chefId)
+        : [...prev, chefId]
+    );
   }, []);
 
   const sendMessage = useCallback(
@@ -897,18 +1218,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([fetchChefDishes(user.id), refreshChefs()]);
   }, [fetchChefDishes, refreshChefs, token, user?.id]);
 
-  const fetchChefOrders = useCallback(async () => {
-    if (!token || user?.type !== "chef") return;
-    try {
-      setIsLoadingChefOrders(true);
-      const data = await apiFetch<{ orders: any[] }>("/chef/orders", { token });
-      setChefOrders((data.orders ?? []).map(mapApiChefOrder));
-    } catch (error) {
-      console.warn("Failed to load chef orders:", error);
-    } finally {
-      setIsLoadingChefOrders(false);
-    }
-  }, [token, user?.type]);
+  const updateChefCustomRequestStatus = useCallback(async (requestId: string, data: { status: ReceivedCustomRequest["status"]; chefResponse?: string }) => {
+    if (!token || user?.type !== "chef") throw new Error("Non connecté");
+    await apiFetch(`/chef/custom-requests/${requestId}/status`, {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({
+        status: data.status,
+        chefResponse: data.chefResponse ?? "",
+      }),
+    });
+    await fetchChefCustomRequests();
+  }, [fetchChefCustomRequests, token, user?.type]);
 
   const updateChefOrderStatus = useCallback(async (orderId: string, status: ReceivedOrder["status"]) => {
     if (!token || user?.type !== "chef") throw new Error("Non connectée");
@@ -956,7 +1277,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       chefs,
       stories,
       orders,
+      customRequests,
       chefOrders,
+      chefCustomRequests,
       chats,
       notifications,
       chefStats,
@@ -975,6 +1298,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       registerCourier,
       postStory,
       addOrder,
+      createOrder,
+      createCustomRequest,
       toggleFavorite,
       sendMessage,
       getChef,
@@ -988,12 +1313,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateChefDish,
       deleteChefDish,
       fetchChefOrders,
+      fetchCustomRequests,
+      fetchChefCustomRequests,
+      updateChefCustomRequestStatus,
       updateChefOrderStatus,
       requestDeliveryForOrder,
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, chefOrders, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, updateChefOrderStatus, requestDeliveryForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

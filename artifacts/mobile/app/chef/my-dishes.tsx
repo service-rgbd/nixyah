@@ -137,7 +137,7 @@ export default function MyDishesScreen() {
           </View>
 
           <Text style={styles.heroDescription}>
-            Votre carte est maintenant pensee pour les filtres clients. Chaque plat peut etre classe, mis en avant et accompagne d'une promo propre.
+            Votre carte est maintenant pensee pour les filtres clients. Publiez vos formules sur-mesure dans Evenements, puis gardez le reste du menu clair, visible et bien classe.
           </Text>
 
           <View style={styles.summaryGrid}>

@@ -61,6 +61,7 @@ function buildRegion(point: LatLng | null): Region {
 export default function ClientAddressesScreen() {
   const insets = useSafeAreaInsets();
   const { user, updateCurrentUser } = useApp();
+  const addressScope = user?.id ? `user:${user.id}` : "guest";
   const [addressLabel, setAddressLabel] = useState(user?.location ?? "");
   const [savedAddress, setSavedAddress] = useState<SavedDeliveryAddress | null>(null);
   const [draftPoint, setDraftPoint] = useState<LatLng | null>(null);
@@ -73,7 +74,7 @@ export default function ClientAddressesScreen() {
   const loadAddress = useCallback(async () => {
     setLoadingSavedAddress(true);
     try {
-      const existingAddress = await loadSavedDeliveryAddress();
+      const existingAddress = await loadSavedDeliveryAddress(addressScope);
       setSavedAddress(existingAddress);
       setAddressLabel(existingAddress?.label ?? user?.location ?? "");
       setDraftPoint(
@@ -84,7 +85,7 @@ export default function ClientAddressesScreen() {
     } finally {
       setLoadingSavedAddress(false);
     }
-  }, [user?.location]);
+  }, [addressScope, user?.location]);
 
   useEffect(() => {
     loadAddress();
@@ -155,7 +156,7 @@ export default function ClientAddressesScreen() {
         updatedAt: new Date().toISOString(),
       };
 
-      await saveDeliveryAddress(nextAddress);
+      await saveDeliveryAddress(nextAddress, addressScope);
       await updateCurrentUser({ location: normalizedLabel });
       setSavedAddress(nextAddress);
       Alert.alert("Adresse enregistree", "Votre derniere position de livraison sera proposee automatiquement au checkout.", [
@@ -169,7 +170,7 @@ export default function ClientAddressesScreen() {
     } finally {
       setSaving(false);
     }
-  }, [addressLabel, draftPoint, updateCurrentUser]);
+  }, [addressLabel, addressScope, draftPoint, updateCurrentUser]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}> 

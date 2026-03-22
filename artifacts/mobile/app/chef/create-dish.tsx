@@ -231,6 +231,7 @@ export default function CreateDishScreen() {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Categorie et rythme</Text>
           <Text style={styles.label}>Categorie du filtre client</Text>
+          <Text style={styles.helperText}>Choisissez Evenements pour publier une formule sur-mesure visible dans le parcours de demande client.</Text>
           <View style={styles.chipWrap}>
             {CHEF_MENU_CATEGORIES.map((item) => {
               const selected = category === item;
@@ -369,6 +370,7 @@ const styles = StyleSheet.create({
   sectionCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, gap: 10 },
   sectionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   label: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.text },
+  helperText: { marginTop: 6, marginBottom: 12, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   input: { backgroundColor: Colors.light.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.light.cardBorder },
   textarea: { height: 90 },
   disabledInput: { color: Colors.light.textTertiary, backgroundColor: Colors.light.backgroundSecondary },

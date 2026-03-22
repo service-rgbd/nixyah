@@ -10,6 +10,7 @@ import uploadsRouter from "./uploads.js";
 import ordersRouter from "./orders.js";
 import chatsRouter from "./chats.js";
 import deliveryRouter from "./delivery.js";
+import customRequestsRouter from "./custom-requests.js";
 
 const router: IRouter = Router();
 
@@ -22,6 +23,7 @@ router.use(pushRouter);
 router.use(cartRouter);
 router.use(uploadsRouter);
 router.use(ordersRouter);
+router.use(customRequestsRouter);
 router.use(chatsRouter);
 router.use(deliveryRouter);
 
