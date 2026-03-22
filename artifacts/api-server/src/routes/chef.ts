@@ -26,6 +26,17 @@ import { isOwnedUploadUrl } from "../lib/uploads.js";
 
 const router = express.Router();
 
+const DELIVERY_BROADCAST_WINDOW_MS = 2 * 60 * 1000;
+
+function getDeliveryBroadcastRemainingMinutes(broadcastedAt?: Date | null, now = new Date()) {
+  if (!broadcastedAt) {
+    return 0;
+  }
+
+  const remainingMs = Math.max(0, broadcastedAt.getTime() + DELIVERY_BROADCAST_WINDOW_MS - now.getTime());
+  return Math.ceil(remainingMs / 60000);
+}
+
 function normalizeDishImageUrls(input: unknown, fallbackImageUrl?: unknown): string[] {
   const values = Array.isArray(input) ? input : [];
   const collected = values
@@ -88,6 +99,15 @@ async function buildChefOrderPayload(order: typeof ordersTable.$inferSelect, cli
         .orderBy(desc(deliveryLocationUpdatesTable.createdAt))
         .limit(1)
     : [];
+  const broadcastRemainingMinutes = deliveryJob && !deliveryJob.courierUserId
+    ? getDeliveryBroadcastRemainingMinutes(deliveryJob.broadcastedAt)
+    : 0;
+  const canRebroadcast = Boolean(
+    deliveryJob &&
+    !deliveryJob.courierUserId &&
+    !["delivered", "cancelled"].includes(deliveryJob.status) &&
+    broadcastRemainingMinutes <= 0,
+  );
 
   return {
     id: String(order.id),
@@ -113,6 +133,14 @@ async function buildChefOrderPayload(order: typeof ordersTable.$inferSelect, cli
           courierUserId: deliveryJob.courierUserId ? String(deliveryJob.courierUserId) : null,
           deliveryAddress: deliveryJob.deliveryAddress,
           restaurantAddress: deliveryJob.restaurantAddress,
+          restaurantLatitude: deliveryJob.restaurantLatitude,
+          restaurantLongitude: deliveryJob.restaurantLongitude,
+          deliveryLatitude: deliveryJob.deliveryLatitude,
+          deliveryLongitude: deliveryJob.deliveryLongitude,
+          broadcastedAt: deliveryJob.broadcastedAt.toISOString(),
+          broadcastEndsAt: new Date(deliveryJob.broadcastedAt.getTime() + DELIVERY_BROADCAST_WINDOW_MS).toISOString(),
+          broadcastRemainingMinutes,
+          canRebroadcast,
           latestLocation: latestLocation
             ? {
                 latitude: latestLocation.latitude,

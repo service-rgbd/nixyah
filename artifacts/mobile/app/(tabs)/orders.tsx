@@ -56,6 +56,9 @@ type DeliveryJob = {
   restaurantLongitude?: number | null;
   clientName: string;
   deliveryAddress: string;
+  deliveryLatitude?: number | null;
+  deliveryLongitude?: number | null;
+  broadcastEtaMinutes?: number | null;
   broadcastRadiusKm?: number | null;
   broadcastEndsAt?: string | null;
   broadcastRemainingMinutes?: number | null;
@@ -67,6 +70,69 @@ type DeliveryJob = {
 
 type CourierMissionFilter = "all" | "current" | "available" | "history";
 type ClientOrderFilter = "all" | "meal" | "delivery" | "custom";
+
+function formatDistanceLabel(distanceKm?: number | null) {
+  if (distanceKm == null) {
+    return "Distance indisponible";
+  }
+
+  if (distanceKm < 1) {
+    return `${Math.round(distanceKm * 1000)} m`;
+  }
+
+  return `${distanceKm.toFixed(1)} km`;
+}
+
+function getDistanceKm(
+  origin?: { latitude?: number | null; longitude?: number | null } | null,
+  destination?: { latitude?: number | null; longitude?: number | null } | null,
+) {
+  if (
+    !origin ||
+    !destination ||
+    origin.latitude == null ||
+    origin.longitude == null ||
+    destination.latitude == null ||
+    destination.longitude == null
+  ) {
+    return null;
+  }
+
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(destination.latitude - origin.latitude);
+  const dLon = toRadians(destination.longitude - origin.longitude);
+  const lat1 = toRadians(origin.latitude);
+  const lat2 = toRadians(destination.latitude);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+function formatEtaLabel(distanceKm?: number | null, speedKmPerHour = 24) {
+  if (distanceKm == null) {
+    return "ETA indisponible";
+  }
+
+  const minutes = Math.max(3, Math.round((distanceKm / speedKmPerHour) * 60));
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    return remainder > 0 ? `${hours} h ${remainder} min` : `${hours} h`;
+  }
+
+  return `${minutes} min`;
+}
+
+function getMissionRouteDistanceKm(job: DeliveryJob) {
+  return getDistanceKm(
+    { latitude: job.restaurantLatitude, longitude: job.restaurantLongitude },
+    { latitude: job.deliveryLatitude, longitude: job.deliveryLongitude },
+  );
+}
 
 function formatChefOrderMoment(value?: string | null) {
   if (!value) {
@@ -293,11 +359,15 @@ function DeliveryJobCard({
 }) {
   const config = DELIVERY_STATUS_CONFIG[job.status];
   const missionTime = formatClockLabel(getMissionDate(job));
-  const missionMeta = job.status === "cancelled"
-    ? "Annulée"
-    : job.status === "delivered"
-      ? "Terminée"
-      : `${job.restaurantAddress} → ${job.deliveryAddress}`;
+  const pickupDistanceKm = job.distanceKm ?? null;
+  const routeDistanceKm = getMissionRouteDistanceKm(job);
+  const pickupEtaLabel = formatEtaLabel(pickupDistanceKm, 24);
+  const routeEtaLabel = formatEtaLabel(routeDistanceKm, 26);
+  const timeboxLabel = job.broadcastRemainingMinutes != null && job.broadcastRemainingMinutes > 0
+    ? `Encore ${job.broadcastRemainingMinutes} min pour accepter`
+    : job.status === "broadcasting" || job.status === "available"
+      ? "Touchez pour voir la mission"
+      : null;
 
   return (
     <View style={styles.historyCard}>
@@ -311,12 +381,46 @@ function DeliveryJobCard({
             <Text style={styles.historyCardAmount}>{formatMissionAmount(job)}</Text>
           </View>
           <Text style={[styles.historyCardMeta, job.status === "cancelled" && styles.historyDangerMeta]} numberOfLines={1}>
-            {missionMeta}
+            {job.restaurantName} → {job.clientName}
           </Text>
-          {job.status !== "cancelled" ? (
-            <Text style={styles.historyCardSubline} numberOfLines={1}>{job.restaurantName} · {job.clientName}</Text>
-          ) : null}
+          <Text style={styles.historyCardSubline} numberOfLines={1}>{job.restaurantAddress}</Text>
+          <Text style={styles.historyCardSubline} numberOfLines={1}>{job.deliveryAddress}</Text>
         </View>
+      </View>
+
+      <View style={styles.missionMetricsRow}>
+        <View style={styles.missionMetricCard}>
+          <Text style={styles.missionMetricLabel}>Distance arrivée</Text>
+          <Text style={styles.missionMetricValue}>{formatDistanceLabel(pickupDistanceKm)}</Text>
+        </View>
+        <View style={styles.missionMetricCard}>
+          <Text style={styles.missionMetricLabel}>ETA arrivée</Text>
+          <Text style={styles.missionMetricValue}>{pickupEtaLabel}</Text>
+        </View>
+        <View style={styles.missionMetricCard}>
+          <Text style={styles.missionMetricLabel}>Trajet total</Text>
+          <Text style={styles.missionMetricValue}>{formatDistanceLabel(routeDistanceKm)}</Text>
+        </View>
+      </View>
+
+      <View style={styles.missionInfoBlock}>
+        <View style={styles.missionInfoRow}>
+          <Feather name="map-pin" size={14} color={Colors.light.textSecondary} />
+          <Text style={styles.missionInfoText} numberOfLines={1}>{`Restaurant: ${job.restaurantAddress}`}</Text>
+        </View>
+        <View style={styles.missionInfoRow}>
+          <Feather name="navigation" size={14} color={Colors.light.textSecondary} />
+          <Text style={styles.missionInfoText} numberOfLines={1}>{`Livraison: ${job.deliveryAddress}`}</Text>
+        </View>
+        <View style={styles.missionInfoRow}>
+          <Feather name="clock" size={14} color={Colors.light.textSecondary} />
+          <Text style={styles.missionInfoText} numberOfLines={1}>{`Estimation course: ${routeEtaLabel}`}</Text>
+        </View>
+        {timeboxLabel ? (
+          <View style={styles.missionNoticePill}>
+            <Text style={styles.missionNoticeText}>{timeboxLabel}</Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.historyBottomRow}>
@@ -325,6 +429,10 @@ function DeliveryJobCard({
         </View>
 
         <View style={styles.historyActionsRow}>
+          <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: job.id } })}>
+            <Feather name="eye" size={16} color="#1F1A17" />
+            <Text style={styles.historyGhostBtnText}>Détails</Text>
+          </Pressable>
           <Pressable style={styles.historyGhostBtn} onPress={() => router.push("/(tabs)/help")}> 
             <Feather name="headphones" size={16} color="#1F1A17" />
             <Text style={styles.historyGhostBtnText}>Aide</Text>
@@ -336,12 +444,7 @@ function DeliveryJobCard({
                 <Text style={styles.historyGhostBtnText}>Accepter</Text>
               </>}
             </Pressable>
-          ) : (
-            <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: job.id } })}>
-              <Feather name="repeat" size={16} color="#1F1A17" />
-              <Text style={styles.historyGhostBtnText}>{job.status === "delivered" ? "Revoir" : "Ouvrir"}</Text>
-            </Pressable>
-          )}
+          ) : null}
         </View>
       </View>
     </View>
@@ -547,6 +650,15 @@ function ChefOrderCard({
         : order.status === "preparing"
           ? { label: "Marquer prête", status: "ready" as const }
           : null;
+    const canRebroadcastDelivery = Boolean(
+      order.delivery &&
+      !order.delivery.courierUserId &&
+      order.delivery.canRebroadcast,
+    );
+    const deliveryActionLabel = canRebroadcastDelivery ? "Relancer la recherche" : "Trouver un livreur";
+    const showDeliveryAction = Boolean(
+      order.status === "ready" && (!order.delivery || canRebroadcastDelivery),
+    );
 
   return (
     <View style={[styles.chefCard, order.status === "pending" && styles.chefCardPriority]}>
@@ -621,11 +733,13 @@ function ChefOrderCard({
               <Feather name="truck" size={16} color="#1F1A17" />
               <Text style={styles.historyGhostBtnText}>Suivre</Text>
             </Pressable>
-          ) : order.status === "ready" ? (
+          ) : null}
+
+          {showDeliveryAction ? (
             <Pressable style={styles.historyGhostBtn} onPress={() => onRequestDelivery(order)} disabled={loadingAction === `${order.id}:delivery`}>
               {loadingAction === `${order.id}:delivery` ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
                 <Feather name="truck" size={16} color="#1F1A17" />
-                <Text style={styles.historyGhostBtnText}>Trouver un livreur</Text>
+                <Text style={styles.historyGhostBtnText}>{deliveryActionLabel}</Text>
               </>}
             </Pressable>
           ) : null}
@@ -888,7 +1002,7 @@ export default function OrdersScreen() {
     inDelivery: orders.filter((order) => order.delivery && ["accepted", "picked_up", "on_the_way"].includes(order.delivery.status)).length,
     delivered: orders.filter((order) => order.status === "delivered" || order.delivery?.status === "delivered").length,
     custom: customRequests.length,
-    totalSpent: orders.reduce((sum, order) => sum + order.total, 0),
+    totalSpent: orders.reduce((sum, order) => sum + Number(order.totalWithDelivery ?? order.total), 0),
   }), [customRequests.length, orders]);
 
   const priorityOrders = chefOrders.filter((order) => ["pending", "accepted", "preparing"].includes(order.status));
@@ -1792,6 +1906,61 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: "Poppins_400Regular",
     color: "#91857D",
+  },
+  missionMetricsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  missionMetricCard: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: "#EBE7E3",
+    paddingHorizontal: 10,
+    paddingVertical: 11,
+    gap: 4,
+  },
+  missionMetricLabel: {
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+    color: "#8C827B",
+  },
+  missionMetricValue: {
+    fontSize: 14,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  missionInfoBlock: {
+    borderRadius: 18,
+    backgroundColor: "#FFFCF8",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 9,
+    borderWidth: 1,
+    borderColor: "rgba(124,112,104,0.10)",
+  },
+  missionInfoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  missionInfoText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: "Poppins_400Regular",
+    color: "#5F5650",
+  },
+  missionNoticePill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: "rgba(217,119,6,0.12)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  missionNoticeText: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#B45309",
   },
   historyCardDishLine: {
     marginTop: 6,

@@ -166,6 +166,14 @@ export interface Order {
     courierUserId?: string | null;
     deliveryAddress?: string;
     restaurantAddress?: string;
+    restaurantLatitude?: number | null;
+    restaurantLongitude?: number | null;
+    deliveryLatitude?: number | null;
+    deliveryLongitude?: number | null;
+    broadcastedAt?: string | null;
+    broadcastEndsAt?: string | null;
+    broadcastRemainingMinutes?: number | null;
+    canRebroadcast?: boolean;
     latestLocation?: {
       latitude: number;
       longitude: number;
@@ -562,6 +570,14 @@ function mapApiOrder(order: any): Order {
           courierUserId: order.delivery.courierUserId ? String(order.delivery.courierUserId) : null,
           deliveryAddress: order.delivery.deliveryAddress ?? undefined,
           restaurantAddress: order.delivery.restaurantAddress ?? undefined,
+          restaurantLatitude: order.delivery.restaurantLatitude != null ? Number(order.delivery.restaurantLatitude) : null,
+          restaurantLongitude: order.delivery.restaurantLongitude != null ? Number(order.delivery.restaurantLongitude) : null,
+          deliveryLatitude: order.delivery.deliveryLatitude != null ? Number(order.delivery.deliveryLatitude) : null,
+          deliveryLongitude: order.delivery.deliveryLongitude != null ? Number(order.delivery.deliveryLongitude) : null,
+          broadcastedAt: order.delivery.broadcastedAt ? String(order.delivery.broadcastedAt) : null,
+          broadcastEndsAt: order.delivery.broadcastEndsAt ? String(order.delivery.broadcastEndsAt) : null,
+          broadcastRemainingMinutes: order.delivery.broadcastRemainingMinutes != null ? Number(order.delivery.broadcastRemainingMinutes) : null,
+          canRebroadcast: Boolean(order.delivery.canRebroadcast),
           latestLocation: order.delivery.latestLocation
             ? {
                 latitude: Number(order.delivery.latestLocation.latitude),
