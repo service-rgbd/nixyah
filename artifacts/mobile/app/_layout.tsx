@@ -85,10 +85,31 @@ function PushNotificationsBootstrap() {
         }
 
         responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-          const data = response.notification.request.content.data as { type?: string; storyId?: string; orderId?: string | number; deliveryJobId?: string | number; screen?: string } | undefined;
+          const data = response.notification.request.content.data as {
+            type?: string;
+            storyId?: string;
+            orderId?: string | number;
+            deliveryJobId?: string | number;
+            customRequestId?: string | number;
+            screen?: string;
+          } | undefined;
           if (data?.type === "story-video" && data.storyId) {
             void import("expo-router").then(({ router }) => {
               router.push({ pathname: "/story/[id]", params: { id: data.storyId! } });
+            });
+            return;
+          }
+
+          if (data?.screen === "courier/orders") {
+            void import("expo-router").then(({ router }) => {
+              router.push("/(tabs)/orders?mode=delivery");
+            });
+            return;
+          }
+
+          if (data?.screen === "chef-orders" || data?.screen === "orders") {
+            void import("expo-router").then(({ router }) => {
+              router.push("/(tabs)/orders");
             });
             return;
           }
@@ -107,7 +128,7 @@ function PushNotificationsBootstrap() {
             return;
           }
 
-          if (data?.orderId) {
+          if (data?.orderId || data?.customRequestId) {
             void import("expo-router").then(({ router }) => {
               router.push("/(tabs)/orders");
             });
