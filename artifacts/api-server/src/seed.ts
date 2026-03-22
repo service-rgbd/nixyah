@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { usersTable, chefProfilesTable, dishesTable, storiesTable } from "@workspace/db/schema";
+import { usersTable, chefProfilesTable, dishesTable, storiesTable, commerceProductsTable, commerceStoresTable } from "@workspace/db/schema";
 import { hashPassword } from "./lib/auth.js";
 
 const CHEFS = [
@@ -135,12 +135,178 @@ const CHEFS = [
   },
 ];
 
+type SeedCommerceProduct = {
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  originalPrice?: number;
+  badge?: string;
+  unitLabel: string;
+  visualKey: string;
+};
+
+type SeedCommerceStore = {
+  universe: "courses" | "supermarkets" | "boutiques";
+  name: string;
+  tagline: string;
+  description: string;
+  location: string;
+  zone: string;
+  accentColor: string;
+  visualKey: string;
+  etaMinMinutes: number;
+  etaMaxMinutes: number;
+  products: SeedCommerceProduct[];
+};
+
+const COMMERCE_STORES: SeedCommerceStore[] = [
+  {
+    universe: "courses" as const,
+    name: "Course Express Cocody",
+    tagline: "Essentiels rapides, retrait et depannage du quotidien.",
+    description: "Une enseigne urbaine pour les petites courses utiles dans l'heure.",
+    location: "Cocody Angre",
+    zone: "Cocody, Angre, Riviera",
+    accentColor: "#C4522A",
+    visualKey: "course-express",
+    etaMinMinutes: 18,
+    etaMaxMinutes: 25,
+    products: [
+      { name: "Pack eau minerale", description: "Lot express pour maison ou bureau.", category: "Boissons", price: 2500, originalPrice: 2900, badge: "Express", unitLabel: "6 x 1,5L", visualKey: "cashier" },
+      { name: "Pain + oeufs", description: "Le basique du matin en une seule course.", category: "Depannage", price: 1800, unitLabel: "kit", visualKey: "market-fresh" },
+    ],
+  },
+  {
+    universe: "courses" as const,
+    name: "Minute Plateau",
+    tagline: "Petites courses urbaines et paniers express.",
+    description: "Parfait pour les bureaux et depannages de derniere minute.",
+    location: "Plateau",
+    zone: "Plateau, Treichville",
+    accentColor: "#D97706",
+    visualKey: "minute-plateau",
+    etaMinMinutes: 20,
+    etaMaxMinutes: 28,
+    products: [
+      { name: "Pause bureau", description: "Biscuits, jus et encas pour l'apres-midi.", category: "Pause bureau", price: 3200, badge: "Top demande", unitLabel: "box", visualKey: "sweet" },
+      { name: "Kit hygiene", description: "Savon, dentifrice et lingettes pour depannage rapide.", category: "Hygiene", price: 4100, unitLabel: "kit", visualKey: "courier" },
+    ],
+  },
+  {
+    universe: "supermarkets" as const,
+    name: "Marche Riviera",
+    tagline: "Rayons frais, epicerie et maison sous un meme panier.",
+    description: "Un supermarche de proximite avec produits du quotidien et frais.",
+    location: "Riviera 2",
+    zone: "Cocody, Riviera",
+    accentColor: "#0F766E",
+    visualKey: "super-riviera",
+    etaMinMinutes: 35,
+    etaMaxMinutes: 45,
+    products: [
+      { name: "Bananes plantain fraiches", description: "Selection du jour pour alloco, foutou ou accompagnement.", category: "Fruits & legumes", price: 2200, unitLabel: "kg", visualKey: "market-fresh" },
+      { name: "Riz parfume famille", description: "Sac pratique pour la semaine, cuisson reguliere.", category: "Epicerie", price: 8900, originalPrice: 9500, badge: "Promo", unitLabel: "5 kg", visualKey: "comfort" },
+    ],
+  },
+  {
+    universe: "supermarkets" as const,
+    name: "Fresh Abi",
+    tagline: "Produits frais et paniers famille avec suivi propre.",
+    description: "Une enseigne large pour les paniers de semaine et les besoins famille.",
+    location: "Marcory",
+    zone: "Marcory, Zone 4",
+    accentColor: "#047857",
+    visualKey: "fresh-abi",
+    etaMinMinutes: 30,
+    etaMaxMinutes: 40,
+    products: [
+      { name: "Jus multi-fruits", description: "Pack familial refrigere, ideal petit-dejeuner.", category: "Boissons", price: 5400, unitLabel: "6 bouteilles", visualKey: "sweet" },
+      { name: "Pack bebe essentiel", description: "Couches, lingettes et creme pour la semaine.", category: "Bebe", price: 12800, badge: "Famille", unitLabel: "pack", visualKey: "courier" },
+    ],
+  },
+  {
+    universe: "boutiques" as const,
+    name: "Atelier Cadeaux",
+    tagline: "Coffrets, senteurs et idees a offrir sans perdre du temps.",
+    description: "Une vitrine orientee cadeaux, maison et bien-etre.",
+    location: "Deux Plateaux",
+    zone: "Deux Plateaux, Cocody",
+    accentColor: "#8B5E3C",
+    visualKey: "atelier-cadeaux",
+    etaMinMinutes: 40,
+    etaMaxMinutes: 55,
+    products: [
+      { name: "Coffret bougie & senteur", description: "Petit coffret cadeau pour ambiance chic a la maison.", category: "Maison", price: 9600, badge: "Cadeau", unitLabel: "coffret", visualKey: "sweet" },
+      { name: "Box self-care", description: "Selection bien-etre avec savon, creme et tisane.", category: "Bien-etre", price: 14500, unitLabel: "box", visualKey: "comfort" },
+    ],
+  },
+  {
+    universe: "boutiques" as const,
+    name: "Select Store",
+    tagline: "Achats specialises, vitrine plus premium et plus discrete.",
+    description: "Une boutique plus premium avec selections lifestyle et achats prives.",
+    location: "Zone 4",
+    zone: "Zone 4, Marcory",
+    accentColor: "#7C3F1D",
+    visualKey: "select-store",
+    etaMinMinutes: 45,
+    etaMaxMinutes: 60,
+    products: [
+      { name: "Emballage premium", description: "Presentation soignee pour achats personnels ou cadeaux.", category: "Lifestyle", price: 3900, unitLabel: "service", visualKey: "grill" },
+      { name: "Commande privee", description: "Traitement discret pour produits sensibles et retrait controle.", category: "Prive", price: 17500, badge: "Discret", unitLabel: "selection", visualKey: "cashier" },
+    ],
+  },
+];
+
+async function seedCommerceCatalog() {
+  const existingStores = await db.select().from(commerceStoresTable);
+  if (existingStores.length > 0) {
+    console.log("✅ Commerce catalog already seeded, skipping...");
+    return;
+  }
+
+  for (const store of COMMERCE_STORES) {
+    const [createdStore] = await db.insert(commerceStoresTable).values({
+      universe: store.universe,
+      name: store.name,
+      tagline: store.tagline,
+      description: store.description,
+      location: store.location,
+      zone: store.zone,
+      accentColor: store.accentColor,
+      visualKey: store.visualKey,
+      etaMinMinutes: store.etaMinMinutes,
+      etaMaxMinutes: store.etaMaxMinutes,
+      isActive: true,
+    }).returning();
+
+    for (const product of store.products) {
+      await db.insert(commerceProductsTable).values({
+        storeId: createdStore.id,
+        name: product.name,
+        description: product.description,
+        category: product.category,
+        price: product.price,
+        originalPrice: product.originalPrice ?? null,
+        badge: product.badge ?? null,
+        unitLabel: product.unitLabel,
+        visualKey: product.visualKey,
+        inStock: true,
+      });
+    }
+
+    console.log(`✅ Created commerce store: ${store.name}`);
+  }
+}
+
 async function seed() {
   console.log("🌱 Seeding Nixyah database...");
 
   const existingUsers = await db.select().from(usersTable);
   if (existingUsers.length > 0) {
-    console.log("✅ Database already seeded, skipping...");
+    console.log("✅ User data already seeded, skipping chef bootstrap...");
+    await seedCommerceCatalog();
     process.exit(0);
   }
 
@@ -198,6 +364,8 @@ async function seed() {
 
     console.log(`✅ Created chef: ${chefData.name}`);
   }
+
+  await seedCommerceCatalog();
 
   console.log("🎉 Seeding complete!");
   process.exit(0);

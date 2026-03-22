@@ -18,6 +18,7 @@ import { SvgUri } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
+import { getProductsByUniverse, getStoresByUniverse } from "@/constants/commerce-catalog";
 import { Chef, useApp } from "@/contexts/AppContext";
 
 const quickCollectionImageA = require("@/assets/images/en-ce-moment.jpg");
@@ -44,6 +45,37 @@ const CUISINE_CHIPS = [
   { id: "dioula", label: "Dioula", filter: "Dioula", emoji: "🍲", tone: "#F2DFC6" },
   { id: "events", label: "Événements", filter: "Événements", emoji: "🎉", tone: "#F6DCCB" },
 ];
+
+function UniverseShortcutCard({
+  label,
+  sub,
+  icon,
+  accentColor,
+  tone,
+  active,
+  onPress,
+}: {
+  label: string;
+  sub: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  accentColor: string;
+  tone: string;
+  active?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.universeCard, { backgroundColor: active ? "#201612" : tone }]}
+      onPress={onPress}
+    >
+      <View style={[styles.universeIconWrap, { backgroundColor: active ? "rgba(255,255,255,0.12)" : `${accentColor}18` }]}> 
+        <Ionicons name={icon} size={18} color={active ? "#FFF7EF" : accentColor} />
+      </View>
+      <Text style={[styles.universeLabel, active && styles.universeLabelActive]}>{label}</Text>
+      <Text style={[styles.universeSub, active && styles.universeSubActive]} numberOfLines={2}>{sub}</Text>
+    </Pressable>
+  );
+}
 
 function getChefHeroImage(chef: Chef): string | null {
   return (
@@ -292,6 +324,9 @@ export default function SearchScreen() {
   const onlineCount = chefs.filter((chef) => chef.isOnline).length;
   const verifiedCount = chefs.filter((chef) => chef.isVerified).length;
   const isFiltering = query.trim().length > 0 || selectedFilter !== null;
+  const coursePreviewCount = getProductsByUniverse("courses").length;
+  const supermarketStoreCount = getStoresByUniverse("supermarkets").length;
+  const boutiquePreviewCount = getProductsByUniverse("boutiques").length;
 
   const filteredChefs = useMemo(
     () =>
@@ -364,6 +399,51 @@ export default function SearchScreen() {
                 <Feather name="x" size={16} color={Colors.light.textTertiary} />
               </Pressable>
             ) : null}
+          </View>
+
+          <View style={styles.universeSection}>
+            <View style={styles.sectionHeaderInlineCompact}>
+              <Text style={styles.sectionTitle}>4 univers</Text>
+              <Text style={styles.sectionCaptionCompact}>Le meme menu que l'accueil, accessible ici aussi.</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.universeRow}>
+              <UniverseShortcutCard
+                label="Cuisinieres"
+                sub={`${chefs.length} profils et menus visibles`}
+                icon="restaurant"
+                accentColor={Colors.light.tint}
+                tone="#FBE7DB"
+                active
+                onPress={() => {
+                  setQuery("");
+                  setSelectedFilter(null);
+                }}
+              />
+              <UniverseShortcutCard
+                label="Courses"
+                sub={`${coursePreviewCount} essentiels en express`}
+                icon="cart"
+                accentColor={Colors.light.terracotta}
+                tone="#FDEBDE"
+                onPress={() => router.push("/client/courses")}
+              />
+              <UniverseShortcutCard
+                label="Supermarches"
+                sub={`${supermarketStoreCount} enseignes et rayons`}
+                icon="storefront"
+                accentColor="#0F766E"
+                tone="#E6F6F3"
+                onPress={() => router.push("/client/supermarkets")}
+              />
+              <UniverseShortcutCard
+                label="Boutiques"
+                sub={`${boutiquePreviewCount} selections speciales`}
+                icon="gift"
+                accentColor="#8B5E3C"
+                tone="#F7ECE1"
+                onPress={() => router.push("/client/boutiques")}
+              />
+            </ScrollView>
           </View>
         </View>
 
@@ -745,6 +825,60 @@ const styles = StyleSheet.create({
   },
   discoveryChipLabelActive: {
     color: "#fff",
+  },
+  universeSection: {
+    marginTop: 20,
+  },
+  sectionHeaderInlineCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingBottom: 12,
+  },
+  sectionCaptionCompact: {
+    flex: 1,
+    textAlign: "right",
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: "Poppins_400Regular",
+    color: "#786860",
+  },
+  universeRow: {
+    gap: 12,
+    paddingBottom: 2,
+  },
+  universeCard: {
+    width: 158,
+    borderRadius: 22,
+    padding: 14,
+    minHeight: 136,
+  },
+  universeIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  universeLabel: {
+    marginTop: 14,
+    fontSize: 14,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#201612",
+  },
+  universeLabelActive: {
+    color: "#FFF7EF",
+  },
+  universeSub: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#6B5A52",
+  },
+  universeSubActive: {
+    color: "rgba(255,247,239,0.76)",
   },
   sectionBlock: {
     marginTop: 22,

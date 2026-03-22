@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { ordersTable, orderItemsTable, chefProfilesTable, complaintsTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable, reviewsTable } from "@workspace/db/schema";
+import { ordersTable, orderItemsTable, chefProfilesTable, complaintsTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable, reviewsTable, commerceOrdersTable, commerceOrderItemsTable, commerceStoresTable } from "@workspace/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { geocodeAddress } from "../lib/geocoding.js";
@@ -68,15 +68,21 @@ function normalizeComplaintPayload(input: { target?: unknown; category?: unknown
 
 router.get("/orders", requireClient, async (req: AuthRequest, res) => {
   try {
-    const orders = await db
+    const mealOrders = await db
       .select()
       .from(ordersTable)
       .innerJoin(chefProfilesTable, eq(ordersTable.chefProfileId, chefProfilesTable.id))
       .innerJoin(usersTable, eq(chefProfilesTable.userId, usersTable.id))
       .where(eq(ordersTable.clientId, req.userId!));
 
-    const result = await Promise.all(
-      orders.map(async ({ orders: o, users: u }) => {
+    const commerceOrders = await db
+      .select()
+      .from(commerceOrdersTable)
+      .innerJoin(commerceStoresTable, eq(commerceOrdersTable.storeId, commerceStoresTable.id))
+      .where(eq(commerceOrdersTable.clientId, req.userId!));
+
+    const mealResult = await Promise.all(
+      mealOrders.map(async ({ orders: o, users: u }) => {
         const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, o.id));
         const dishIds = items
           .map((item) => item.dishId)
@@ -97,6 +103,7 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
           : [];
         return {
           id: String(o.id),
+          kind: "meal",
           clientId: String(o.clientId),
           chefId: String(o.chefProfileId),
           chefName: u.name,
@@ -160,6 +167,53 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
       })
     );
 
+    const commerceResult = await Promise.all(
+      commerceOrders.map(async ({ commerce_orders: o, commerce_stores: store }) => {
+        const items = await db.select().from(commerceOrderItemsTable).where(eq(commerceOrderItemsTable.orderId, o.id));
+        return {
+          id: `commerce:${o.id}`,
+          kind: "commerce",
+          commerceUniverse: store.universe,
+          merchantVisualKey: store.visualKey,
+          clientId: String(o.clientId),
+          chefId: `store:${store.id}`,
+          chefName: store.name,
+          status: o.status,
+          total: Number(o.total ?? 0),
+          deliveryFee: Number(o.deliveryFee ?? 0),
+          totalWithDelivery: Number(o.totalWithDelivery ?? o.total ?? 0),
+          deliveryDistanceKm: o.deliveryDistanceKm != null ? Number(o.deliveryDistanceKm) : null,
+          deliveryDemandMultiplier: 1,
+          freeDeliveryApplied: false,
+          referralCreditUsed: false,
+          occasion: null,
+          persons: null,
+          deliveryAddress: o.deliveryAddress,
+          notes: o.notes,
+          createdAt: o.createdAt.toISOString(),
+          cancelAvailableUntil: o.status === "pending" ? new Date(o.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS).toISOString() : null,
+          delivery: null,
+          review: null,
+          canReview: false,
+          items: items.map((item) => ({
+            dishId: item.productId ? String(item.productId) : "",
+            dishName: item.productName,
+            quantity: item.quantity,
+            price: Number(item.price),
+            imageUrl: null,
+            imageUrls: [],
+            category: item.category,
+            unitLabel: item.unitLabel,
+            visualKey: item.visualKey,
+          })),
+        };
+      }),
+    );
+
+    const result = [...mealResult, ...commerceResult].sort(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+
     res.json({ orders: result });
   } catch (err) {
     console.error("list orders error:", err);
@@ -169,7 +223,31 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
 
 router.post("/orders/:orderId/cancel", requireClient, async (req: AuthRequest, res) => {
   try {
-    const orderId = Number(req.params.orderId);
+    const rawOrderId = String(req.params.orderId ?? "");
+    const isCommerceOrder = rawOrderId.startsWith("commerce:");
+
+    if (isCommerceOrder) {
+      const numericOrderId = Number(rawOrderId.slice("commerce:".length));
+      if (!Number.isInteger(numericOrderId) || numericOrderId <= 0) {
+        return res.status(400).json({ error: "BadRequest", message: "Commande invalide" });
+      }
+
+      const [order] = await db.select().from(commerceOrdersTable).where(eq(commerceOrdersTable.id, numericOrderId)).limit(1);
+      if (!order || order.clientId !== req.userId) {
+        return res.status(404).json({ error: "NotFound", message: "Commande introuvable" });
+      }
+
+      const deadline = order.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS;
+      if (order.status !== "pending" || Date.now() > deadline) {
+        return res.status(409).json({ error: "Conflict", message: "Cette commande ne peut plus etre annulee" });
+      }
+
+      await db.delete(commerceOrderItemsTable).where(eq(commerceOrderItemsTable.orderId, order.id));
+      await db.delete(commerceOrdersTable).where(eq(commerceOrdersTable.id, order.id));
+      return res.json({ success: true });
+    }
+
+    const orderId = Number(rawOrderId);
     if (!Number.isInteger(orderId) || orderId <= 0) {
       return res.status(400).json({ error: "BadRequest", message: "Commande invalide" });
     }

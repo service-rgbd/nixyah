@@ -11,6 +11,7 @@ import ordersRouter from "./orders.js";
 import chatsRouter from "./chats.js";
 import deliveryRouter from "./delivery.js";
 import customRequestsRouter from "./custom-requests.js";
+import commerceRouter from "./commerce.js";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(ordersRouter);
 router.use(customRequestsRouter);
 router.use(chatsRouter);
 router.use(deliveryRouter);
+router.use(commerceRouter);
 
 export default router;

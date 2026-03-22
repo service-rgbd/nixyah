@@ -60,6 +60,7 @@ export interface Dish {
   savingsAmount?: number;
   imageUrl?: string | null;
   imageUrls?: string[];
+  visualKey?: string | null;
 }
 
 export interface Notification {
@@ -137,6 +138,9 @@ export interface StoryComment {
 
 export interface Order {
   id: string;
+  kind?: "meal" | "commerce";
+  commerceUniverse?: "courses" | "supermarkets" | "boutiques" | null;
+  merchantVisualKey?: string | null;
   chefId: string;
   chefName: string;
   dishes: { dish: Dish; quantity: number }[];
@@ -539,10 +543,14 @@ function mapApiOrder(order: any): Order {
             prepTime: "",
             imageUrl: normalizeRemoteUrl(item.imageUrl ?? null),
             imageUrls: normalizeImageUrlList(item.imageUrls, item.imageUrl ?? null),
+            visualKey: item.visualKey ?? null,
           },
           quantity: Number(item.quantity ?? 1),
         }))
       : [],
+    kind: order.kind === "commerce" ? "commerce" : "meal",
+    commerceUniverse: order.commerceUniverse ?? null,
+    merchantVisualKey: order.merchantVisualKey ?? null,
     total: Number(order.total ?? 0),
     deliveryFee: Number(order.deliveryFee ?? 0),
     totalWithDelivery: Number(order.totalWithDelivery ?? order.total ?? 0),

@@ -25,7 +25,10 @@ const guestProfileIllustration = require("../../assets/images/login-cashier-illu
 const MENU_ITEMS_CLIENT = [
   { icon: "shopping-bag" as const, label: "Mes commandes", sub: "Suivre mes commandes en cours" },
   { icon: "map-pin" as const, label: "Mes adresses", sub: "Enregistrer ma dernière position" },
-  { icon: "search" as const, label: "Restaurants", sub: "Voir les restaurants et leurs plats" },
+  { icon: "search" as const, label: "Cuisinieres", sub: "Voir les restaurants et leurs plats" },
+  { icon: "shopping-cart" as const, label: "Courses", sub: "Voir les essentiels en express" },
+  { icon: "shopping-bag" as const, label: "Supermarches", sub: "Explorer les rayons disponibles" },
+  { icon: "gift" as const, label: "Boutiques", sub: "Voir les selections et achats specialises" },
   { icon: "gift" as const, label: "Offres du moment", sub: "Profiter des offres et stories" },
   { icon: "help-circle" as const, label: "Aide & Support", sub: "FAQ, Contact" },
 ];
@@ -133,8 +136,14 @@ export default function ProfileScreen() {
       router.push("/(tabs)/orders");
     } else if (item.label === "Mes adresses") {
       router.push("/client/addresses");
-    } else if (item.label === "Restaurants") {
+    } else if (item.label === "Restaurants" || item.label === "Cuisinieres") {
       router.push("/(tabs)/search");
+    } else if (item.label === "Courses") {
+      router.push("/client/courses");
+    } else if (item.label === "Supermarches") {
+      router.push("/client/supermarkets");
+    } else if (item.label === "Boutiques") {
+      router.push("/client/boutiques");
     } else if (item.label === "Offres du moment") {
       router.push("/stories");
     } else if (item.label === "Mes plats") {
@@ -276,7 +285,10 @@ export default function ProfileScreen() {
       {
         title: "Preferences",
         items: [
-          { icon: "search" as const, label: "Explorer les restaurants", sub: "Voir les plats disponibles", onPress: () => router.push("/(tabs)/search") },
+          { icon: "search" as const, label: "Cuisinieres", sub: "Explorer les restaurants et leurs plats", onPress: () => router.push("/(tabs)/search") },
+          { icon: "shopping-cart" as const, label: "Courses", sub: "Acceder aux petites courses et depannages", onPress: () => router.push("/client/courses") },
+          { icon: "shopping-bag" as const, label: "Supermarches", sub: "Parcourir les rayons et paniers famille", onPress: () => router.push("/client/supermarkets") },
+          { icon: "gift" as const, label: "Boutiques", sub: "Decouvrir les achats specialises et selections premium", onPress: () => router.push("/client/boutiques") },
           { icon: "gift" as const, label: "Offres et stories", sub: "Promotions et plats du moment", onPress: () => router.push("/stories") },
           { icon: "help-circle" as const, label: "Centre d'aide", sub: "Commandes, support et boite de reception", onPress: () => router.push("/(tabs)/help") },
         ],

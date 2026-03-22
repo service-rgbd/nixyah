@@ -17,6 +17,7 @@ export const deliveryStatusEnum = pgEnum("delivery_status", [
 export const deliveryOfferStatusEnum = pgEnum("delivery_offer_status", ["pending", "accepted", "rejected", "expired"]);
 export const complaintTargetEnum = pgEnum("complaint_target", ["chef", "courier", "platform"]);
 export const complaintStatusEnum = pgEnum("complaint_status", ["open", "investigating", "resolved", "dismissed"]);
+export const commerceUniverseEnum = pgEnum("commerce_universe", ["courses", "supermarkets", "boutiques"]);
 
 export const usersTable = pgTable(
   "users",
@@ -350,8 +351,100 @@ export const cartItemsTable = pgTable("cart_items", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const commerceStoresTable = pgTable("commerce_stores", {
+  id: serial("id").primaryKey(),
+  universe: commerceUniverseEnum("universe").notNull(),
+  name: text("name").notNull(),
+  tagline: text("tagline").notNull().default(""),
+  description: text("description").notNull().default(""),
+  location: text("location").notNull(),
+  zone: text("zone").notNull().default(""),
+  accentColor: text("accent_color").notNull().default("#C4522A"),
+  visualKey: text("visual_key").notNull().default(""),
+  etaMinMinutes: integer("eta_min_minutes").notNull().default(20),
+  etaMaxMinutes: integer("eta_max_minutes").notNull().default(40),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const commerceProductsTable = pgTable("commerce_products", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").notNull().references(() => commerceStoresTable.id),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  category: text("category").notNull().default("General"),
+  price: real("price").notNull(),
+  originalPrice: real("original_price"),
+  badge: text("badge"),
+  unitLabel: text("unit_label").notNull().default(""),
+  visualKey: text("visual_key").notNull().default(""),
+  inStock: boolean("in_stock").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const commerceCartsTable = pgTable(
+  "commerce_carts",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => usersTable.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    userUnique: uniqueIndex("commerce_carts_user_id_unique").on(table.userId),
+  }),
+);
+
+export const commerceCartItemsTable = pgTable("commerce_cart_items", {
+  id: serial("id").primaryKey(),
+  cartId: integer("cart_id").notNull().references(() => commerceCartsTable.id),
+  storeId: integer("store_id").notNull().references(() => commerceStoresTable.id),
+  productId: integer("product_id").notNull().references(() => commerceProductsTable.id),
+  productName: text("product_name").notNull(),
+  category: text("category").notNull().default("General"),
+  unitLabel: text("unit_label").notNull().default(""),
+  price: real("price").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+  visualKey: text("visual_key").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const commerceOrdersTable = pgTable("commerce_orders", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => usersTable.id),
+  storeId: integer("store_id").notNull().references(() => commerceStoresTable.id),
+  universe: commerceUniverseEnum("universe").notNull(),
+  status: orderStatusEnum("status").notNull().default("pending"),
+  total: real("total").notNull().default(0),
+  deliveryFee: real("delivery_fee").notNull().default(0),
+  totalWithDelivery: real("total_with_delivery").notNull().default(0),
+  deliveryDistanceKm: real("delivery_distance_km"),
+  deliveryAddress: text("delivery_address"),
+  deliveryLatitude: real("delivery_latitude"),
+  deliveryLongitude: real("delivery_longitude"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const commerceOrderItemsTable = pgTable("commerce_order_items", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => commerceOrdersTable.id),
+  productId: integer("product_id").references(() => commerceProductsTable.id),
+  productName: text("product_name").notNull(),
+  category: text("category").notNull().default("General"),
+  unitLabel: text("unit_label").notNull().default(""),
+  quantity: integer("quantity").notNull().default(1),
+  price: real("price").notNull(),
+  visualKey: text("visual_key").notNull().default(""),
+});
+
 export const insertCartSchema = createInsertSchema(cartsTable).omit({ id: true, createdAt: true });
 export const insertCartItemSchema = createInsertSchema(cartItemsTable).omit({ id: true, createdAt: true });
+export const insertCommerceStoreSchema = createInsertSchema(commerceStoresTable).omit({ id: true, createdAt: true });
+export const insertCommerceProductSchema = createInsertSchema(commerceProductsTable).omit({ id: true, createdAt: true });
+export const insertCommerceCartSchema = createInsertSchema(commerceCartsTable).omit({ id: true, createdAt: true });
+export const insertCommerceCartItemSchema = createInsertSchema(commerceCartItemsTable).omit({ id: true, createdAt: true });
+export const insertCommerceOrderSchema = createInsertSchema(commerceOrdersTable).omit({ id: true, createdAt: true });
+export const insertCommerceOrderItemSchema = createInsertSchema(commerceOrderItemsTable).omit({ id: true });
 
 export const storyLikesTable = pgTable(
   "story_likes",
@@ -378,6 +471,12 @@ export const insertStoryLikeSchema = createInsertSchema(storyLikesTable).omit({ 
 export const insertStoryCommentSchema = createInsertSchema(storyCommentsTable).omit({ id: true, createdAt: true });
 export type Cart = typeof cartsTable.$inferSelect;
 export type CartItem = typeof cartItemsTable.$inferSelect;
+export type CommerceStore = typeof commerceStoresTable.$inferSelect;
+export type CommerceProduct = typeof commerceProductsTable.$inferSelect;
+export type CommerceCart = typeof commerceCartsTable.$inferSelect;
+export type CommerceCartItem = typeof commerceCartItemsTable.$inferSelect;
+export type CommerceOrder = typeof commerceOrdersTable.$inferSelect;
+export type CommerceOrderItem = typeof commerceOrderItemsTable.$inferSelect;
 export type StoryLike = typeof storyLikesTable.$inferSelect;
 export type StoryComment = typeof storyCommentsTable.$inferSelect;
 

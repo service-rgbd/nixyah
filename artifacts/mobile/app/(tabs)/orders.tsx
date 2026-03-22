@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
+import { resolveCommerceVisual } from "@/constants/commerce-catalog";
 import { ApiError, apiFetch } from "@/constants/api";
 import { CustomRequest, Order, ReceivedCustomRequest, ReceivedOrder, useApp } from "@/contexts/AppContext";
 
@@ -207,6 +208,46 @@ function getClientOrderStatus(order: Order) {
 
   const config = STATUS_CONFIG[order.status];
   return { label: config.label, color: config.color };
+}
+
+function getCommerceUniverseLabel(order: Order) {
+  if (order.commerceUniverse === "courses") {
+    return "Course";
+  }
+
+  if (order.commerceUniverse === "supermarkets") {
+    return "Supermarché";
+  }
+
+  if (order.commerceUniverse === "boutiques") {
+    return "Boutique";
+  }
+
+  return "Commerce";
+}
+
+function getCommerceUniverseIcon(order: Order) {
+  if (order.commerceUniverse === "courses") {
+    return { name: "cart" as const, color: "#C4522A" };
+  }
+
+  if (order.commerceUniverse === "supermarkets") {
+    return { name: "storefront" as const, color: "#0F766E" };
+  }
+
+  return { name: "gift" as const, color: "#8B5E3C" };
+}
+
+function getCommerceRepeatHref(order: Order) {
+  if (order.commerceUniverse === "supermarkets") {
+    return "/client/supermarkets" as const;
+  }
+
+  if (order.commerceUniverse === "boutiques") {
+    return "/client/boutiques" as const;
+  }
+
+  return "/client/courses" as const;
 }
 
 function groupItemsByDay<T>(items: T[], getDate: (item: T) => string | null) {
@@ -470,11 +511,15 @@ function ClientHistoryCard({
 }) {
   const status = getClientOrderStatus(order);
   const orderTime = formatClockLabel(order.createdAt);
+  const isCommerceOrder = order.kind === "commerce";
+  const commerceUniverseLabel = getCommerceUniverseLabel(order);
+  const commerceUniverseIcon = getCommerceUniverseIcon(order);
   const primaryAddress = order.delivery?.restaurantAddress || order.chefName;
   const secondaryAddress = order.delivery?.deliveryAddress;
   const shouldPromptReview = Boolean(order.canReview && (order.status === "delivered" || order.delivery?.status === "delivered"));
   const primaryDish = order.dishes[0]?.dish ?? null;
   const primaryDishImage = primaryDish?.imageUrls?.[0] ?? primaryDish?.imageUrl ?? null;
+  const commerceImageSource = isCommerceOrder ? resolveCommerceVisual(primaryDish?.visualKey ?? order.merchantVisualKey ?? null, order.commerceUniverse ?? undefined) : null;
   const [cancelCountdown, setCancelCountdown] = useState(() => {
     if (!order.cancelAvailableUntil) {
       return 0;
@@ -505,14 +550,16 @@ function ClientHistoryCard({
       <View style={styles.historyCardTopRow}>
         {primaryDishImage ? (
           <Image source={{ uri: primaryDishImage }} style={styles.historyDishThumb} />
+        ) : commerceImageSource ? (
+          <Image source={commerceImageSource} style={styles.historyDishThumb} />
         ) : (
           <View style={[styles.historyCardIconWrap, order.delivery ? styles.historyDeliveryIconWrap : styles.historyMealIconWrap]}>
-            <Ionicons name={order.delivery ? "cube" : "restaurant"} size={18} color={order.delivery ? "#F24C1A" : "#D4611A"} />
+            <Ionicons name={order.delivery ? "cube" : isCommerceOrder ? commerceUniverseIcon.name : "restaurant"} size={18} color={order.delivery ? "#F24C1A" : isCommerceOrder ? commerceUniverseIcon.color : "#D4611A"} />
           </View>
         )}
         <View style={styles.historyCardMain}>
           <View style={styles.historyCardHeadlineRow}>
-            <Text style={styles.historyCardTitle} numberOfLines={1}>{`${order.delivery ? "Livraison" : order.chefName}, ${orderTime}`}</Text>
+            <Text style={styles.historyCardTitle} numberOfLines={1}>{`${order.delivery ? "Livraison" : isCommerceOrder ? `${commerceUniverseLabel} · ${order.chefName}` : order.chefName}, ${orderTime}`}</Text>
             <Text style={styles.historyCardAmount}>{`${Math.round(order.totalWithDelivery ?? order.total).toLocaleString("fr-FR")}F`}</Text>
           </View>
           <Text style={[styles.historyCardMeta, status.label === "Annulée" && styles.historyDangerMeta]} numberOfLines={1}>
@@ -522,7 +569,7 @@ function ClientHistoryCard({
             <Text style={styles.historyCardSubline} numberOfLines={1}>{`${primaryAddress} → ${secondaryAddress}`}</Text>
           ) : null}
           {primaryDish ? (
-            <Text style={styles.historyCardDishLine} numberOfLines={1}>{primaryDish.name}</Text>
+            <Text style={styles.historyCardDishLine} numberOfLines={1}>{isCommerceOrder ? `${primaryDish.name}${primaryDish.category ? ` · ${primaryDish.category}` : ""}` : primaryDish.name}</Text>
           ) : null}
           <Text style={styles.historyCardSubline} numberOfLines={1}>
             {order.freeDeliveryApplied
@@ -548,7 +595,7 @@ function ClientHistoryCard({
           <Pressable style={styles.historyGhostBtn} onPress={() => onReportIssue(order)} disabled={reporting}>
             {reporting ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
               <Feather name="headphones" size={16} color="#1F1A17" />
-              <Text style={styles.historyGhostBtnText}>Aide</Text>
+              <Text style={styles.historyGhostBtnText}>{isCommerceOrder ? "Support" : "Aide"}</Text>
             </>}
           </Pressable>
           {shouldPromptReview ? (
@@ -560,6 +607,11 @@ function ClientHistoryCard({
             <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: order.delivery!.id } })}>
               <Feather name="repeat" size={16} color="#1F1A17" />
               <Text style={styles.historyGhostBtnText}>{status.label === "Terminée" ? "Répéter" : "Suivre"}</Text>
+            </Pressable>
+          ) : isCommerceOrder ? (
+            <Pressable style={styles.historyGhostBtn} onPress={() => router.push(getCommerceRepeatHref(order))}>
+              <Feather name="repeat" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>Revoir</Text>
             </Pressable>
           ) : (
             <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/chef/[id]", params: { id: order.chefId } })}>
@@ -1242,6 +1294,11 @@ export default function OrdersScreen() {
   };
 
   const handleReportIssue = (order: Order) => {
+    if (order.kind === "commerce") {
+      router.push("/(tabs)/help");
+      return;
+    }
+
     Alert.alert("Signaler un problème", "Choisissez le motif principal.", [
       { text: "Retard du livreur", onPress: () => void submitIssue(order, { reason: "Retard du livreur", target: "courier", category: "delay" }) },
       { text: "Commande incomplète", onPress: () => void submitIssue(order, { reason: "Commande incomplète", target: "chef", category: "missing_items" }) },
