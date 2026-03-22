@@ -49,6 +49,14 @@ const SERVICES: ServiceItem[] = [
     action: () => router.push("/client/courses"),
   },
   {
+    id: "faq",
+    label: "FAQ",
+    primaryIcon: "help-circle",
+    secondaryIcon: "chatbubble-ellipses",
+    accentColor: Colors.light.warning,
+    action: () => router.push("/(tabs)/help"),
+  },
+  {
     id: "supermarches",
     label: "Supermarches",
     primaryIcon: "storefront",
@@ -182,6 +190,7 @@ function ServiceBubble({
   accentColor,
   action,
   bubbleSize,
+  cardWidth,
 }: {
   label: string;
   primaryIcon: IoniconsName;
@@ -189,9 +198,10 @@ function ServiceBubble({
   accentColor: string;
   action: () => void;
   bubbleSize: number;
+  cardWidth: number;
 }) {
   return (
-    <Pressable style={styles.serviceBubbleItem} onPress={action}>
+    <Pressable style={[styles.serviceBubbleItem, { width: cardWidth }]} onPress={action}>
       <View style={[styles.serviceBubbleOuter, { width: bubbleSize, height: bubbleSize, borderRadius: bubbleSize / 2 }]}>
         <ServiceIllustration
           primaryIcon={primaryIcon}
@@ -323,6 +333,7 @@ export default function HomeScreen() {
   const bubbleSize = compactHome
     ? Math.max(96, Math.min(108, Math.floor((width - 92) / 2)))
     : Math.max(106, Math.min(122, Math.floor((width - 76) / 2)));
+  const serviceCardWidth = Math.min(width - 92, 148);
 
   const quickDishes: QuickDishItem[] = chefs
     .flatMap((chef) =>
@@ -371,18 +382,32 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        <View style={[styles.serviceBubbleGrid, compactHome ? styles.serviceBubbleGridCompact : null]}>
-          {SERVICES.map((service) => (
-            <ServiceBubble
-              key={service.id}
-              label={service.label}
-              primaryIcon={service.primaryIcon}
-              secondaryIcon={service.secondaryIcon}
-              accentColor={service.accentColor}
-              action={service.action}
-              bubbleSize={bubbleSize}
-            />
-          ))}
+        <View style={styles.serviceCarouselSection}>
+          <View style={styles.serviceCarouselHeader}>
+            <Text style={styles.serviceCarouselTitle}>Vos 5 univers</Text>
+            <Text style={styles.serviceCarouselHint}>Faites glisser pour déplacer les bulles</Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            snapToInterval={serviceCardWidth + 14}
+            snapToAlignment="start"
+            contentContainerStyle={[styles.serviceBubbleRail, compactHome ? styles.serviceBubbleRailCompact : null]}
+          >
+            {SERVICES.map((service) => (
+              <ServiceBubble
+                key={service.id}
+                label={service.label}
+                primaryIcon={service.primaryIcon}
+                secondaryIcon={service.secondaryIcon}
+                accentColor={service.accentColor}
+                action={service.action}
+                bubbleSize={bubbleSize}
+                cardWidth={serviceCardWidth}
+              />
+            ))}
+          </ScrollView>
         </View>
       </Gradient>
 
@@ -475,21 +500,40 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
     color: Colors.light.text,
   },
-  serviceBubbleGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    rowGap: 14,
-    columnGap: 12,
-    paddingHorizontal: 4,
+  serviceCarouselSection: {
     paddingTop: 12,
   },
-  serviceBubbleGridCompact: {
-    rowGap: 12,
+  serviceCarouselHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 4,
+    marginBottom: 12,
+  },
+  serviceCarouselTitle: {
+    fontSize: 14,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.text,
+  },
+  serviceCarouselHint: {
+    flex: 1,
+    textAlign: "right",
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  serviceBubbleRail: {
+    gap: 14,
+    paddingHorizontal: 4,
+    paddingRight: 20,
+  },
+  serviceBubbleRailCompact: {
+    gap: 12,
     paddingTop: 8,
   },
   serviceBubbleItem: {
-    width: "48%",
     alignItems: "center",
   },
   serviceBubbleOuter: {
