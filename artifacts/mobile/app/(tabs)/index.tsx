@@ -1,8 +1,10 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React from "react";
+import React, { useMemo, useRef } from "react";
 import {
+  Animated,
   Image as RNImage,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -202,8 +204,63 @@ function ServiceBubble({
   cardWidth: number;
   labelMaxWidth?: number;
 }) {
+  const pan = useRef(new Animated.ValueXY()).current;
+  const draggedRef = useRef(false);
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4,
+        onPanResponderGrant: () => {
+          draggedRef.current = false;
+        },
+        onPanResponderMove: (_, gestureState) => {
+          if (Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4) {
+            draggedRef.current = true;
+          }
+
+          pan.setValue({
+            x: Math.max(-28, Math.min(28, gestureState.dx)),
+            y: Math.max(-28, Math.min(28, gestureState.dy)),
+          });
+        },
+        onPanResponderRelease: () => {
+          Animated.spring(pan, {
+            toValue: { x: 0, y: 0 },
+            tension: 120,
+            friction: 8,
+            useNativeDriver: true,
+          }).start(() => {
+            draggedRef.current = false;
+          });
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(pan, {
+            toValue: { x: 0, y: 0 },
+            tension: 120,
+            friction: 8,
+            useNativeDriver: true,
+          }).start(() => {
+            draggedRef.current = false;
+          });
+        },
+      }),
+    [pan],
+  );
+
   return (
-    <Pressable style={[styles.serviceBubbleItem, { width: cardWidth }]} onPress={action}>
+    <Animated.View
+      style={[
+        styles.serviceBubbleItem,
+        { width: cardWidth, transform: [{ translateX: pan.x }, { translateY: pan.y }] },
+      ]}
+      {...panResponder.panHandlers}
+    >
+      <Pressable onPress={() => {
+        if (!draggedRef.current) {
+          action();
+        }
+      }}>
       <View style={[styles.serviceBubbleOuter, { width: bubbleSize, height: bubbleSize, borderRadius: bubbleSize / 2 }]}>
         <ServiceIllustration
           primaryIcon={primaryIcon}
@@ -215,7 +272,8 @@ function ServiceBubble({
       <View style={[styles.serviceLabelPill, { maxWidth: labelMaxWidth ?? bubbleSize + 8 }]}> 
         <Text style={styles.serviceLabelText} numberOfLines={2}>{label}</Text>
       </View>
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -531,6 +589,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-evenly",
     paddingTop: 12,
     paddingBottom: 10,
+    transform: [{ translateY: -10 }],
   },
   serviceMatrixCompact: {
     paddingTop: 8,

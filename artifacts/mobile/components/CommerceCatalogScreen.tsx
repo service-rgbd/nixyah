@@ -223,15 +223,20 @@ export default function CommerceCatalogScreen({
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.storeRow}>
             {stores.map((store) => (
-              <View key={store.id} style={styles.storeCard}>
+              <Pressable
+                key={store.id}
+                style={styles.storeCard}
+                onPress={() => router.push({ pathname: "/client/commerce-store/[storeId]", params: { storeId: store.id, universe: store.universe } })}
+              >
                 <Image source={resolveCommerceVisual(store.visualKey, store.universe)} style={styles.storeImage} />
                 <View style={styles.storeBody}>
                   <View style={[styles.storeAccent, { backgroundColor: store.accentColor }]} />
                   <Text style={styles.storeName} numberOfLines={1}>{store.name}</Text>
                   <Text style={styles.storeTagline} numberOfLines={2}>{store.tagline}</Text>
                   <Text style={styles.storeMeta}>{store.location} · {formatCommerceEta(store.etaMinMinutes, store.etaMaxMinutes)}</Text>
+                  <Text style={styles.storeOpenText}>Entrer dans l'enseigne</Text>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </ScrollView>
         </View> : null}
@@ -260,7 +265,15 @@ export default function CommerceCatalogScreen({
                         {product.originalPrice ? <Text style={styles.productOldPrice}>{product.originalPrice.toLocaleString("fr-FR")} FCFA</Text> : null}
                       </View>
                       <View style={styles.productActionBlock}>
-                        <Text style={styles.productStore} numberOfLines={1}>{store?.name ?? "Catalogue"}</Text>
+                        <Pressable
+                          onPress={() => {
+                            if (store) {
+                              router.push({ pathname: "/client/commerce-store/[storeId]", params: { storeId: store.id, universe: store.universe } });
+                            }
+                          }}
+                        >
+                          <Text style={styles.productStore} numberOfLines={1}>{store?.name ?? "Catalogue"}</Text>
+                        </Pressable>
                         <Pressable style={[styles.addButton, { backgroundColor: accentColor }]} onPress={() => void handleAddToCart(product)} disabled={activeProductId === product.id || !product.inStock}>
                           {activeProductId === product.id ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.addButtonText}>{product.inStock ? "Ajouter" : "Indispo"}</Text>}
                         </Pressable>
@@ -387,6 +400,7 @@ const styles = StyleSheet.create({
   storeName: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   storeTagline: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   storeMeta: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.textTertiary },
+  storeOpenText: { marginTop: 4, fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   productList: { gap: 12 },
   productCard: {
     flexDirection: "row",
