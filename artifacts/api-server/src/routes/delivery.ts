@@ -26,6 +26,8 @@ type MapPoint = {
   longitude: number;
 };
 
+const scheduledBroadcasts = new Map<number, NodeJS.Timeout[]>();
+
 function toPoint(latitude?: number | null, longitude?: number | null): MapPoint | null {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     return null;
@@ -171,14 +173,45 @@ async function notifyChefNoCourierAvailable(jobId: number) {
   });
 }
 
+function clearScheduledBroadcast(jobId: number) {
+  const timeouts = scheduledBroadcasts.get(jobId);
+  if (!timeouts) {
+    return;
+  }
+
+  for (const timeout of timeouts) {
+    clearTimeout(timeout);
+  }
+
+  scheduledBroadcasts.delete(jobId);
+}
+
+function scheduleDeliveryBroadcast(jobId: number) {
+  clearScheduledBroadcast(jobId);
+
+  const timeouts: NodeJS.Timeout[] = [];
+  for (let stepIndex = 1; stepIndex <= BROADCAST_ETA_STEPS_MINUTES.length; stepIndex += 1) {
+    const timeout = setTimeout(() => {
+      void syncDeliveryJobOffers(jobId).catch((error) => {
+        console.error("scheduled delivery broadcast sync error", error);
+      });
+    }, stepIndex * BROADCAST_STEP_DURATION_MS);
+    timeouts.push(timeout);
+  }
+
+  scheduledBroadcasts.set(jobId, timeouts);
+}
+
 async function syncDeliveryJobOffers(jobId: number) {
   const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
   if (!job || job.courierUserId || ["delivered", "cancelled"].includes(job.status)) {
+    clearScheduledBroadcast(jobId);
     return { maxEtaMinutes: 0, remainingMinutes: 0, newCourierIds: [] as number[] };
   }
 
   const now = new Date();
   if (isBroadcastExpired(job.broadcastedAt, now)) {
+    clearScheduledBroadcast(jobId);
     await db
       .update(deliveryOffersTable)
       .set({ status: "expired", respondedAt: now })
@@ -306,7 +339,7 @@ async function getDeliveryJobPayload(jobId: number) {
     deliveryLongitude: job.deliveryLongitude,
     notes: job.notes,
     broadcastedAt: job.broadcastedAt.toISOString(),
-    broadcastRadiusKm: restaurantPoint ? null : null,
+    broadcastRadiusKm: null,
     broadcastEtaMinutes: restaurantPoint ? getBroadcastMaxEtaMinutes(job.broadcastedAt, now) : null,
     broadcastEndsAt: getBroadcastEndsAt(job.broadcastedAt).toISOString(),
     broadcastRemainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
@@ -384,6 +417,10 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
         }
       }
 
+      if (!activeJob.courierUserId) {
+        scheduleDeliveryBroadcast(activeJob.id);
+      }
+
       const syncResult = await syncDeliveryJobOffers(activeJob.id);
       await notifyUsers({
         userIds: [order.clientId],
@@ -459,6 +496,7 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
     }
 
     const syncResult = await syncDeliveryJobOffers(job.id);
+    scheduleDeliveryBroadcast(job.id);
     await notifyUsers({
       userIds: [order.clientId],
       type: "order",
@@ -704,6 +742,8 @@ router.post("/delivery/jobs/:jobId/accept", requireCourier, async (req: AuthRequ
       return res.status(409).json({ error: "Conflict", message: "Cette mission a deja ete attribuee" });
     }
 
+    clearScheduledBroadcast(acceptedJob.id);
+
     const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, acceptedJob.chefProfileId)).limit(1);
     const [chefUser] = chefProfile
       ? await db.select().from(usersTable).where(eq(usersTable.id, chefProfile.userId)).limit(1)
@@ -896,6 +936,8 @@ router.post("/delivery/jobs/:jobId/complete", requireCourier, async (req: AuthRe
     if (!job) {
       return res.status(404).json({ error: "NotFound", message: "Mission introuvable ou invalide" });
     }
+
+    clearScheduledBroadcast(job.id);
 
     await db.update(ordersTable).set({ status: "delivered" }).where(eq(ordersTable.id, job.orderId));
     await db.update(courierProfilesTable).set({ isAvailable: true }).where(eq(courierProfilesTable.userId, req.userId!));
