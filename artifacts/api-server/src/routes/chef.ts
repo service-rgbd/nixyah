@@ -102,10 +102,15 @@ async function buildChefOrderPayload(order: typeof ordersTable.$inferSelect, cli
   const broadcastRemainingMinutes = deliveryJob && !deliveryJob.courierUserId
     ? getDeliveryBroadcastRemainingMinutes(deliveryJob.broadcastedAt)
     : 0;
+  const canCancelSearch =
+    !!deliveryJob &&
+    !deliveryJob.courierUserId &&
+    ["broadcasting", "available"].includes(deliveryJob.status) &&
+    (broadcastRemainingMinutes ?? 0) > 0;
   const canRebroadcast = Boolean(
     deliveryJob &&
     !deliveryJob.courierUserId &&
-    !["delivered", "cancelled"].includes(deliveryJob.status) &&
+    deliveryJob.status !== "delivered" &&
     broadcastRemainingMinutes <= 0,
   );
 
@@ -140,6 +145,7 @@ async function buildChefOrderPayload(order: typeof ordersTable.$inferSelect, cli
           broadcastedAt: deliveryJob.broadcastedAt.toISOString(),
           broadcastEndsAt: new Date(deliveryJob.broadcastedAt.getTime() + DELIVERY_BROADCAST_WINDOW_MS).toISOString(),
           broadcastRemainingMinutes,
+          canCancelSearch,
           canRebroadcast,
           latestLocation: latestLocation
             ? {

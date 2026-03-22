@@ -71,6 +71,10 @@ type DeliveryJob = {
 type CourierMissionFilter = "all" | "current" | "available" | "history";
 type ClientOrderFilter = "all" | "meal" | "delivery" | "custom";
 
+const COURIER_REFRESH_INTERVAL_MS = 15000;
+const CHEF_REFRESH_INTERVAL_MS = 20000;
+const CLIENT_REFRESH_INTERVAL_MS = 25000;
+
 function formatDistanceLabel(distanceKm?: number | null) {
   if (distanceKm == null) {
     return "Distance indisponible";
@@ -626,12 +630,14 @@ function ChefOrderCard({
   order,
   onAdvance,
   onRequestDelivery,
+  onCancelDeliverySearch,
   onOpenDelivery,
   loadingAction,
 }: {
   order: ReceivedOrder;
   onAdvance: (order: ReceivedOrder) => void;
   onRequestDelivery: (order: ReceivedOrder) => void;
+  onCancelDeliverySearch: (order: ReceivedOrder) => void;
   onOpenDelivery: (order: ReceivedOrder) => void;
   loadingAction: string | null;
 }) {
@@ -650,15 +656,65 @@ function ChefOrderCard({
         : order.status === "preparing"
           ? { label: "Marquer prête", status: "ready" as const }
           : null;
-    const canRebroadcastDelivery = Boolean(
-      order.delivery &&
-      !order.delivery.courierUserId &&
-      order.delivery.canRebroadcast,
-    );
-    const deliveryActionLabel = canRebroadcastDelivery ? "Relancer la recherche" : "Trouver un livreur";
-    const showDeliveryAction = Boolean(
-      order.status === "ready" && (!order.delivery || canRebroadcastDelivery),
-    );
+  const canRebroadcastDelivery = Boolean(
+    order.delivery &&
+    !order.delivery.courierUserId &&
+    order.delivery.canRebroadcast,
+  );
+  const canCancelDeliverySearch = Boolean(
+    order.delivery &&
+    !order.delivery.courierUserId &&
+    order.delivery.canCancelSearch,
+  );
+  const deliveryActionLabel = canRebroadcastDelivery ? "Relancer la recherche" : "Trouver un livreur";
+  const showDeliveryAction = Boolean(
+    order.status === "ready" && (!order.delivery || canRebroadcastDelivery),
+  );
+  const deliveryBanner = order.delivery
+    ? order.delivery.courierUserId
+      ? {
+          icon: "check-circle" as const,
+          title: "Livreur trouvé",
+          message: "La mission est acceptée. Vous pouvez ouvrir le suivi pour voir l'avancement de la course.",
+          tone: "success" as const,
+        }
+      : order.delivery.status === "cancelled"
+        ? canRebroadcastDelivery
+          ? {
+              icon: "refresh-cw" as const,
+              title: "Relance disponible",
+              message: "La pause est terminée. Vous pouvez relancer la recherche de livreur dès maintenant.",
+              tone: "warning" as const,
+            }
+          : {
+              icon: "pause-circle" as const,
+              title: "Recherche suspendue",
+              message: order.delivery.broadcastRemainingMinutes != null && order.delivery.broadcastRemainingMinutes > 0
+                ? `La recherche reste en pause pendant encore ${order.delivery.broadcastRemainingMinutes} minute(s) avant une nouvelle relance.`
+                : "La recherche est temporairement suspendue.",
+              tone: "warning" as const,
+            }
+      : canRebroadcastDelivery
+        ? {
+            icon: "refresh-cw" as const,
+            title: "Recherche expirée",
+            message: "Aucun livreur n'a accepté cette mission. Relancez la recherche pour notifier de nouveaux livreurs.",
+            tone: "warning" as const,
+          }
+        : {
+            icon: "radio" as const,
+            title: "Recherche en cours",
+            message: order.delivery.broadcastRemainingMinutes != null && order.delivery.broadcastRemainingMinutes > 0
+              ? `La mission reste diffusée pendant encore ${order.delivery.broadcastRemainingMinutes} minute(s).`
+              : "La mission est encore en diffusion auprès des livreurs disponibles.",
+            tone: "info" as const,
+          }
+    : null;
+  const deliveryBannerColors = deliveryBanner?.tone === "success"
+    ? { backgroundColor: "rgba(15,118,110,0.10)", iconColor: "#0F766E", titleColor: "#0F766E" }
+    : deliveryBanner?.tone === "warning"
+      ? { backgroundColor: "rgba(217,119,6,0.12)", iconColor: "#B45309", titleColor: "#B45309" }
+      : { backgroundColor: "rgba(37,99,235,0.10)", iconColor: "#2563EB", titleColor: "#2563EB" };
 
   return (
     <View style={[styles.chefCard, order.status === "pending" && styles.chefCardPriority]}>
@@ -702,6 +758,18 @@ function ChefOrderCard({
         ) : null}
       </View>
 
+      {deliveryBanner ? (
+        <View style={[styles.chefDeliveryBanner, { backgroundColor: deliveryBannerColors.backgroundColor }]}> 
+          <View style={[styles.chefDeliveryBannerIconWrap, { backgroundColor: `${deliveryBannerColors.iconColor}18` }]}> 
+            <Feather name={deliveryBanner.icon} size={16} color={deliveryBannerColors.iconColor} />
+          </View>
+          <View style={styles.chefDeliveryBannerBody}>
+            <Text style={[styles.chefDeliveryBannerTitle, { color: deliveryBannerColors.titleColor }]}>{deliveryBanner.title}</Text>
+            <Text style={styles.chefDeliveryBannerText}>{deliveryBanner.message}</Text>
+          </View>
+        </View>
+      ) : null}
+
       {order.notes ? (
         <View style={styles.chefBriefCard}>
           <Text style={styles.chefBriefLabel}>Instruction</Text>
@@ -740,6 +808,15 @@ function ChefOrderCard({
               {loadingAction === `${order.id}:delivery` ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
                 <Feather name="truck" size={16} color="#1F1A17" />
                 <Text style={styles.historyGhostBtnText}>{deliveryActionLabel}</Text>
+              </>}
+            </Pressable>
+          ) : null}
+
+          {canCancelDeliverySearch ? (
+            <Pressable style={styles.historyGhostBtn} onPress={() => onCancelDeliverySearch(order)} disabled={loadingAction === `${order.id}:delivery-cancel`}>
+              {loadingAction === `${order.id}:delivery-cancel` ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
+                <Feather name="pause-circle" size={16} color="#1F1A17" />
+                <Text style={styles.historyGhostBtnText}>Suspendre</Text>
               </>}
             </Pressable>
           ) : null}
@@ -832,6 +909,7 @@ export default function OrdersScreen() {
     fetchChefCustomRequests,
     updateChefOrderStatus,
     requestDeliveryForOrder,
+    cancelDeliverySearchForOrder,
     isLoadingChefOrders,
   } = useApp();
   const topInset = Platform.OS === "web" ? 67 : insets.top;
@@ -967,7 +1045,10 @@ export default function OrdersScreen() {
       };
 
       runRefresh();
-      const interval = setInterval(runRefresh, isCourier ? 8000 : isChef ? 10000 : 12000);
+      const interval = setInterval(
+        runRefresh,
+        isCourier ? COURIER_REFRESH_INTERVAL_MS : isChef ? CHEF_REFRESH_INTERVAL_MS : CLIENT_REFRESH_INTERVAL_MS,
+      );
       return () => clearInterval(interval);
     }, [token, isCourier, isChef, refreshOrders, fetchCustomRequests, fetchChefOrders, fetchChefCustomRequests])
   );
@@ -1118,6 +1199,22 @@ export default function OrdersScreen() {
     } catch (error) {
       await fetchChefOrders();
       console.warn("Failed to request delivery:", error);
+    } finally {
+      setChefActionKey(null);
+    }
+  };
+
+  const handleCancelDeliverySearch = async (order: ReceivedOrder) => {
+    if (!order.delivery) {
+      return;
+    }
+
+    setChefActionKey(`${order.id}:delivery-cancel`);
+    try {
+      await cancelDeliverySearchForOrder(order.delivery.id);
+    } catch (error) {
+      await fetchChefOrders();
+      console.warn("Failed to cancel delivery search:", error);
     } finally {
       setChefActionKey(null);
     }
@@ -1345,6 +1442,7 @@ export default function OrdersScreen() {
                           order={order as ReceivedOrder}
                           onAdvance={handleAdvanceChefOrder}
                           onRequestDelivery={handleRequestDelivery}
+                          onCancelDeliverySearch={handleCancelDeliverySearch}
                           onOpenDelivery={(value) => value.delivery && router.push({ pathname: "/delivery/job/[id]", params: { id: value.delivery.id } })}
                           loadingAction={chefActionKey}
                         />
@@ -2110,6 +2208,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 4,
+  },
+  chefDeliveryBanner: {
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  chefDeliveryBannerIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chefDeliveryBannerBody: {
+    flex: 1,
+    gap: 3,
+  },
+  chefDeliveryBannerTitle: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+  },
+  chefDeliveryBannerText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#5E544E",
   },
   chefBriefLabel: {
     fontSize: 11,

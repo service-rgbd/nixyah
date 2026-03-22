@@ -49,6 +49,9 @@ type DeliveryJobDetail = {
   } | null;
 };
 
+const DELIVERY_JOB_REFRESH_INTERVAL_MS = 15000;
+const LIVE_DELIVERY_JOB_STATUSES: DeliveryJobDetail["status"][] = ["broadcasting", "available", "accepted", "picked_up", "on_the_way"];
+
 function formatDistanceKm(distanceKm: number | null) {
   if (distanceKm === null) {
     return "Distance indisponible";
@@ -249,12 +252,12 @@ export default function DeliveryJobScreen() {
 
   useEffect(() => {
     loadJob();
-    if (jobAccessBlocked) {
+    if (jobAccessBlocked || (job?.status && !LIVE_DELIVERY_JOB_STATUSES.includes(job.status))) {
       return undefined;
     }
-    const interval = setInterval(loadJob, 5000);
+    const interval = setInterval(loadJob, DELIVERY_JOB_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [jobAccessBlocked, jobId, token]);
+  }, [job?.status, jobAccessBlocked, jobId, token]);
 
   useEffect(() => {
     if (!isEditingClientPoint) {

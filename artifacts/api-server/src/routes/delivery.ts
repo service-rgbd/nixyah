@@ -97,6 +97,14 @@ function getRemainingBroadcastMinutes(broadcastedAt: Date, now = new Date()): nu
   return Math.ceil(remainingMs / 60000);
 }
 
+function canCancelDeliverySearch(job: typeof deliveryJobsTable.$inferSelect, now = new Date()) {
+  return !job.courierUserId && ["broadcasting", "available"].includes(job.status) && !isBroadcastExpired(job.broadcastedAt, now);
+}
+
+function canRebroadcastDeliverySearch(job: typeof deliveryJobsTable.$inferSelect, now = new Date()) {
+  return !job.courierUserId && !["delivered"].includes(job.status) && isBroadcastExpired(job.broadcastedAt, now);
+}
+
 async function notifyCouriersAboutDeliveryJob(jobId: number, courierUserIds: number[]) {
   if (courierUserIds.length === 0) {
     return;
@@ -320,6 +328,8 @@ async function getDeliveryJobPayload(jobId: number) {
 
   const now = new Date();
   const restaurantPoint = toPoint(job.restaurantLatitude, job.restaurantLongitude);
+  const canCancelSearch = canCancelDeliverySearch(job, now);
+  const canRebroadcast = canRebroadcastDeliverySearch(job, now);
 
   return {
     id: String(job.id),
@@ -343,6 +353,8 @@ async function getDeliveryJobPayload(jobId: number) {
     broadcastEtaMinutes: restaurantPoint ? getBroadcastMaxEtaMinutes(job.broadcastedAt, now) : null,
     broadcastEndsAt: getBroadcastEndsAt(job.broadcastedAt).toISOString(),
     broadcastRemainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
+    canCancelSearch,
+    canRebroadcast,
     acceptedAt: job.acceptedAt?.toISOString() ?? null,
     pickedUpAt: job.pickedUpAt?.toISOString() ?? null,
     deliveredAt: job.deliveredAt?.toISOString() ?? null,
@@ -420,7 +432,16 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
       let activeJob = existingJob;
       let rebroadcasted = false;
 
-      if (!existingJob.courierUserId && isBroadcastExpired(existingJob.broadcastedAt)) {
+      if (!existingJob.courierUserId && existingJob.status === "cancelled" && !canRebroadcastDeliverySearch(existingJob)) {
+        const payload = await getDeliveryJobPayload(existingJob.id);
+        return res.status(409).json({
+          error: "CooldownActive",
+          message: "La recherche est suspendue. Vous pourrez la relancer après le délai de pause.",
+          job: payload,
+        });
+      }
+
+      if (!existingJob.courierUserId && canRebroadcastDeliverySearch(existingJob)) {
         await db.delete(deliveryOffersTable).where(eq(deliveryOffersTable.deliveryJobId, existingJob.id));
         const [resetJob] = await db
           .update(deliveryJobsTable)
@@ -532,6 +553,62 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
     return res.status(201).json({ job: payload, notifiedCouriers: syncResult.newCourierIds.length });
   } catch (error) {
     console.error("broadcast delivery error", error);
+    return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/delivery/jobs/:jobId/cancel-search", requireChef, async (req: AuthRequest, res) => {
+  try {
+    const jobId = Number(req.params.jobId);
+    if (!Number.isInteger(jobId) || jobId <= 0) {
+      return res.status(400).json({ error: "BadRequest", message: "Mission invalide" });
+    }
+
+    const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
+    if (!job || job.chefProfileId !== req.chefProfileId) {
+      return res.status(404).json({ error: "NotFound", message: "Mission introuvable" });
+    }
+
+    if (job.courierUserId) {
+      return res.status(400).json({ error: "BadRequest", message: "Un livreur a déjà accepté cette mission" });
+    }
+
+    if (["delivered"].includes(job.status)) {
+      return res.status(400).json({ error: "BadRequest", message: "Cette mission ne peut plus être suspendue" });
+    }
+
+    const now = new Date();
+    clearScheduledBroadcast(job.id);
+
+    await db
+      .update(deliveryOffersTable)
+      .set({ status: "expired", respondedAt: now })
+      .where(and(eq(deliveryOffersTable.deliveryJobId, job.id), eq(deliveryOffersTable.status, "pending")));
+
+    const [updatedJob] = await db
+      .update(deliveryJobsTable)
+      .set({ status: "cancelled", broadcastedAt: now })
+      .where(eq(deliveryJobsTable.id, job.id))
+      .returning();
+
+    await notifyUsers({
+      userIds: [job.clientId],
+      type: "order",
+      title: "Recherche de livreur suspendue",
+      message: "La cuisinière a momentanément suspendu la recherche de livreur. Elle pourra la relancer après un court délai.",
+      orderId: job.orderId,
+      deliveryJobId: job.id,
+      data: {
+        screen: "orders",
+        orderId: String(job.orderId),
+        deliveryJobId: String(job.id),
+      },
+    });
+
+    const payload = await getDeliveryJobPayload(updatedJob?.id ?? job.id);
+    return res.json({ job: payload });
+  } catch (error) {
+    console.error("cancel delivery search error", error);
     return res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });

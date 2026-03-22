@@ -173,6 +173,7 @@ export interface Order {
     broadcastedAt?: string | null;
     broadcastEndsAt?: string | null;
     broadcastRemainingMinutes?: number | null;
+    canCancelSearch?: boolean;
     canRebroadcast?: boolean;
     latestLocation?: {
       latitude: number;
@@ -379,6 +380,7 @@ interface AppContextValue {
   updateChefCustomRequestStatus: (requestId: string, data: { status: ReceivedCustomRequest["status"]; chefResponse?: string }) => Promise<void>;
   updateChefOrderStatus: (orderId: string, status: ReceivedOrder["status"]) => Promise<void>;
   requestDeliveryForOrder: (orderId: string) => Promise<void>;
+  cancelDeliverySearchForOrder: (deliveryJobId: string) => Promise<void>;
   fetchNotifications: () => Promise<void>;
   refreshOrders: () => Promise<void>;
 }
@@ -577,6 +579,7 @@ function mapApiOrder(order: any): Order {
           broadcastedAt: order.delivery.broadcastedAt ? String(order.delivery.broadcastedAt) : null,
           broadcastEndsAt: order.delivery.broadcastEndsAt ? String(order.delivery.broadcastEndsAt) : null,
           broadcastRemainingMinutes: order.delivery.broadcastRemainingMinutes != null ? Number(order.delivery.broadcastRemainingMinutes) : null,
+          canCancelSearch: Boolean(order.delivery.canCancelSearch),
           canRebroadcast: Boolean(order.delivery.canRebroadcast),
           latestLocation: order.delivery.latestLocation
             ? {
@@ -672,6 +675,15 @@ function mapApiChefOrder(order: any): ReceivedOrder {
           courierUserId: order.delivery.courierUserId ? String(order.delivery.courierUserId) : null,
           deliveryAddress: order.delivery.deliveryAddress ?? undefined,
           restaurantAddress: order.delivery.restaurantAddress ?? undefined,
+          restaurantLatitude: order.delivery.restaurantLatitude != null ? Number(order.delivery.restaurantLatitude) : null,
+          restaurantLongitude: order.delivery.restaurantLongitude != null ? Number(order.delivery.restaurantLongitude) : null,
+          deliveryLatitude: order.delivery.deliveryLatitude != null ? Number(order.delivery.deliveryLatitude) : null,
+          deliveryLongitude: order.delivery.deliveryLongitude != null ? Number(order.delivery.deliveryLongitude) : null,
+          broadcastedAt: order.delivery.broadcastedAt ? String(order.delivery.broadcastedAt) : null,
+          broadcastEndsAt: order.delivery.broadcastEndsAt ? String(order.delivery.broadcastEndsAt) : null,
+          broadcastRemainingMinutes: order.delivery.broadcastRemainingMinutes != null ? Number(order.delivery.broadcastRemainingMinutes) : null,
+          canCancelSearch: Boolean(order.delivery.canCancelSearch),
+          canRebroadcast: Boolean(order.delivery.canRebroadcast),
           latestLocation: order.delivery.latestLocation
             ? {
                 latitude: Number(order.delivery.latestLocation.latitude),
@@ -1321,6 +1333,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
   }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
 
+  const cancelDeliverySearchForOrder = useCallback(async (deliveryJobId: string) => {
+    if (!token || user?.type !== "chef") throw new Error("Non connectée");
+    await apiFetch(`/delivery/jobs/${deliveryJobId}/cancel-search`, {
+      method: "POST",
+      token,
+    });
+    await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
+  }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
+
   const fetchNotifications = useCallback(async () => {
     if (!token || !user?.id) return;
     try {
@@ -1389,10 +1410,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateChefCustomRequestStatus,
       updateChefOrderStatus,
       requestDeliveryForOrder,
+      cancelDeliverySearchForOrder,
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
