@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { usersTable, chefProfilesTable, dishesTable, storiesTable, commerceProductsTable, commerceStoresTable } from "@workspace/db/schema";
 import { hashPassword } from "./lib/auth.js";
@@ -207,6 +208,14 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
     products: [
       { name: "Bananes plantain fraiches", description: "Selection du jour pour alloco, foutou ou accompagnement.", category: "Fruits & legumes", price: 2200, unitLabel: "kg", visualKey: "market-fresh" },
       { name: "Riz parfume famille", description: "Sac pratique pour la semaine, cuisson reguliere.", category: "Epicerie", price: 8900, originalPrice: 9500, badge: "Promo", unitLabel: "5 kg", visualKey: "comfort" },
+      { name: "Oignons Niger", description: "Oignons rouges frais pour sauces, alloco et salades.", category: "Fruits & legumes", price: 2100, originalPrice: 2600, badge: "Promo", unitLabel: "500 g", visualKey: "market-fresh" },
+      { name: "Fanta Orange", description: "Boisson fraiche pour les repas et depannages maison.", category: "Boissons", price: 900, originalPrice: 1100, badge: "Promo", unitLabel: "1 bouteille", visualKey: "sweet" },
+      { name: "Oeufs de ferme", description: "Plateau pratique pour petit-dejeuner et cuisine familiale.", category: "Produits laitiers & oeufs", price: 3200, unitLabel: "plateau", visualKey: "comfort" },
+      { name: "Poulet entier frais", description: "Piece fraiche pour braise, sauce ou cuisson au four.", category: "Boucherie & poisson", price: 5400, badge: "Frais", unitLabel: "piece", visualKey: "grill" },
+      { name: "Biscuits famille", description: "Selection snack pour pauses et gouter maison.", category: "Snacks sucres", price: 1800, unitLabel: "pack", visualKey: "sweet" },
+      { name: "Huile vegetale", description: "Bouteille grand format pour fritures et cuisson quotidienne.", category: "Huiles, epices & sauces", price: 4200, unitLabel: "1,5 L", visualKey: "cashier" },
+      { name: "Poelee legumes surgeles", description: "Melange pratique pour repas rapides a la maison.", category: "Surgeles & glaces", price: 3600, unitLabel: "sachet", visualKey: "comfort" },
+      { name: "Nettoyant sol citron", description: "Solution maison pour entretien quotidien et parfum propre.", category: "Maison", price: 2700, unitLabel: "1 L", visualKey: "courier" },
     ],
   },
   {
@@ -223,6 +232,13 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
     products: [
       { name: "Jus multi-fruits", description: "Pack familial refrigere, ideal petit-dejeuner.", category: "Boissons", price: 5400, unitLabel: "6 bouteilles", visualKey: "sweet" },
       { name: "Pack bebe essentiel", description: "Couches, lingettes et creme pour la semaine.", category: "Bebe", price: 12800, badge: "Famille", unitLabel: "pack", visualKey: "courier" },
+      { name: "Tomates cuisine", description: "Tomates rouges pour sauces et bases de cuisson.", category: "Fruits & legumes", price: 1900, unitLabel: "500 g", visualKey: "market-fresh" },
+      { name: "Lait UHT", description: "Brique pratique pour petit-dejeuner et cuisine maison.", category: "Produits laitiers & oeufs", price: 1450, unitLabel: "1 L", visualKey: "comfort" },
+      { name: "Poulet marine pret a cuire", description: "Assaisonne et pret pour four ou poele.", category: "Traiteur", price: 6200, badge: "Pret a cuire", unitLabel: "barquette", visualKey: "grill" },
+      { name: "Chips salees", description: "Pack de snacking pour maison et bureaux.", category: "Snacks sales", price: 1750, unitLabel: "lot", visualKey: "sweet" },
+      { name: "Petit dejeuner gourmand", description: "Cafe, tartines et pates a tartiner en un lot simple.", category: "Petit-dejeuner", price: 4800, unitLabel: "kit", visualKey: "cashier" },
+      { name: "Savon liquide mains", description: "Hygiene familiale pour cuisine et salle de bain.", category: "Soins & hygiene", price: 2300, unitLabel: "flacon", visualKey: "courier" },
+      { name: "Liquide vaisselle", description: "Format quotidien pour cuisine et nettoyage rapide.", category: "Maison", price: 1600, unitLabel: "750 ml", visualKey: "courier" },
     ],
   },
   {
@@ -239,6 +255,9 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
     products: [
       { name: "Coffret bougie & senteur", description: "Petit coffret cadeau pour ambiance chic a la maison.", category: "Maison", price: 9600, badge: "Cadeau", unitLabel: "coffret", visualKey: "sweet" },
       { name: "Box self-care", description: "Selection bien-etre avec savon, creme et tisane.", category: "Bien-etre", price: 14500, unitLabel: "box", visualKey: "comfort" },
+      { name: "Mug message", description: "Objet cadeau pratique et facile a offrir.", category: "Cadeaux", price: 4200, unitLabel: "piece", visualKey: "cashier" },
+      { name: "Diffuseur maison", description: "Parfum discret pour salon, chambre et bureau.", category: "Maison", price: 11900, unitLabel: "kit", visualKey: "sweet" },
+      { name: "Trousse weekend", description: "Selection lifestyle pour voyage ou petit present.", category: "Lifestyle", price: 8900, badge: "Edition", unitLabel: "trousse", visualKey: "grill" },
     ],
   },
   {
@@ -255,33 +274,59 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
     products: [
       { name: "Emballage premium", description: "Presentation soignee pour achats personnels ou cadeaux.", category: "Lifestyle", price: 3900, unitLabel: "service", visualKey: "grill" },
       { name: "Commande privee", description: "Traitement discret pour produits sensibles et retrait controle.", category: "Prive", price: 17500, badge: "Discret", unitLabel: "selection", visualKey: "cashier" },
+      { name: "Bougie design", description: "Ambiance elegante pour cadeaux et interieur.", category: "Maison", price: 7600, unitLabel: "piece", visualKey: "sweet" },
+      { name: "Pochette cadeau", description: "Accessoire premium pour presentation soignee.", category: "Lifestyle", price: 2900, unitLabel: "piece", visualKey: "grill" },
+      { name: "Kit bien-etre prive", description: "Selection discrete avec livraison soignee et confidentielle.", category: "Bien-etre", price: 16200, badge: "Prive", unitLabel: "kit", visualKey: "comfort" },
     ],
   },
 ];
 
 async function seedCommerceCatalog() {
-  const existingStores = await db.select().from(commerceStoresTable);
-  if (existingStores.length > 0) {
-    console.log("✅ Commerce catalog already seeded, skipping...");
-    return;
-  }
-
   for (const store of COMMERCE_STORES) {
-    const [createdStore] = await db.insert(commerceStoresTable).values({
-      universe: store.universe,
-      name: store.name,
-      tagline: store.tagline,
-      description: store.description,
-      location: store.location,
-      zone: store.zone,
-      accentColor: store.accentColor,
-      visualKey: store.visualKey,
-      etaMinMinutes: store.etaMinMinutes,
-      etaMaxMinutes: store.etaMaxMinutes,
-      isActive: true,
-    }).returning();
+    const [existingStore] = await db.select().from(commerceStoresTable).where(eq(commerceStoresTable.name, store.name)).limit(1);
+
+    const createdStore = existingStore
+      ? (
+        await db.update(commerceStoresTable)
+          .set({
+            universe: store.universe,
+            tagline: store.tagline,
+            description: store.description,
+            location: store.location,
+            zone: store.zone,
+            accentColor: store.accentColor,
+            visualKey: store.visualKey,
+            etaMinMinutes: store.etaMinMinutes,
+            etaMaxMinutes: store.etaMaxMinutes,
+            isActive: true,
+          })
+          .where(eq(commerceStoresTable.id, existingStore.id))
+          .returning()
+      )[0]
+      : (
+        await db.insert(commerceStoresTable).values({
+          universe: store.universe,
+          name: store.name,
+          tagline: store.tagline,
+          description: store.description,
+          location: store.location,
+          zone: store.zone,
+          accentColor: store.accentColor,
+          visualKey: store.visualKey,
+          etaMinMinutes: store.etaMinMinutes,
+          etaMaxMinutes: store.etaMaxMinutes,
+          isActive: true,
+        }).returning()
+      )[0];
+
+    const existingProducts = await db.select().from(commerceProductsTable).where(eq(commerceProductsTable.storeId, createdStore.id));
+    const existingProductNames = new Set(existingProducts.map((product) => product.name));
 
     for (const product of store.products) {
+      if (existingProductNames.has(product.name)) {
+        continue;
+      }
+
       await db.insert(commerceProductsTable).values({
         storeId: createdStore.id,
         name: product.name,
@@ -296,7 +341,7 @@ async function seedCommerceCatalog() {
       });
     }
 
-    console.log(`✅ Created commerce store: ${store.name}`);
+    console.log(`${existingStore ? "✅ Updated commerce store" : "✅ Created commerce store"}: ${store.name}`);
   }
 }
 
