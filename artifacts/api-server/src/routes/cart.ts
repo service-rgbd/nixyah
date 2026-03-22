@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { cartsTable, cartItemsTable, dishesTable, ordersTable, orderItemsTable, usersTable } from "@workspace/db/schema";
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { and, eq, inArray } from "drizzle-orm";
+import { getDishEffectivePrice } from "../lib/menu.js";
 
 const router = express.Router();
 
@@ -92,21 +93,23 @@ router.post("/cart/items", requireClient, async (req: AuthRequest, res) => {
       .limit(1);
 
     if (existingItem) {
+      const effectivePrice = getDishEffectivePrice(dish);
       const [updated] = await db
         .update(cartItemsTable)
-        .set({ quantity: existingItem.quantity + quantity, dishName: dish.name, price: dish.price })
+        .set({ quantity: existingItem.quantity + quantity, dishName: dish.name, price: effectivePrice })
         .where(eq(cartItemsTable.id, existingItem.id))
         .returning();
       return res.status(200).json({ item: updated });
     }
 
+    const effectivePrice = getDishEffectivePrice(dish);
     const [inserted] = await db
       .insert(cartItemsTable)
       .values({
         cartId: cart.id,
         dishId: dish.id,
         dishName: dish.name,
-        price: dish.price,
+        price: effectivePrice,
         quantity,
       })
       .returning();
@@ -206,7 +209,7 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
         dishId: dish.id,
         dishName: dish.name,
         quantity: item.quantity,
-        price: dish.price,
+        price: getDishEffectivePrice(dish),
       };
     });
 

@@ -91,11 +91,47 @@ type QuickDishItem = {
   chefId: string;
   name: string;
   price: number;
-  imageUrl: string | null;
+  imageSource: string | number | null;
 };
+
+const localDishAssets = {
+  aloco: require("@/assets/images/Alloco-avec-oeuf-1.webp"),
+  attieke: require("@/assets/images/attieke.jpg"),
+  kedjenou: require("@/assets/images/poulet-kedjenou.jpg"),
+  sauceArachide: require("@/assets/images/sauce-arachide.jpg"),
+} as const;
 
 function getDishImage(dish: Dish) {
   return dish.imageUrls?.[0] ?? dish.imageUrl ?? null;
+}
+
+function normalizeDishName(name: string) {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function getLocalDishImage(name: string) {
+  const normalized = normalizeDishName(name);
+
+  if (normalized.includes("alloco") || normalized.includes("aloco")) {
+    return localDishAssets.aloco;
+  }
+
+  if (normalized.includes("attieke") || normalized.includes("attieke poisson") || normalized.includes("attieke poulet")) {
+    return localDishAssets.attieke;
+  }
+
+  if (normalized.includes("kedjenou")) {
+    return localDishAssets.kedjenou;
+  }
+
+  if (normalized.includes("arachide")) {
+    return localDishAssets.sauceArachide;
+  }
+
+  return null;
 }
 
 function getPrepMinutes(prepTime?: string) {
@@ -257,8 +293,10 @@ function QuickDishCard({ item }: { item: QuickDishItem }) {
       onPress={() => router.push({ pathname: "/chef/[id]", params: { id: item.chefId } })}
     >
       <View style={styles.quickDishVisualWrap}>
-        {item.imageUrl ? (
-          <RNImage source={{ uri: item.imageUrl }} style={styles.quickDishVisual} />
+        {typeof item.imageSource === "string" ? (
+          <RNImage source={{ uri: item.imageSource }} style={styles.quickDishVisual} />
+        ) : item.imageSource ? (
+          <RNImage source={item.imageSource} style={styles.quickDishVisual} />
         ) : (
           <View style={[styles.quickDishVisual, styles.quickDishVisualFallback]}>
             <Ionicons name="fast-food" size={28} color={Colors.light.accent} />
@@ -305,7 +343,12 @@ export default function HomeScreen() {
       return left.price - right.price;
     })
     .slice(0, 6)
-    .map(({ chefId, name, price, imageUrl }) => ({ chefId, name, price, imageUrl }));
+    .map(({ chefId, name, price, imageUrl }) => ({
+      chefId,
+      name,
+      price,
+      imageSource: imageUrl ?? getLocalDishImage(name),
+    }));
   const onlineCount = chefs.filter((chef) => chef.isOnline).length;
 
   return (

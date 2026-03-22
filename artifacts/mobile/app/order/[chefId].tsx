@@ -31,21 +31,35 @@ const STEPS = [
 ];
 
 export default function OrderScreen() {
-  const { chefId } = useLocalSearchParams<{ chefId: string }>();
+  const { chefId, dishName, price, storyCaption } = useLocalSearchParams<{
+    chefId: string;
+    dishName?: string;
+    price?: string;
+    storyCaption?: string;
+  }>();
   const insets = useSafeAreaInsets();
   const { getChef, addOrder, user } = useApp();
   const chef = getChef(chefId ?? "");
+  const selectedDishName = typeof dishName === "string" ? dishName : "";
+  const selectedDishPrice = typeof price === "string" ? Number(price) : null;
+  const storySummary = typeof storyCaption === "string" ? storyCaption : "";
+  const initialNotes = selectedDishName
+    ? `Je souhaite commander ${selectedDishName}${selectedDishPrice ? ` (${selectedDishPrice.toLocaleString("fr-FR")} FCFA)` : ""}${storySummary ? `, vu dans la story: \"${storySummary}\"` : ""}.`
+    : "";
 
   const [step, setStep] = useState(0);
-  const [occasion, setOccasion] = useState("");
+  const [occasion, setOccasion] = useState(selectedDishName ? "Repas quotidien" : "");
   const [persons, setPersons] = useState("");
   const [budget, setBudget] = useState("");
   const [preferences, setPreferences] = useState<string[]>([]);
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialNotes);
   const [submitted, setSubmitted] = useState(false);
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const bottomInset = Platform.OS === "web" ? 34 : insets.bottom;
+  const featuredDish = selectedDishName
+    ? chef?.dishes.find((dish) => dish.name.toLowerCase() === selectedDishName.toLowerCase()) ?? null
+    : null;
 
   if (user?.type === "courier") {
     return (
@@ -89,8 +103,8 @@ export default function OrderScreen() {
       id: `order-${Date.now()}`,
       chefId: chef.id,
       chefName: chef.name,
-      dishes: [],
-      total: 0,
+      dishes: featuredDish ? [{ dish: featuredDish, quantity: 1 }] : [],
+      total: featuredDish?.price ?? selectedDishPrice ?? 0,
       status: "pending",
       createdAt: new Date().toISOString(),
       occasion,
@@ -144,6 +158,21 @@ export default function OrderScreen() {
       <View style={styles.progressBar}>
         <View style={[styles.progressFill, { width: `${((step + 1) / STEPS.length) * 100}%` }]} />
       </View>
+
+      {selectedDishName ? (
+        <View style={styles.featuredDishBanner}>
+          <View style={styles.featuredDishIcon}>
+            <Feather name="play-circle" size={18} color={Colors.light.tint} />
+          </View>
+          <View style={styles.featuredDishTextWrap}>
+            <Text style={styles.featuredDishLabel}>Plat mis en avant dans la story</Text>
+            <Text style={styles.featuredDishName}>{selectedDishName}</Text>
+          </View>
+          <Text style={styles.featuredDishPrice}>
+            {(featuredDish?.price ?? selectedDishPrice ?? 0).toLocaleString("fr-FR")} FCFA
+          </Text>
+        </View>
+      ) : null}
 
       <View style={styles.stepIndicators}>
         {STEPS.map((s, i) => (
@@ -302,6 +331,47 @@ const styles = StyleSheet.create({
     height: 3, backgroundColor: Colors.light.backgroundTertiary, marginHorizontal: 20, borderRadius: 2,
   },
   progressFill: { height: 3, backgroundColor: Colors.light.tint, borderRadius: 2 },
+  featuredDishBanner: {
+    marginHorizontal: 20,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: Colors.light.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  featuredDishIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: `${Colors.light.tint}16`,
+  },
+  featuredDishTextWrap: {
+    flex: 1,
+  },
+  featuredDishLabel: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  featuredDishName: {
+    marginTop: 2,
+    fontSize: 15,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.text,
+  },
+  featuredDishPrice: {
+    fontSize: 13,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tint,
+  },
   stepIndicators: {
     flexDirection: "row", justifyContent: "center", gap: 8, paddingVertical: 16,
   },

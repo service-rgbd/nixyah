@@ -6,8 +6,12 @@ import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 
 import Colors from "@/constants/colors";
+import { CHEF_MENU_CATEGORIES, DISCOUNT_OPTIONS, PREP_TIME_OPTIONS, formatPrice, getDishBasePrice, getDishCurrentPrice, getDishDiscountPercent } from "@/constants/chef-menu";
 import { useApp } from "@/contexts/AppContext";
 import { apiFetch, uploadFile } from "@/constants/api";
+
+type ChefMenuCategory = (typeof CHEF_MENU_CATEGORIES)[number];
+type PrepTimeOption = (typeof PREP_TIME_OPTIONS)[number];
 
 export default function CreateDishScreen() {
   const params = useLocalSearchParams<{ dishId?: string }>();
@@ -20,12 +24,38 @@ export default function CreateDishScreen() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
-  const [category, setCategory] = useState("Plats Principaux");
-  const [prepTime, setPrepTime] = useState("30 min");
+  const [category, setCategory] = useState<ChefMenuCategory>(CHEF_MENU_CATEGORIES[0]);
+  const [prepTime, setPrepTime] = useState<PrepTimeOption>("30 min");
+  const [discountPercent, setDiscountPercent] = useState("0");
+  const [discountLabel, setDiscountLabel] = useState("");
+  const [isPopular, setIsPopular] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
   const remainingSlots = useMemo(() => Math.max(0, 3 - imageUris.length), [imageUris.length]);
+  const normalizedDiscountPercent = useMemo(() => {
+    const parsed = Number(discountPercent);
+    if (!Number.isFinite(parsed)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.min(80, Math.round(parsed)));
+  }, [discountPercent]);
+  const basePrice = useMemo(() => {
+    if (isEditMode && editingDish) {
+      return getDishBasePrice(editingDish);
+    }
+
+    const parsed = Number(price);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }, [editingDish, isEditMode, price]);
+  const previewPrice = useMemo(() => {
+    if (!basePrice) {
+      return 0;
+    }
+
+    return Math.round(basePrice * (100 - normalizedDiscountPercent)) / 100;
+  }, [basePrice, normalizedDiscountPercent]);
 
   useEffect(() => {
     if (isEditMode && user?.id && !editingDish) {
@@ -37,9 +67,12 @@ export default function CreateDishScreen() {
     if (!editingDish) return;
     setName(editingDish.name);
     setDescription(editingDish.description);
-    setPrice(String(editingDish.price));
-    setCategory(editingDish.category);
-    setPrepTime(editingDish.prepTime);
+    setPrice(String(getDishBasePrice(editingDish)));
+    setCategory((CHEF_MENU_CATEGORIES.includes(editingDish.category as ChefMenuCategory) ? editingDish.category : CHEF_MENU_CATEGORIES[0]) as ChefMenuCategory);
+    setPrepTime((PREP_TIME_OPTIONS.includes(editingDish.prepTime as PrepTimeOption) ? editingDish.prepTime : "30 min") as PrepTimeOption);
+    setDiscountPercent(String(getDishDiscountPercent(editingDish)));
+    setDiscountLabel(editingDish.discountLabel ?? "");
+    setIsPopular(Boolean(editingDish.isPopular));
     setImageUris(editingDish.imageUrls?.length ? editingDish.imageUrls : editingDish.imageUrl ? [editingDish.imageUrl] : []);
   }, [editingDish]);
 
@@ -61,6 +94,7 @@ export default function CreateDishScreen() {
     if (!user?.id) return Alert.alert("Erreur", "Utilisateur non connecté");
     if (!name.trim()) return Alert.alert("Erreur", "Veuillez renseigner le nom du plat");
     if (!isEditMode && !price) return Alert.alert("Erreur", "Veuillez renseigner le prix");
+    if (!description.trim()) return Alert.alert("Erreur", "Ajoutez une courte description pour structurer le menu");
     setIsSubmitting(true);
     try {
       if (isEditMode && params.dishId) {
@@ -70,9 +104,21 @@ export default function CreateDishScreen() {
           category,
           prepTime,
           imageUrls: imageUris,
+          isPopular,
+          discountPercent: normalizedDiscountPercent,
+          discountLabel,
         });
       } else {
-        const body: any = { name, description, price: Number(price), category, prepTime };
+        const body: any = {
+          name,
+          description,
+          price: Number(price),
+          category,
+          prepTime,
+          isPopular,
+          discountPercent: normalizedDiscountPercent,
+          discountLabel,
+        };
         if (imageUris.length > 0) {
           body.imageUrl = imageUris[0];
           body.imageUrls = imageUris;
@@ -91,7 +137,7 @@ export default function CreateDishScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [category, description, fetchChefDishes, imageUris, isEditMode, name, params.dishId, prepTime, price, refreshChefs, token, updateChefDish, user?.id]);
+  }, [category, description, discountLabel, fetchChefDishes, imageUris, isEditMode, isPopular, name, normalizedDiscountPercent, params.dishId, prepTime, price, refreshChefs, token, updateChefDish, user?.id]);
 
   const pickImages = useCallback(async () => {
     try {
@@ -154,36 +200,112 @@ export default function CreateDishScreen() {
 
       <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
         <View style={styles.heroCard}>
-          <Text style={styles.heroTitle}>{isEditMode ? "Mettez votre fiche plat à jour" : "Présentez votre plat avec de vraies images"}</Text>
+          <Text style={styles.heroTitle}>{isEditMode ? "Ajustez votre fiche plat" : "Construisez un plat proprement classe"}</Text>
           <Text style={styles.heroSub}>
             {isEditMode
-              ? "Vous pouvez modifier le nom, la description, les photos et la préparation. Le prix reste verrouillé après publication."
-              : "Ajoutez jusqu'à 3 photos pour aider les clients à mieux choisir."}
+              ? "Vous pouvez modifier le nom, la description, la categorie, la mise en avant, la reduction et les photos. Le prix de base reste verrouille."
+              : "Chaque plat doit entrer dans une categorie client. Vous pouvez aussi activer une reduction sans casser le prix de base."}
           </Text>
+          <View style={styles.previewPriceCard}>
+            <View style={styles.previewPriceMeta}>
+              <Text style={styles.previewPriceLabel}>Prix client affiche</Text>
+              <Text style={styles.previewPriceValue}>{previewPrice > 0 ? formatPrice(previewPrice) : "A renseigner"}</Text>
+            </View>
+            {normalizedDiscountPercent > 0 && basePrice > previewPrice ? (
+              <View style={styles.previewDiscountBadge}>
+                <Text style={styles.previewDiscountBadgeText}>-{normalizedDiscountPercent}%</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
 
-        <Text style={styles.label}>Nom</Text>
-        <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Ex: Attiéké poisson" />
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Identite du plat</Text>
+          <Text style={styles.label}>Nom</Text>
+          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Ex: Attieke poisson" />
 
-        <Text style={styles.label}>Description</Text>
-        <TextInput style={[styles.input, { height: 90 }]} multiline value={description} onChangeText={setDescription} placeholder="Brève description" />
+          <Text style={styles.label}>Description</Text>
+          <TextInput style={[styles.input, styles.textarea]} multiline value={description} onChangeText={setDescription} placeholder="Texture, accompagnement, format, experience client" />
+        </View>
 
-        <Text style={styles.label}>Prix (FCFA)</Text>
-        <TextInput
-          style={[styles.input, isEditMode && styles.disabledInput]}
-          keyboardType="numeric"
-          value={price}
-          onChangeText={setPrice}
-          placeholder="5000"
-          editable={!isEditMode}
-        />
-        {isEditMode ? <Text style={styles.lockedHint}>Le prix est verrouillé après publication pour éviter les écarts involontaires.</Text> : null}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Categorie et rythme</Text>
+          <Text style={styles.label}>Categorie du filtre client</Text>
+          <View style={styles.chipWrap}>
+            {CHEF_MENU_CATEGORIES.map((item) => {
+              const selected = category === item;
+              return (
+                <Pressable key={item} style={[styles.choiceChip, selected && styles.choiceChipActive]} onPress={() => setCategory(item)}>
+                  <Text style={[styles.choiceChipText, selected && styles.choiceChipTextActive]}>{item}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-        <Text style={styles.label}>Catégorie</Text>
-        <TextInput style={styles.input} value={category} onChangeText={setCategory} />
+          <Text style={styles.label}>Temps de preparation</Text>
+          <View style={styles.chipWrap}>
+            {PREP_TIME_OPTIONS.map((item) => {
+              const selected = prepTime === item;
+              return (
+                <Pressable key={item} style={[styles.choiceChip, selected && styles.choiceChipActive]} onPress={() => setPrepTime(item)}>
+                  <Text style={[styles.choiceChipText, selected && styles.choiceChipTextActive]}>{item}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
-        <Text style={styles.label}>Temps de préparation</Text>
-        <TextInput style={styles.input} value={prepTime} onChangeText={setPrepTime} />
+          <Pressable style={[styles.toggleCard, isPopular && styles.toggleCardActive]} onPress={() => setIsPopular((current) => !current)}>
+            <View style={styles.toggleTextWrap}>
+              <Text style={styles.toggleTitle}>Mettre en avant dans les plats rapides</Text>
+              <Text style={styles.toggleSub}>Pratique pour la vitrine rapide et les cartes les plus visibles.</Text>
+            </View>
+            <View style={[styles.toggleKnob, isPopular && styles.toggleKnobActive]}>
+              {isPopular ? <Feather name="check" size={14} color="#fff" /> : null}
+            </View>
+          </Pressable>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Prix et reduction</Text>
+          <Text style={styles.label}>Prix de base (FCFA)</Text>
+          <TextInput
+            style={[styles.input, isEditMode && styles.disabledInput]}
+            keyboardType="numeric"
+            value={price}
+            onChangeText={setPrice}
+            placeholder="5000"
+            editable={!isEditMode}
+          />
+          {isEditMode ? <Text style={styles.lockedHint}>Le prix de base est verrouille apres publication pour eviter les ecarts involontaires.</Text> : null}
+
+          <Text style={styles.label}>Reduction suggeree</Text>
+          <View style={styles.chipWrap}>
+            {DISCOUNT_OPTIONS.map((option) => {
+              const selected = normalizedDiscountPercent === option;
+              return (
+                <Pressable key={option} style={[styles.choiceChip, selected && styles.choiceChipActive]} onPress={() => setDiscountPercent(String(option))}>
+                  <Text style={[styles.choiceChipText, selected && styles.choiceChipTextActive]}>{option === 0 ? "Aucune" : `-${option}%`}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <TextInput
+            style={styles.input}
+            value={discountPercent}
+            onChangeText={setDiscountPercent}
+            placeholder="Ex: 15"
+            keyboardType="numeric"
+          />
+
+          <Text style={styles.label}>Libelle promo</Text>
+          <TextInput
+            style={styles.input}
+            value={discountLabel}
+            onChangeText={setDiscountLabel}
+            placeholder="Ex: Offre du soir, formule midi, promo week-end"
+          />
+        </View>
 
         <View style={styles.mediaCard}>
           <View style={styles.mediaHeader}>
@@ -235,13 +357,34 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 18, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, flex: 1, textAlign: "center" },
   form: { padding: 20, gap: 12 },
-  heroCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, marginBottom: 4 },
+  heroCard: { backgroundColor: "#FBF5EF", borderRadius: 24, padding: 18, borderWidth: 1, borderColor: "rgba(156,109,82,0.14)", marginBottom: 4, gap: 12 },
   heroTitle: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   heroSub: { marginTop: 6, fontSize: 13, lineHeight: 19, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  previewPriceCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#fff", borderRadius: 18, padding: 14, borderWidth: 1, borderColor: "rgba(156,109,82,0.12)" },
+  previewPriceMeta: { gap: 4 },
+  previewPriceLabel: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary, textTransform: "uppercase", letterSpacing: 0.8 },
+  previewPriceValue: { fontSize: 18, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  previewDiscountBadge: { backgroundColor: "#ECFDF5", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  previewDiscountBadgeText: { fontSize: 12, fontFamily: "Poppins_700Bold", color: "#047857" },
+  sectionCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, gap: 10 },
+  sectionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   label: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.text },
   input: { backgroundColor: Colors.light.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  textarea: { height: 90 },
   disabledInput: { color: Colors.light.textTertiary, backgroundColor: Colors.light.backgroundSecondary },
   lockedHint: { marginTop: -4, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  choiceChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.backgroundSecondary },
+  choiceChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
+  choiceChipText: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.text },
+  choiceChipTextActive: { color: "#fff" },
+  toggleCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.backgroundSecondary, padding: 14 },
+  toggleCardActive: { backgroundColor: "#FFF4E9", borderColor: "rgba(196,82,42,0.24)" },
+  toggleTextWrap: { flex: 1, gap: 4 },
+  toggleTitle: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  toggleSub: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  toggleKnob: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
+  toggleKnobActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
   mediaCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, gap: 12 },
   mediaHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   mediaCounter: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },

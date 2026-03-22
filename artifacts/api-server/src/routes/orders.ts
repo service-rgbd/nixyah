@@ -1,12 +1,49 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { ordersTable, orderItemsTable, chefProfilesTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable } from "@workspace/db/schema";
+import { ordersTable, orderItemsTable, chefProfilesTable, courierProfilesTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable, reviewsTable } from "@workspace/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { geocodeAddress } from "../lib/geocoding.js";
+import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
 
 const router: IRouter = Router();
+
+function normalizeRatingValue(input: unknown): number | null {
+  const value = Number(input);
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  if (rounded < 1 || rounded > 5) {
+    return null;
+  }
+
+  return rounded;
+}
+
+async function refreshChefReviewAggregates(chefProfileId: number) {
+  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.chefProfileId, chefProfileId));
+  const ratedReviews = reviews.filter((review) => Number.isFinite(review.rating));
+  const reviewCount = ratedReviews.length;
+  const rating = reviewCount > 0
+    ? Number((ratedReviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviewCount).toFixed(1))
+    : 5.0;
+
+  await db.update(chefProfilesTable).set({ rating, reviewCount }).where(eq(chefProfilesTable.id, chefProfileId));
+}
+
+async function refreshCourierReviewAggregates(courierUserId: number) {
+  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.courierUserId, courierUserId));
+  const ratedReviews = reviews.filter((review) => Number.isFinite(review.deliveryRating));
+  const reviewCount = ratedReviews.length;
+  const rating = reviewCount > 0
+    ? Number((ratedReviews.reduce((sum, review) => sum + Number(review.deliveryRating ?? 0), 0) / reviewCount).toFixed(1))
+    : 5.0;
+
+  await db.update(courierProfilesTable).set({ rating, reviewCount }).where(eq(courierProfilesTable.userId, courierUserId));
+}
 
 router.get("/orders", requireClient, async (req: AuthRequest, res) => {
   try {
@@ -21,6 +58,7 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
       orders.map(async ({ orders: o, users: u }) => {
         const items = await db.select().from(orderItemsTable).where(eq(orderItemsTable.orderId, o.id));
         const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, o.id)).limit(1);
+        const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.orderId, o.id)).limit(1);
         const [latestLocation] = deliveryJob
           ? await db
               .select()
@@ -60,6 +98,18 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
                   : null,
               }
             : null,
+          review: review
+            ? {
+                restaurantRating: Number(review.rating),
+                restaurantComment: review.comment ?? "",
+                deliveryRating: review.deliveryRating != null ? Number(review.deliveryRating) : null,
+                deliveryComment: review.deliveryComment ?? "",
+                submittedAt: review.createdAt.toISOString(),
+              }
+            : null,
+          canReview:
+            (o.status === "delivered" || deliveryJob?.status === "delivered") &&
+            (!review || review.rating == null || Boolean(deliveryJob && review.deliveryRating == null)),
           items: items.map((i) => ({
             dishId: String(i.dishId ?? ""),
             dishName: i.dishName,
@@ -132,7 +182,7 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
         dishId: dish.id,
         dishName: dish.name,
         quantity,
-        price: dish.price,
+        price: getDishEffectivePrice(dish),
       };
     });
     if (safeItems.some((item) => item === null)) {
@@ -203,6 +253,112 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
     });
   } catch (err) {
     console.error("create order error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/orders/:orderId/review", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const parsedOrderId = Number(req.params.orderId);
+    const restaurantRating = normalizeRatingValue(req.body?.restaurantRating);
+    const deliveryRating = normalizeRatingValue(req.body?.deliveryRating);
+    const restaurantComment = typeof req.body?.restaurantComment === "string" ? req.body.restaurantComment.trim() : "";
+    const deliveryComment = typeof req.body?.deliveryComment === "string" ? req.body.deliveryComment.trim() : "";
+
+    if (!Number.isInteger(parsedOrderId) || parsedOrderId <= 0) {
+      res.status(400).json({ error: "BadRequest", message: "Commande invalide" });
+      return;
+    }
+
+    if (restaurantRating == null) {
+      res.status(400).json({ error: "BadRequest", message: "La note du restaurant doit être comprise entre 1 et 5" });
+      return;
+    }
+
+    const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, parsedOrderId)).limit(1);
+    if (!order || order.clientId !== req.userId) {
+      res.status(404).json({ error: "NotFound", message: "Commande introuvable" });
+      return;
+    }
+
+    const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
+    const isDelivered = order.status === "delivered" || deliveryJob?.status === "delivered";
+    if (!isDelivered) {
+      res.status(409).json({ error: "Conflict", message: "La commande doit être livrée avant de pouvoir être notée" });
+      return;
+    }
+
+    if (deliveryJob && deliveryRating == null) {
+      res.status(400).json({ error: "BadRequest", message: "La note de livraison doit être comprise entre 1 et 5" });
+      return;
+    }
+
+    const [existingReview] = await db.select().from(reviewsTable).where(eq(reviewsTable.orderId, order.id)).limit(1);
+    if (existingReview && existingReview.rating != null && (!deliveryJob || existingReview.deliveryRating != null)) {
+      res.status(409).json({ error: "Conflict", message: "Cette commande a déjà été évaluée" });
+      return;
+    }
+
+    const reviewPayload = {
+      clientId: req.userId!,
+      chefProfileId: order.chefProfileId,
+      courierUserId: deliveryJob?.courierUserId ?? null,
+      rating: restaurantRating,
+      comment: restaurantComment,
+      deliveryRating: deliveryJob ? deliveryRating : null,
+      deliveryComment: deliveryJob ? deliveryComment : "",
+    };
+
+    if (existingReview) {
+      await db
+        .update(reviewsTable)
+        .set(reviewPayload)
+        .where(eq(reviewsTable.id, existingReview.id));
+    } else {
+      await db.insert(reviewsTable).values({
+        orderId: order.id,
+        ...reviewPayload,
+      });
+    }
+
+    await refreshChefReviewAggregates(order.chefProfileId);
+    if (deliveryJob?.courierUserId) {
+      await refreshCourierReviewAggregates(deliveryJob.courierUserId);
+    }
+
+    const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, order.chefProfileId)).limit(1);
+    const recipients = [chefProfile?.userId, deliveryJob?.courierUserId].filter((value): value is number => typeof value === "number");
+    if (recipients.length > 0) {
+      await notifyUsers({
+        userIds: recipients,
+        type: "review",
+        title: "Nouvel avis client",
+        message: deliveryJob
+          ? `Le client a noté le restaurant ${restaurantRating}/5 et la livraison ${deliveryRating}/5.`
+          : `Le client a noté le restaurant ${restaurantRating}/5.`,
+        orderId: order.id,
+        deliveryJobId: deliveryJob?.id ?? null,
+        data: {
+          screen: "orders",
+          orderId: String(order.id),
+          deliveryJobId: deliveryJob?.id ? String(deliveryJob.id) : null,
+          restaurantRating,
+          deliveryRating: deliveryJob ? deliveryRating : null,
+        },
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      review: {
+        restaurantRating,
+        restaurantComment,
+        deliveryRating: deliveryJob ? deliveryRating : null,
+        deliveryComment: deliveryJob ? deliveryComment : "",
+      },
+    });
+  } catch (err) {
+    console.error("submit order review error:", err);
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });

@@ -207,6 +207,8 @@ function buildCourierProfile(profile: any) {
     vehicleType: profile.vehicleType,
     isAvailable: profile.isAvailable,
     isVerified: profile.isVerified,
+    rating: profile.rating,
+    reviewCount: profile.reviewCount,
     currentLatitude: profile.currentLatitude ?? null,
     currentLongitude: profile.currentLongitude ?? null,
     lastLocationAt: profile.lastLocationAt ? profile.lastLocationAt.toISOString() : null,

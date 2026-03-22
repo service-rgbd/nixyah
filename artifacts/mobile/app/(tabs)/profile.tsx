@@ -72,6 +72,25 @@ export default function ProfileScreen() {
   const isCourier = user?.type === "courier";
   const isClient = user?.type === "client";
   const menuItems = isChef ? MENU_ITEMS_CHEF : isCourier ? MENU_ITEMS_COURIER : MENU_ITEMS_CLIENT;
+  const roleLabel = isChef ? "Cuisinière" : isCourier ? "Livreur" : "Client";
+  const roleAccent = isChef ? Colors.light.tint : isCourier ? "#0F766E" : "#8B5CF6";
+  const courierVehicleLabel = useMemo(() => {
+    const value = user?.courierProfile?.vehicleType;
+    if (!value) {
+      return "Moto";
+    }
+
+    if (value === "moto") {
+      return "Moto";
+    }
+
+    if (value === "velo") {
+      return "Vélo";
+    }
+
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }, [user?.courierProfile?.vehicleType]);
+  const courierStatusLabel = user?.courierProfile?.isAvailable ? "Disponible" : "Hors ligne";
 
   const initials = user
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
@@ -374,6 +393,7 @@ export default function ProfileScreen() {
           colors={[Colors.light.backgroundSecondary, Colors.light.background]}
           style={styles.profileHeader}
         >
+          <View style={[styles.profileGlow, { backgroundColor: `${roleAccent}22` }]} />
           <View style={styles.heroTopRow}>
             {isChef ? (
               <Pressable style={styles.avatarWrapper} onPress={handleAvatarUpload} disabled={uploadingAvatar}>
@@ -401,6 +421,10 @@ export default function ProfileScreen() {
             )}
 
             <View style={styles.identityBlock}>
+              <View style={[styles.rolePill, { backgroundColor: `${roleAccent}16`, borderColor: `${roleAccent}2E` }]}>
+                <View style={[styles.rolePillDot, { backgroundColor: roleAccent }]} />
+                <Text style={[styles.rolePillText, { color: roleAccent }]}>{roleLabel}</Text>
+              </View>
               <Text style={styles.profileName}>{user.name}</Text>
               <Text style={styles.profileEmail}>{user.email ?? user.phone ?? "Compte Nixyah"}</Text>
               <Text style={styles.profileLocation}>📍 {user.location}</Text>
@@ -447,19 +471,23 @@ export default function ProfileScreen() {
           ) : null}
 
           <View style={styles.statsRow}>
-            <View style={styles.statItem}>
+            <View style={styles.statItemCard}>
+              <View style={styles.statItem}>
               <Text style={styles.statValue}>{isChef ? chefSummary.totalOrders : orders.length}</Text>
               <Text style={styles.statLabel}>{isChef ? "Commandes" : isCourier ? "Missions" : "Commandes"}</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
+            <View style={styles.statItemCard}>
+              <View style={styles.statItem}>
               <Text style={styles.statValue}>{favorites.length}</Text>
               <Text style={styles.statLabel}>Favoris</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
+            <View style={styles.statItemCard}>
+              <View style={styles.statItem}>
               <Text style={styles.statValue}>{isChef ? chefSummary.deliveredOrders : 0}</Text>
               <Text style={styles.statLabel}>{isChef ? "Finalisées" : "Avis"}</Text>
+              </View>
             </View>
           </View>
         </Gradient>
@@ -491,6 +519,61 @@ export default function ProfileScreen() {
                 </View>
               </View>
             ))}
+          </View>
+        ) : isCourier ? (
+          <View style={styles.courierDashboardWrap}>
+            <View style={styles.courierHeroCard}>
+              <View style={styles.courierHeroTopRow}>
+                <View>
+                  <Text style={styles.courierHeroEyebrow}>Tableau de bord livraison</Text>
+                  <Text style={styles.courierHeroTitle}>{courierStatusLabel}</Text>
+                </View>
+                <View style={[styles.courierStatusPill, { backgroundColor: `${roleAccent}18` }]}>
+                  <View style={[styles.rolePillDot, { backgroundColor: roleAccent }]} />
+                  <Text style={[styles.courierStatusPillText, { color: roleAccent }]}>{user.courierProfile?.isVerified ? "Vérifié" : "En revue"}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.courierHeroDescription}>
+                Retrouvez vos missions, votre zone active et votre statut de disponibilité dans un espace plus net.
+              </Text>
+
+              <View style={styles.courierInfoGrid}>
+                <View style={styles.courierInfoCard}>
+                  <Text style={styles.courierInfoValue}>{courierStatusLabel}</Text>
+                  <Text style={styles.courierInfoLabel}>Disponibilité</Text>
+                </View>
+                <View style={styles.courierInfoCard}>
+                  <Text style={styles.courierInfoValue} numberOfLines={1}>{user.courierProfile?.zone || "Abidjan"}</Text>
+                  <Text style={styles.courierInfoLabel}>Zone active</Text>
+                </View>
+                <View style={styles.courierInfoCard}>
+                  <Text style={styles.courierInfoValue}>{courierVehicleLabel}</Text>
+                  <Text style={styles.courierInfoLabel}>Véhicule</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.clientSectionBlock}>
+              <Text style={styles.clientSectionHeading}>Raccourcis</Text>
+              <View style={styles.courierActionPanel}>
+                <Pressable style={styles.courierActionCard} onPress={() => router.push("/(tabs)/orders")}>
+                  <View style={[styles.courierActionIconWrap, { backgroundColor: "#FFF2ED" }]}>
+                    <Feather name="truck" size={20} color={Colors.light.tint} />
+                  </View>
+                  <Text style={styles.courierActionTitle}>Mes missions</Text>
+                  <Text style={styles.courierActionSub}>Voir les courses en cours, disponibles et archivées</Text>
+                </Pressable>
+
+                <Pressable style={styles.courierActionCard} onPress={() => router.push("/(tabs)/help")}>
+                  <View style={[styles.courierActionIconWrap, { backgroundColor: "#EEF8F5" }]}>
+                    <Feather name="help-circle" size={20} color="#0F766E" />
+                  </View>
+                  <Text style={styles.courierActionTitle}>Support</Text>
+                  <Text style={styles.courierActionSub}>Aide, incidents et accompagnement sur les livraisons</Text>
+                </Pressable>
+              </View>
+            </View>
           </View>
         ) : !isCourier ? (
           <View style={styles.actionPanel}>
@@ -595,10 +678,16 @@ const styles = StyleSheet.create({
   clientHeroCard: {
     marginHorizontal: 20,
     marginTop: 10,
-    borderRadius: 28,
+    borderRadius: 30,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 18,
+    overflow: "hidden",
+    shadowColor: "rgba(42,28,18,0.12)",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 1,
+    shadowRadius: 24,
+    elevation: 5,
   },
   clientHeroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   clientHeroBadge: {
@@ -641,10 +730,10 @@ const styles = StyleSheet.create({
   clientSectionBlock: { marginTop: 20, paddingHorizontal: 20 },
   clientSectionHeading: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 18, marginBottom: 10 },
   clientSectionCard: {
-    backgroundColor: Colors.light.card,
-    borderRadius: 20,
+    backgroundColor: "#F5F2EE",
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderColor: "rgba(104,83,69,0.08)",
     overflow: "hidden",
   },
   clientMenuItem: {
@@ -664,7 +753,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "#FFF8F2",
   },
   clientMenuTextWrap: { flex: 1 },
   clientMenuLabel: { color: Colors.light.text, fontFamily: "Poppins_500Medium", fontSize: 15 },
@@ -672,16 +761,16 @@ const styles = StyleSheet.create({
   clientMetaCard: {
     marginTop: 20,
     marginHorizontal: 20,
-    backgroundColor: Colors.light.card,
-    borderRadius: 20,
+    backgroundColor: "#F5F2EE",
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderColor: "rgba(104,83,69,0.08)",
     padding: 16,
   },
   clientMetaLabel: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12 },
   clientMetaValue: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 15, marginTop: 6 },
   clientFavoritesRow: { gap: 12 },
-  clientFavoriteChip: { width: 112, gap: 10, backgroundColor: Colors.light.card, borderRadius: 18, padding: 12, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  clientFavoriteChip: { width: 112, gap: 10, backgroundColor: "#F5F2EE", borderRadius: 22, padding: 12, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)" },
   clientFavoriteAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center" },
   clientFavoriteAvatarText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 16 },
   clientFavoriteName: { color: Colors.light.text, fontFamily: "Poppins_400Regular", fontSize: 12 },
@@ -707,14 +796,18 @@ const styles = StyleSheet.create({
   chefBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   courierBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#ECFDF5", borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: "#A7F3D0" },
   courierBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
-  profileHeader: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 22, gap: 18 },
+  profileHeader: { marginHorizontal: 16, marginTop: 10, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 22, gap: 18, borderRadius: 30, overflow: "hidden", borderWidth: 1, borderColor: "rgba(90,63,49,0.08)" },
+  profileGlow: { position: "absolute", top: -48, right: -20, width: 180, height: 180, borderRadius: 90 },
   heroTopRow: { flexDirection: "row", gap: 16, alignItems: "center" },
-  avatarWrapper: { position: "relative" },
+  avatarWrapper: { position: "relative", padding: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.78)", shadowColor: "rgba(46,29,18,0.12)", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 1, shadowRadius: 18, elevation: 4 },
   avatar: { width: 90, height: 90, borderRadius: 45, alignItems: "center", justifyContent: "center" },
   avatarImage: { width: 90, height: 90, borderRadius: 45, backgroundColor: Colors.light.backgroundSecondary },
   avatarText: { fontSize: 32, fontFamily: "Poppins_700Bold", color: "#fff" },
   editAvatarBtn: { position: "absolute", bottom: 0, right: 0, backgroundColor: Colors.light.text, width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "#fff" },
   identityBlock: { flex: 1, gap: 4 },
+  rolePill: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, marginBottom: 4 },
+  rolePillDot: { width: 8, height: 8, borderRadius: 4 },
+  rolePillText: { fontSize: 11, fontFamily: "Poppins_700Bold", textTransform: "uppercase", letterSpacing: 0.4 },
   profileName: { fontSize: 21, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   profileEmail: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   profileLocation: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
@@ -730,14 +823,31 @@ const styles = StyleSheet.create({
   chefMetricCard: { flex: 1, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12, gap: 4 },
   chefMetricValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   chefMetricLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  statsRow: { flexDirection: "row", alignItems: "center", backgroundColor: Colors.light.card, borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  statsRow: { flexDirection: "row", gap: 10 },
+  statItemCard: { flex: 1, backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 18, paddingVertical: 14, paddingHorizontal: 10, borderWidth: 1, borderColor: "rgba(90,63,49,0.06)" },
   statItem: { flex: 1, alignItems: "center", gap: 3 },
   statValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   statLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, textAlign: "center" },
-  statDivider: { width: 1, height: 32, backgroundColor: Colors.light.divider },
   actionPanel: { paddingHorizontal: 20, paddingTop: 18, gap: 12 },
   chefDashboardWrap: { paddingTop: 10 },
-  actionCard: { backgroundColor: Colors.light.card, borderRadius: 18, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 14, gap: 10 },
+  courierDashboardWrap: { paddingTop: 10 },
+  actionCard: { backgroundColor: Colors.light.card, borderRadius: 22, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, gap: 10, shadowColor: "rgba(43,30,22,0.06)", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 18, elevation: 3 },
+  courierHeroCard: { marginHorizontal: 20, backgroundColor: "#F5F2EE", borderRadius: 26, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)", padding: 18, gap: 14 },
+  courierHeroTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  courierHeroEyebrow: { fontSize: 11, fontFamily: "Poppins_700Bold", textTransform: "uppercase", letterSpacing: 0.5, color: "#A36A46" },
+  courierHeroTitle: { fontSize: 22, fontFamily: "Poppins_700Bold", color: "#1F1A17", marginTop: 4 },
+  courierStatusPill: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+  courierStatusPillText: { fontSize: 11, fontFamily: "Poppins_700Bold", textTransform: "uppercase", letterSpacing: 0.4 },
+  courierHeroDescription: { fontSize: 13, lineHeight: 20, fontFamily: "Poppins_400Regular", color: "#7B7068" },
+  courierInfoGrid: { flexDirection: "row", gap: 10 },
+  courierInfoCard: { flex: 1, backgroundColor: "#FFFCF9", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 14, gap: 4 },
+  courierInfoValue: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
+  courierInfoLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: "#8C827B" },
+  courierActionPanel: { gap: 12 },
+  courierActionCard: { backgroundColor: "#F5F2EE", borderRadius: 24, padding: 16, gap: 10, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)" },
+  courierActionIconWrap: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" },
+  courierActionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
+  courierActionSub: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: "#7B7068" },
   actionIconWrap: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   actionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   actionSub: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
@@ -749,7 +859,7 @@ const styles = StyleSheet.create({
   favoriteAvatarImage: { width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.light.backgroundSecondary },
   favoriteAvatarText: { fontSize: 18, fontFamily: "Poppins_700Bold", color: "rgba(255,255,255,0.9)" },
   favoriteName: { fontSize: 10, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary, textAlign: "center" },
-  menuSection: { backgroundColor: Colors.light.card, borderRadius: 20, marginHorizontal: 20, marginTop: 20, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden" },
+  menuSection: { backgroundColor: Colors.light.card, borderRadius: 24, marginHorizontal: 20, marginTop: 20, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden", shadowColor: "rgba(43,30,22,0.05)", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 1, shadowRadius: 22, elevation: 3 },
   menuItem: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.light.divider },
   menuIconWrapper: { width: 38, height: 38, borderRadius: 11, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
   menuContent: { flex: 1 },

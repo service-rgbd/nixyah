@@ -71,6 +71,8 @@ export const courierProfilesTable = pgTable(
     vehicleType: text("vehicle_type").notNull().default("moto"),
     isAvailable: boolean("is_available").notNull().default(true),
     isVerified: boolean("is_verified").notNull().default(false),
+    rating: real("rating").notNull().default(5.0),
+    reviewCount: integer("review_count").notNull().default(0),
     currentLatitude: real("current_latitude"),
     currentLongitude: real("current_longitude"),
     lastLocationAt: timestamp("last_location_at"),
@@ -90,6 +92,8 @@ export const dishesTable = pgTable("dishes", {
   category: text("category").notNull().default("Plats Principaux"),
   prepTime: text("prep_time").notNull().default("30 min"),
   isPopular: boolean("is_popular").notNull().default(false),
+  discountPercent: real("discount_percent").notNull().default(0),
+  discountLabel: text("discount_label").notNull().default(""),
   imageUrl: text("image_url"),
   imageUrls: text("image_urls").array().notNull().default([]),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -236,8 +240,11 @@ export const reviewsTable = pgTable(
     orderId: integer("order_id").notNull().references(() => ordersTable.id),
     clientId: integer("client_id").notNull().references(() => usersTable.id),
     chefProfileId: integer("chef_profile_id").notNull().references(() => chefProfilesTable.id),
+    courierUserId: integer("courier_user_id").references(() => usersTable.id),
     rating: real("rating").notNull(),
     comment: text("comment").default(""),
+    deliveryRating: real("delivery_rating"),
+    deliveryComment: text("delivery_comment").default(""),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -296,10 +303,20 @@ export const storyLikesTable = pgTable(
   }),
 );
 
+export const storyCommentsTable = pgTable("story_comments", {
+  id: serial("id").primaryKey(),
+  storyId: integer("story_id").notNull().references(() => storiesTable.id),
+  userId: integer("user_id").notNull().references(() => usersTable.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const insertStoryLikeSchema = createInsertSchema(storyLikesTable).omit({ id: true, createdAt: true });
+export const insertStoryCommentSchema = createInsertSchema(storyCommentsTable).omit({ id: true, createdAt: true });
 export type Cart = typeof cartsTable.$inferSelect;
 export type CartItem = typeof cartItemsTable.$inferSelect;
 export type StoryLike = typeof storyLikesTable.$inferSelect;
+export type StoryComment = typeof storyCommentsTable.$inferSelect;
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true });
 export const insertChefProfileSchema = createInsertSchema(chefProfilesTable).omit({ id: true, createdAt: true });

@@ -352,6 +352,7 @@ function ClientHistoryCard({
   const orderTime = formatClockLabel(order.createdAt);
   const primaryAddress = order.delivery?.restaurantAddress || order.chefName;
   const secondaryAddress = order.delivery?.deliveryAddress;
+  const shouldPromptReview = Boolean(order.canReview && (order.status === "delivered" || order.delivery?.status === "delivered"));
 
   return (
     <View style={styles.historyCard}>
@@ -384,7 +385,12 @@ function ClientHistoryCard({
               <Text style={styles.historyGhostBtnText}>Aide</Text>
             </>}
           </Pressable>
-          {order.delivery ? (
+          {shouldPromptReview ? (
+            <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/client/review/[orderId]", params: { orderId: order.id } })}>
+              <Feather name="star" size={16} color="#1F1A17" />
+              <Text style={styles.historyGhostBtnText}>Évaluer</Text>
+            </Pressable>
+          ) : order.delivery ? (
             <Pressable style={styles.historyGhostBtn} onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: order.delivery!.id } })}>
               <Feather name="repeat" size={16} color="#1F1A17" />
               <Text style={styles.historyGhostBtnText}>{status.label === "Terminée" ? "Répéter" : "Suivre"}</Text>

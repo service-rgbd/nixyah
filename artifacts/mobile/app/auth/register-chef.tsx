@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -18,9 +18,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useApp } from "@/contexts/AppContext";
 
-const chefIllustrationUri = Image.resolveAssetSource(
-  require("../../assets/images/register-chef-illustration.svg"),
-).uri;
+const chefIllustrationAsset = require("../../assets/images/register-chef-illustration.svg");
+
+function resolveLocalAssetUri(asset: number) {
+  try {
+    return Image.resolveAssetSource(asset)?.uri ?? null;
+  } catch (error) {
+    console.warn("Failed to resolve local asset uri", error);
+    return null;
+  }
+}
 
 const SPECIALTIES = [
   "Cuisine Ivoirienne", "Cuisine Sénégalaise", "Traiteur & Événements",
@@ -58,6 +65,7 @@ export default function RegisterChefScreen() {
   const insets = useSafeAreaInsets();
   const { registerChef } = useApp();
   const [step, setStep] = useState(0);
+  const chefIllustrationUri = useMemo(() => resolveLocalAssetUri(chefIllustrationAsset), []);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -144,7 +152,7 @@ export default function RegisterChefScreen() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerMedia} pointerEvents="none">
-          <SvgUri width="100%" height="100%" uri={chefIllustrationUri} />
+          {chefIllustrationUri ? <SvgUri width="100%" height="100%" uri={chefIllustrationUri} /> : null}
           <View style={styles.headerOverlay} />
         </View>
         <View style={styles.headerContent}>

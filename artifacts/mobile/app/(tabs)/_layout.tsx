@@ -1,4 +1,4 @@
-import { Tabs } from "expo-router";
+import { Tabs, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
@@ -15,14 +15,16 @@ function TabIcon({
   nameActive,
   focused,
   color,
+  isDark,
 }: {
   name: IoniconsName;
   nameActive: IoniconsName;
   focused: boolean;
   color: string;
+  isDark: boolean;
 }) {
   return (
-    <View style={[tabStyles.wrap, focused && tabStyles.wrapActive]}>
+    <View style={[tabStyles.wrap, isDark && tabStyles.wrapDark, focused && tabStyles.wrapActive, focused && isDark && tabStyles.wrapActiveDark]}>
       <Ionicons name={focused ? nameActive : name} size={22} color={color} />
     </View>
   );
@@ -30,46 +32,67 @@ function TabIcon({
 
 const tabStyles = StyleSheet.create({
   wrap: {
-    width: 46,
-    height: 30,
+    width: 48,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 15,
+    borderRadius: 16,
+  },
+  wrapDark: {
+    backgroundColor: "rgba(255,255,255,0.04)",
   },
   wrapActive: {
     backgroundColor: Colors.light.backgroundSecondary,
+    shadowColor: "rgba(36, 24, 16, 0.12)",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  wrapActiveDark: {
+    backgroundColor: "rgba(212,97,26,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
   },
 });
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
   const { user } = useApp();
   const isChef = user?.type === "chef";
   const isCourier = user?.type === "courier";
+  const isStoriesActive = pathname === "/stories";
+  const tabBarSurface = isStoriesActive ? "rgba(8,8,10,0.96)" : "rgba(255,250,245,0.94)";
+  const tabBarBorder = isStoriesActive ? "rgba(255,255,255,0.08)" : "rgba(77,53,40,0.08)";
+  const activeTint = isStoriesActive ? "#FFFFFF" : Colors.light.tint;
+  const inactiveTint = isStoriesActive ? "rgba(255,255,255,0.58)" : Colors.light.tabIconDefault;
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: Colors.light.tint,
-        tabBarInactiveTintColor: Colors.light.tabIconDefault,
+        tabBarActiveTintColor: activeTint,
+        tabBarInactiveTintColor: inactiveTint,
         tabBarLabelStyle: {
           fontFamily: "Poppins_600SemiBold",
           fontSize: 10,
+          letterSpacing: 0.2,
           marginBottom: Platform.OS === "ios" ? 0 : 3,
         },
         tabBarStyle: {
-          backgroundColor: "#FFFAF5",
-          borderTopWidth: 0,
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
-          paddingTop: 8,
+          backgroundColor: tabBarSurface,
+          borderTopLeftRadius: 28,
+          borderTopRightRadius: 28,
+          paddingTop: 10,
           paddingBottom: insets.bottom > 0 ? insets.bottom : 10,
-          shadowColor: "#1A120A",
-          shadowOffset: { width: 0, height: -6 },
-          shadowOpacity: 0.07,
-          shadowRadius: 20,
-          elevation: 20,
+          borderTopColor: tabBarBorder,
+          borderTopWidth: 1,
+          shadowColor: isStoriesActive ? "#000000" : "#1A120A",
+          shadowOffset: { width: 0, height: -10 },
+          shadowOpacity: isStoriesActive ? 0.34 : 0.09,
+          shadowRadius: isStoriesActive ? 28 : 22,
+          elevation: 22,
           ...(Platform.OS === "web" ? { height: 84, paddingBottom: 12 } : {}),
         },
         tabBarBackground: () => (
@@ -77,9 +100,11 @@ export default function TabLayout() {
             style={[
               StyleSheet.absoluteFill,
               {
-                backgroundColor: "#FFFAF5",
-                borderTopLeftRadius: 24,
-                borderTopRightRadius: 24,
+                backgroundColor: tabBarSurface,
+                borderTopLeftRadius: 28,
+                borderTopRightRadius: 28,
+                borderTopWidth: 1,
+                borderTopColor: tabBarBorder,
               },
             ]}
           />
@@ -96,6 +121,7 @@ export default function TabLayout() {
               nameActive={isCourier ? "pulse" : "home"}
               focused={focused}
               color={color}
+              isDark={isStoriesActive}
             />
           ),
         }}
@@ -111,6 +137,7 @@ export default function TabLayout() {
               nameActive="search"
               focused={focused}
               color={color}
+              isDark={isStoriesActive}
             />
           ),
         }}
@@ -126,6 +153,7 @@ export default function TabLayout() {
               nameActive="play-circle"
               focused={focused}
               color={color}
+              isDark={isStoriesActive}
             />
           ),
         }}
@@ -140,6 +168,7 @@ export default function TabLayout() {
               nameActive={isCourier ? "bicycle" : isChef ? "receipt" : "bag"}
               focused={focused}
               color={color}
+              isDark={isStoriesActive}
             />
           ),
         }}
@@ -154,6 +183,7 @@ export default function TabLayout() {
               nameActive="person"
               focused={focused}
               color={color}
+              isDark={isStoriesActive}
             />
           ),
         }}

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { usersTable, chefProfilesTable, dishesTable, storiesTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { getDishEffectivePrice, getDishSavingsAmount, normalizeChefMenuCategory, normalizeDiscountPercent, sanitizeDiscountLabel } from "../lib/menu.js";
 
 const router: IRouter = Router();
 
@@ -25,6 +26,7 @@ router.get("/chefs", async (req, res) => {
           location: cp.location,
           zone: cp.zone,
           bio: cp.bio,
+          specialties: cp.specialties ?? [],
           rating: cp.rating,
           reviewCount: cp.reviewCount,
           priceRange: cp.priceRange,
@@ -40,10 +42,14 @@ router.get("/chefs", async (req, res) => {
             description: d.description,
             imageUrl: d.imageUrl ?? null,
             imageUrls: d.imageUrls?.length ? d.imageUrls : d.imageUrl ? [d.imageUrl] : [],
-            price: d.price,
-            category: d.category,
+            price: getDishEffectivePrice(d),
+            basePrice: d.price,
+            category: normalizeChefMenuCategory(d.category),
             prepTime: d.prepTime,
             isPopular: d.isPopular,
+            discountPercent: normalizeDiscountPercent(d.discountPercent),
+            discountLabel: sanitizeDiscountLabel(d.discountLabel),
+            savingsAmount: getDishSavingsAmount(d),
           })),
           stories: stories.map((s) => ({
             id: String(s.id),
@@ -93,6 +99,7 @@ router.get("/chefs/:id", async (req, res) => {
       location: cp.location,
       zone: cp.zone,
       bio: cp.bio,
+      specialties: cp.specialties ?? [],
       rating: cp.rating,
       reviewCount: cp.reviewCount,
       priceRange: cp.priceRange,
@@ -108,10 +115,14 @@ router.get("/chefs/:id", async (req, res) => {
         description: d.description,
         imageUrl: d.imageUrl ?? null,
         imageUrls: d.imageUrls?.length ? d.imageUrls : d.imageUrl ? [d.imageUrl] : [],
-        price: d.price,
-        category: d.category,
+        price: getDishEffectivePrice(d),
+        basePrice: d.price,
+        category: normalizeChefMenuCategory(d.category),
         prepTime: d.prepTime,
         isPopular: d.isPopular,
+        discountPercent: normalizeDiscountPercent(d.discountPercent),
+        discountLabel: sanitizeDiscountLabel(d.discountLabel),
+        savingsAmount: getDishSavingsAmount(d),
       })),
       stories: stories.map((s) => ({
         id: String(s.id),

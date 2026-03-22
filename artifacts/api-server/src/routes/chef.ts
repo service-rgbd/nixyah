@@ -13,6 +13,14 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import express, { Response } from "express";
 import { requireAuth, requireChef, type AuthRequest } from "../middlewares/auth.js";
+import {
+  getDishEffectivePrice,
+  getDishSavingsAmount,
+  normalizeChefMenuCategory,
+  normalizeDiscountPercent,
+  sanitizeDiscountLabel,
+} from "../lib/menu.js";
+import { notifyUsers } from "../lib/notifications.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
 
 const router = express.Router();
@@ -49,6 +57,7 @@ function isDishImageAllowedForUpdate(options: {
 }
 
 function serializeDish(dish: typeof dishesTable.$inferSelect) {
+  const effectivePrice = getDishEffectivePrice(dish);
   return {
     id: String(dish.id),
     chefProfileId: dish.chefProfileId,
@@ -56,10 +65,14 @@ function serializeDish(dish: typeof dishesTable.$inferSelect) {
     description: dish.description,
     imageUrl: dish.imageUrl ?? null,
     imageUrls: dish.imageUrls?.length ? dish.imageUrls : dish.imageUrl ? [dish.imageUrl] : [],
-    price: dish.price,
-    category: dish.category,
+    price: effectivePrice,
+    basePrice: dish.price,
+    category: normalizeChefMenuCategory(dish.category),
     prepTime: dish.prepTime,
     isPopular: dish.isPopular,
+    discountPercent: normalizeDiscountPercent(dish.discountPercent),
+    discountLabel: sanitizeDiscountLabel(dish.discountLabel),
+    savingsAmount: getDishSavingsAmount(dish),
   };
 }
 
@@ -333,12 +346,19 @@ router.patch("/orders/:orderId/status", requireChef, async (req: AuthRequest, re
 
     const notification = CHEF_ORDER_NOTIFICATIONS[nextStatus];
     if (notification) {
-      await db.insert(notificationsTable).values({
-        userId: order.clientId,
+      await notifyUsers({
+        userIds: [order.clientId],
         type: "order",
         title: notification.title,
         message: notification.message,
         orderId: order.id,
+        deliveryJobId: deliveryJob?.id ?? null,
+        data: {
+          screen: nextStatus === "ready" && deliveryJob ? "delivery-tracking" : "orders",
+          orderId: String(order.id),
+          deliveryJobId: deliveryJob?.id ? String(deliveryJob.id) : null,
+          orderStatus: nextStatus,
+        },
       });
     }
 
@@ -363,7 +383,7 @@ router.post("/:id/dishes", requireChef, async (req: AuthRequest, res: Response) 
       return res.status(403).json({ error: "Forbidden" });
     }
 
-    const { name, description, price, category, prepTime, isPopular, imageUrl, imageUrls } = req.body;
+    const { name, description, price, category, prepTime, isPopular, imageUrl, imageUrls, discountPercent, discountLabel } = req.body;
     if (!name || typeof price === "undefined") {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -382,9 +402,11 @@ router.post("/:id/dishes", requireChef, async (req: AuthRequest, res: Response) 
       name: String(name),
       description: String(description ?? ""),
       price: Number(price),
-      category: String(category ?? "Plats Principaux"),
+      category: normalizeChefMenuCategory(category),
       prepTime: String(prepTime ?? "30 min"),
       isPopular: Boolean(isPopular ?? false),
+      discountPercent: normalizeDiscountPercent(discountPercent),
+      discountLabel: sanitizeDiscountLabel(discountLabel),
       imageUrl: normalizedImageUrls[0] ?? null,
       imageUrls: normalizedImageUrls,
     }).returning();
@@ -420,9 +442,11 @@ router.patch("/:id/dishes/:dishId", requireChef, async (req: AuthRequest, res: R
     const updates: Partial<typeof dishesTable.$inferInsert> = {};
     if (typeof req.body?.name === "string") updates.name = req.body.name.trim() || dish.name;
     if (typeof req.body?.description === "string") updates.description = req.body.description;
-    if (typeof req.body?.category === "string") updates.category = req.body.category;
+    if (typeof req.body?.category === "string") updates.category = normalizeChefMenuCategory(req.body.category);
     if (typeof req.body?.prepTime === "string") updates.prepTime = req.body.prepTime;
     if (typeof req.body?.isPopular === "boolean") updates.isPopular = req.body.isPopular;
+    if (typeof req.body?.discountPercent !== "undefined") updates.discountPercent = normalizeDiscountPercent(req.body.discountPercent);
+    if (typeof req.body?.discountLabel !== "undefined") updates.discountLabel = sanitizeDiscountLabel(req.body.discountLabel);
     if (typeof req.body?.imageUrl !== "undefined" || typeof req.body?.imageUrls !== "undefined") {
       const normalizedExistingUrls = normalizeDishImageUrls(dish.imageUrls, dish.imageUrl);
       const normalizedImageUrls = normalizeDishImageUrls(req.body?.imageUrls, req.body?.imageUrl);

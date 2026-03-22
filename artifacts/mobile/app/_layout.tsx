@@ -85,10 +85,31 @@ function PushNotificationsBootstrap() {
         }
 
         responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-          const data = response.notification.request.content.data as { type?: string; storyId?: string } | undefined;
+          const data = response.notification.request.content.data as { type?: string; storyId?: string; orderId?: string | number; deliveryJobId?: string | number; screen?: string } | undefined;
           if (data?.type === "story-video" && data.storyId) {
             void import("expo-router").then(({ router }) => {
               router.push({ pathname: "/story/[id]", params: { id: data.storyId! } });
+            });
+            return;
+          }
+
+          if (data?.screen === "client-review" && data.orderId) {
+            void import("expo-router").then(({ router }) => {
+              router.push({ pathname: "/client/review/[orderId]", params: { orderId: String(data.orderId) } });
+            });
+            return;
+          }
+
+          if ((data?.screen === "delivery-tracking" || data?.deliveryJobId) && data?.deliveryJobId) {
+            void import("expo-router").then(({ router }) => {
+              router.push({ pathname: "/delivery/job/[id]", params: { id: String(data.deliveryJobId) } });
+            });
+            return;
+          }
+
+          if (data?.orderId) {
+            void import("expo-router").then(({ router }) => {
+              router.push("/(tabs)/orders");
             });
             return;
           }
@@ -191,6 +212,10 @@ function RootLayoutNav() {
       <Stack.Screen
         name="client/addresses"
         options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="client/review/[orderId]"
+        options={{ headerShown: false, animation: "slide_from_bottom", presentation: "modal" }}
       />
       <Stack.Screen
         name="help/order"

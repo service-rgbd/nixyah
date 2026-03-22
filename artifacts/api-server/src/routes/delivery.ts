@@ -302,6 +302,19 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
       }
 
       const syncResult = await syncDeliveryJobOffers(activeJob.id);
+      await notifyUsers({
+        userIds: [order.clientId],
+        type: "order",
+        title: "Recherche de livreur en cours",
+        message: "Votre commande est prête. Nous cherchons maintenant un livreur disponible.",
+        orderId: order.id,
+        deliveryJobId: activeJob.id,
+        data: {
+          screen: "delivery-tracking",
+          orderId: String(order.id),
+          deliveryJobId: String(activeJob.id),
+        },
+      });
       const payload = await getDeliveryJobPayload(activeJob.id);
       return res.json({ job: payload, reused: true, rebroadcasted, notifiedCouriers: syncResult.newCourierIds.length });
     }
@@ -363,6 +376,19 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
     }
 
     const syncResult = await syncDeliveryJobOffers(job.id);
+    await notifyUsers({
+      userIds: [order.clientId],
+      type: "order",
+      title: "Recherche de livreur en cours",
+      message: "Votre commande est prête. Nous cherchons maintenant un livreur disponible.",
+      orderId: order.id,
+      deliveryJobId: job.id,
+      data: {
+        screen: "delivery-tracking",
+        orderId: String(order.id),
+        deliveryJobId: String(job.id),
+      },
+    });
 
     const payload = await getDeliveryJobPayload(job.id);
     return res.status(201).json({ job: payload, notifiedCouriers: syncResult.newCourierIds.length });
@@ -799,9 +825,14 @@ router.post("/delivery/jobs/:jobId/complete", requireCourier, async (req: AuthRe
       userIds: [job.clientId, chefUser?.id].filter((value): value is number => typeof value === "number"),
       type: "order",
       title: "Livraison terminee",
-      message: "La commande a ete livree avec succes.",
+      message: "La commande a ete livree avec succes. Vous pouvez maintenant noter le restaurant et la livraison.",
       orderId: job.orderId,
       deliveryJobId: job.id,
+      data: {
+        screen: "client-review",
+        orderId: String(job.orderId),
+        deliveryJobId: String(job.id),
+      },
     });
 
     return res.json({ job: await getDeliveryJobPayload(job.id) });

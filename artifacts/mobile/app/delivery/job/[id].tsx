@@ -16,7 +16,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline, type LatLng, type Region } from "react-native-maps";
 import Colors from "@/constants/colors";
-import Gradient from "@/components/SafeGradient";
 import { apiFetch } from "@/constants/api";
 import { saveDeliveryAddress } from "@/constants/delivery-address";
 import { useApp } from "@/contexts/AppContext";
@@ -34,6 +33,10 @@ type DeliveryJobDetail = {
   deliveryLatitude?: number | null;
   deliveryLongitude?: number | null;
   notes?: string | null;
+  orderTotal?: number | null;
+  createdAt?: string | null;
+  acceptedAt?: string | null;
+  deliveredAt?: string | null;
   courier?: { id: string; name: string; phone?: string | null } | null;
   latestLocation?: {
     latitude: number;
@@ -169,6 +172,37 @@ function formatEta(distanceKm: number | null, speedKmPerHour: number): string | 
   }
 
   return `${minutes} min`;
+}
+
+function formatJobClock(value?: string | null) {
+  if (!value) {
+    return "--:--";
+  }
+
+  return new Date(value).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getJobStatusMeta(status?: DeliveryJobDetail["status"]) {
+  switch (status) {
+    case "cancelled":
+      return { label: "Annulée", color: "#D45845" };
+    case "delivered":
+      return { label: "Terminée", color: "#6E655F" };
+    case "accepted":
+      return { label: "Assignée", color: Colors.light.tint };
+    case "picked_up":
+      return { label: "Récupérée", color: "#7C3AED" };
+    case "on_the_way":
+      return { label: "En livraison", color: "#0F766E" };
+    case "broadcasting":
+    case "available":
+      return { label: "En attente", color: "#D97706" };
+    default:
+      return { label: "Mission", color: Colors.light.textSecondary };
+  }
 }
 
 export default function DeliveryJobScreen() {
@@ -482,15 +516,23 @@ export default function DeliveryJobScreen() {
     }
   };
 
+  const jobTimeLabel = formatJobClock(job?.acceptedAt ?? job?.createdAt ?? job?.deliveredAt);
+  const statusMeta = getJobStatusMeta(job?.status);
+
   return (
     <View style={styles.screen}>
-      <Gradient colors={[Colors.light.tintDark, Colors.light.tint]} style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={18} color="#fff" />
-        </Pressable>
-        <Text style={styles.headerTitle}>Suivi livraison</Text>
-        <Text style={styles.headerSub}>Mission #{jobId}</Text>
-      </Gradient>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}> 
+        <View style={styles.headerTopRow}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Feather name="arrow-left" size={18} color="#1F1A17" />
+          </Pressable>
+          <View style={styles.headerTitleWrap}>
+            <Text style={styles.headerTitle}>{`Livraison, ${jobTimeLabel}`}</Text>
+            <Text style={[styles.headerSub, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+          </View>
+          <View style={styles.headerSpacer} />
+        </View>
+      </View>
 
       {loading ? (
         <View style={styles.loadingWrap}>
@@ -498,6 +540,25 @@ export default function DeliveryJobScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}>
+          <View style={styles.summaryHeroCard}>
+            <View style={styles.summaryHeroIconWrap}>
+              <Feather name="package" size={34} color="#F24C1A" />
+            </View>
+            <Text style={styles.summaryHeroTitle}>{`Livraison, ${jobTimeLabel}`}</Text>
+            <Text style={[styles.summaryHeroStatus, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+          </View>
+
+          <View style={styles.topActionRow}>
+            <Pressable style={styles.topActionCard} onPress={() => router.push("/(tabs)/help")}>
+              <Feather name="headphones" size={24} color="#1F1A17" />
+              <Text style={styles.topActionText}>Aide</Text>
+            </Pressable>
+            <Pressable style={styles.topActionCard} onPress={navigationTarget ? openNavigation : () => loadJob()}>
+              <Feather name={navigationTarget ? "navigation" : "repeat"} size={24} color="#1F1A17" />
+              <Text style={styles.topActionText}>{navigationTarget ? "Trajet" : "Répéter"}</Text>
+            </Pressable>
+          </View>
+
           <View style={styles.mapCard}>
             {mapRegion ? (
               <MapView
@@ -604,17 +665,6 @@ export default function DeliveryJobScreen() {
             </View>
           ) : null}
 
-          {navigationTarget ? (
-            <View style={styles.routeActionsCard}>
-              <Text style={styles.routeActionsTitle}>Guidage</Text>
-              <Text style={styles.routeActionsText}>{navigationTarget.caption}</Text>
-              <Pressable style={styles.routeActionBtn} onPress={openNavigation}>
-                <Feather name="navigation" size={15} color="#fff" />
-                <Text style={styles.routeActionBtnText}>Ouvrir dans Plans</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
           {canClientEditLocation ? (
             <View style={styles.routeActionsCard}>
               <Text style={styles.routeActionsTitle}>Votre point exact</Text>
@@ -638,25 +688,48 @@ export default function DeliveryJobScreen() {
             </View>
           ) : null}
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Etat</Text>
-            <Text style={styles.sectionValue}>{job?.status ?? "indisponible"}</Text>
+          <View style={styles.addressCard}>
+            <View style={styles.addressRow}>
+              <Feather name="package" size={20} color="#1F1A17" />
+              <Text style={styles.addressText}>{job?.restaurantAddress}</Text>
+            </View>
+            <View style={styles.addressDivider} />
+            <View style={styles.addressRow}>
+              <Feather name="flag" size={20} color="#1F1A17" />
+              <Text style={styles.addressText}>{job?.deliveryAddress}</Text>
+            </View>
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Restaurant</Text>
-            <Text style={styles.sectionValue}>{job?.restaurantName}</Text>
-            <Text style={styles.sectionSub}>{job?.restaurantAddress}</Text>
+          <View style={styles.sectionTitleBlock}>
+            <Text style={styles.sectionHeading}>Détails</Text>
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Client</Text>
-            <Text style={styles.sectionValue}>{job?.clientName}</Text>
-            <Text style={styles.sectionSub}>{job?.deliveryAddress}</Text>
+          <View style={styles.infoSectionPlain}>
+            <Text style={styles.infoPrimaryText}>{job?.courier?.name ?? job?.clientName ?? "Mission"}</Text>
+            <Text style={styles.infoSecondaryText}>{isCourier ? "Livreur" : job?.courier ? "Coursier" : "Affectation en attente"}</Text>
+          </View>
+
+          <View style={styles.sectionTitleBlock}>
+            <Text style={styles.sectionHeading}>Prix</Text>
+          </View>
+
+          <View style={styles.priceCard}>
+            <View style={styles.priceRow}>
+              <Text style={styles.priceLabel}>Service de livraison par courrier</Text>
+              <Text style={styles.priceValue}>{`${Math.round(job?.orderTotal ?? 0).toLocaleString("fr-FR")}F`}</Text>
+            </View>
+            <View style={styles.addressDivider} />
+            <View style={styles.priceRow}>
+              <Text style={styles.priceTotalLabel}>Total</Text>
+              <Text style={styles.priceTotalValue}>{`${Math.round(job?.orderTotal ?? 0).toLocaleString("fr-FR")}F`}</Text>
+            </View>
+            <View style={styles.paymentMethodCard}>
+              <Text style={styles.paymentMethodText}>Paiement à la livraison</Text>
+            </View>
           </View>
 
           {job?.notes ? (
-            <View style={styles.section}>
+            <View style={styles.infoSectionPlain}>
               <Text style={styles.sectionTitle}>Notes</Text>
               <Text style={styles.sectionSub}>{job.notes}</Text>
             </View>
@@ -676,6 +749,14 @@ export default function DeliveryJobScreen() {
               ) : null}
             </View>
           ) : null}
+
+          {isClient && job?.status === "delivered" ? (
+            <View style={styles.actionsRow}>
+              <Pressable style={styles.actionBtn} onPress={() => router.push({ pathname: "/client/review/[orderId]", params: { orderId: job.orderId } })}>
+                <Text style={styles.actionBtnText}>Noter la commande et la livraison</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </ScrollView>
       )}
     </View>
@@ -684,11 +765,41 @@ export default function DeliveryJobScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.light.background },
-  header: { paddingHorizontal: 18, paddingBottom: 22 },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", marginBottom: 16 },
-  headerTitle: { fontSize: 24, fontFamily: "Poppins_700Bold", color: "#fff" },
-  headerSub: { fontSize: 13, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.85)", marginTop: 4 },
+  header: { paddingHorizontal: 18, paddingBottom: 18, backgroundColor: "#FFFFFF", borderBottomLeftRadius: 28, borderBottomRightRadius: 28 },
+  headerTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#F2EFEC", alignItems: "center", justifyContent: "center" },
+  headerTitleWrap: { flex: 1, alignItems: "center" },
+  headerSpacer: { width: 40, height: 40 },
+  headerTitle: { fontSize: 18, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
+  headerSub: { fontSize: 13, fontFamily: "Poppins_400Regular", marginTop: 2 },
   loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  summaryHeroCard: { alignItems: "center", paddingHorizontal: 18, paddingTop: 18, paddingBottom: 10 },
+  summaryHeroIconWrap: {
+    width: 96,
+    height: 96,
+    borderRadius: 28,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "rgba(31,26,23,0.12)",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 1,
+    shadowRadius: 22,
+    elevation: 6,
+  },
+  summaryHeroTitle: { marginTop: 16, fontSize: 26, fontFamily: "Poppins_700Bold", color: "#1F1A17" },
+  summaryHeroStatus: { marginTop: 4, fontSize: 15, fontFamily: "Poppins_400Regular" },
+  topActionRow: { flexDirection: "row", gap: 12, paddingHorizontal: 18, marginBottom: 16 },
+  topActionCard: {
+    flex: 1,
+    minHeight: 88,
+    borderRadius: 20,
+    backgroundColor: "#F1EEEA",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  topActionText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
   mapCard: { margin: 18, borderRadius: 20, overflow: "hidden", borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.card, height: 300 },
   map: { flex: 1 },
   mapEmptyState: {
@@ -867,6 +978,108 @@ const styles = StyleSheet.create({
   secondaryActionBtnText: {
     color: Colors.light.tint,
     fontFamily: "Poppins_600SemiBold",
+  },
+  addressCard: {
+    marginHorizontal: 18,
+    marginBottom: 18,
+    backgroundColor: Colors.light.card,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    overflow: "hidden",
+  },
+  addressRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  },
+  addressDivider: {
+    height: 1,
+    backgroundColor: Colors.light.cardBorder,
+    marginHorizontal: 18,
+  },
+  addressText: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 22,
+    fontFamily: "Poppins_500Medium",
+    color: "#1F1A17",
+  },
+  sectionTitleBlock: {
+    paddingHorizontal: 18,
+    marginBottom: 10,
+  },
+  sectionHeading: {
+    fontSize: 22,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  infoSectionPlain: {
+    paddingHorizontal: 18,
+    marginBottom: 22,
+  },
+  infoPrimaryText: {
+    fontSize: 16,
+    lineHeight: 22,
+    fontFamily: "Poppins_500Medium",
+    color: "#1F1A17",
+  },
+  infoSecondaryText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: "Poppins_400Regular",
+    color: "#8C827B",
+  },
+  priceCard: {
+    marginHorizontal: 18,
+    marginBottom: 22,
+    backgroundColor: Colors.light.card,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    padding: 18,
+    gap: 18,
+  },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  priceLabel: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 22,
+    fontFamily: "Poppins_400Regular",
+    color: "#1F1A17",
+  },
+  priceValue: {
+    fontSize: 15,
+    fontFamily: "Poppins_500Medium",
+    color: "#1F1A17",
+  },
+  priceTotalLabel: {
+    fontSize: 16,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  priceTotalValue: {
+    fontSize: 18,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  paymentMethodCard: {
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  },
+  paymentMethodText: {
+    fontSize: 15,
+    fontFamily: "Poppins_500Medium",
+    color: "#1F1A17",
   },
   section: { marginHorizontal: 18, marginBottom: 14, backgroundColor: Colors.light.card, borderRadius: 18, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16 },
   sectionTitle: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.textTertiary, marginBottom: 6, textTransform: "uppercase" },

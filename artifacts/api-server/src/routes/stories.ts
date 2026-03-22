@@ -1,15 +1,30 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { storiesTable, chefProfilesTable, usersTable, storyLikesTable, dishesTable } from "@workspace/db/schema";
-import { eq, gt, desc, and, ne } from "drizzle-orm";
+import * as dbSchema from "../../../../lib/db/src/schema/index.js";
+import { eq, gt, desc, and, ne, inArray } from "drizzle-orm";
 import { requireAuth, requireChef, type AuthRequest } from "../middlewares/auth.js";
+import { getDishEffectivePrice } from "../lib/menu.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
 import { notifyUsers } from "../lib/notifications.js";
+import { verifyToken } from "../lib/auth.js";
+
+const {
+  storiesTable,
+  chefProfilesTable,
+  usersTable,
+  storyLikesTable,
+  storyCommentsTable,
+  dishesTable,
+} = dbSchema;
 
 const router: IRouter = Router();
 
 router.get("/stories", async (req, res) => {
   try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const payload = token ? verifyToken(token) : null;
+    const authenticatedUserId = payload?.userId ?? null;
     const now = new Date();
     const rows = await db
       .select()
@@ -18,6 +33,68 @@ router.get("/stories", async (req, res) => {
       .innerJoin(usersTable, eq(chefProfilesTable.userId, usersTable.id))
       .where(gt(storiesTable.expiresAt, now))
       .orderBy(desc(storiesTable.createdAt));
+
+    const storyIds = rows.map(({ stories: s }) => s.id);
+
+    const likes = storyIds.length
+      ? await db
+          .select({ storyId: storyLikesTable.storyId, userId: storyLikesTable.userId })
+          .from(storyLikesTable)
+          .where(inArray(storyLikesTable.storyId, storyIds))
+      : [];
+
+    const comments = storyIds.length
+      ? await db
+          .select({
+            id: storyCommentsTable.id,
+            storyId: storyCommentsTable.storyId,
+            userId: storyCommentsTable.userId,
+            body: storyCommentsTable.body,
+            createdAt: storyCommentsTable.createdAt,
+            userName: usersTable.name,
+            userAvatarUrl: usersTable.avatarUrl,
+            userCoverColor: usersTable.coverColor,
+          })
+          .from(storyCommentsTable)
+          .innerJoin(usersTable, eq(storyCommentsTable.userId, usersTable.id))
+          .where(inArray(storyCommentsTable.storyId, storyIds))
+          .orderBy(desc(storyCommentsTable.createdAt))
+      : [];
+
+    const likeCountByStory = new Map<number, number>();
+    const likedByMe = new Set<number>();
+    for (const like of likes) {
+      likeCountByStory.set(like.storyId, (likeCountByStory.get(like.storyId) ?? 0) + 1);
+      if (authenticatedUserId && like.userId === authenticatedUserId) {
+        likedByMe.add(like.storyId);
+      }
+    }
+
+    const commentsByStory = new Map<number, Array<{
+      id: string;
+      userId: string;
+      userName: string;
+      userAvatarUrl: string | null;
+      userCoverColor: string | null;
+      body: string;
+      createdAt: string;
+    }>>();
+
+    for (const comment of comments) {
+      const existing = commentsByStory.get(comment.storyId) ?? [];
+      if (existing.length < 12) {
+        existing.push({
+          id: String(comment.id),
+          userId: String(comment.userId),
+          userName: comment.userName,
+          userAvatarUrl: comment.userAvatarUrl ?? null,
+          userCoverColor: comment.userCoverColor ?? null,
+          body: comment.body,
+          createdAt: comment.createdAt.toISOString(),
+        });
+      }
+      commentsByStory.set(comment.storyId, existing);
+    }
 
     const stories = rows.map(({ stories: s, chef_profiles: cp, users: u }) => ({
       id: String(s.id),
@@ -34,6 +111,10 @@ router.get("/stories", async (req, res) => {
       bgColor: s.bgColor || u.coverColor,
       createdAt: s.createdAt.toISOString(),
       expiresAt: s.expiresAt.toISOString(),
+      likeCount: likeCountByStory.get(s.id) ?? 0,
+      likedByMe: likedByMe.has(s.id),
+      commentCount: comments.filter((comment) => comment.storyId === s.id).length,
+      comments: commentsByStory.get(s.id) ?? [],
     }));
 
     res.json({ stories });
@@ -99,7 +180,7 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
       videoDurationSeconds: Number.isFinite(videoDurationSeconds) ? videoDurationSeconds : null,
       dishId: linkedDish?.id ?? null,
       dishName: linkedDish?.name ?? dishName ?? null,
-      price: linkedDish?.price ?? price ?? null,
+      price: linkedDish ? getDishEffectivePrice(linkedDish) : price ?? null,
       emoji: emoji || "🍲",
       bgColor: bgColor || u.coverColor,
       createdAt: new Date(),
@@ -175,8 +256,6 @@ router.delete("/stories/:id", requireChef, async (req: AuthRequest, res) => {
   }
 });
 
-export default router;
-
 // POST /api/stories/:id/like - toggle like on a story
 router.post("/stories/:id/like", requireAuth, async (req: AuthRequest, res) => {
   try {
@@ -191,14 +270,73 @@ router.post("/stories/:id/like", requireAuth, async (req: AuthRequest, res) => {
     if (existing.length > 0) {
       // unlike
       await db.delete(storyLikesTable).where(eq(storyLikesTable.id, existing[0].id));
-      res.json({ liked: false });
+      const remaining = await db.select().from(storyLikesTable).where(eq(storyLikesTable.storyId, storyId));
+      res.json({ liked: false, likeCount: remaining.length });
       return;
     }
     await db.insert(storyLikesTable).values({ storyId, userId }).returning();
-    res.json({ liked: true });
+    const updated = await db.select().from(storyLikesTable).where(eq(storyLikesTable.storyId, storyId));
+    res.json({ liked: true, likeCount: updated.length });
     return;
   } catch (err) {
     console.error("like story error", err);
     res.status(500).json({ error: "InternalError" });
   }
 });
+
+router.post("/stories/:id/comments", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const storyId = Number(req.params.id);
+    const userId = req.userId;
+    const body = String(req.body?.body ?? "").trim();
+
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    if (!body) {
+      res.status(400).json({ error: "BadRequest", message: "Le commentaire est requis" });
+      return;
+    }
+
+    if (body.length > 180) {
+      res.status(400).json({ error: "BadRequest", message: "Le commentaire est trop long" });
+      return;
+    }
+
+    const [story] = await db.select().from(storiesTable).where(eq(storiesTable.id, storyId)).limit(1);
+    if (!story) {
+      res.status(404).json({ error: "NotFound", message: "Story introuvable" });
+      return;
+    }
+
+    const [comment] = await db.insert(storyCommentsTable).values({
+      storyId,
+      userId,
+      body,
+    }).returning();
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+    const allComments = await db.select().from(storyCommentsTable).where(eq(storyCommentsTable.storyId, storyId));
+
+    res.status(201).json({
+      comment: {
+        id: String(comment.id),
+        storyId: String(comment.storyId),
+        userId: String(comment.userId),
+        userName: user?.name ?? "Utilisateur",
+        userAvatarUrl: user?.avatarUrl ?? null,
+        userCoverColor: user?.coverColor ?? null,
+        body: comment.body,
+        createdAt: comment.createdAt.toISOString(),
+      },
+      commentCount: allComments.length,
+    });
+  } catch (err) {
+    console.error("comment story error", err);
+    res.status(500).json({ error: "InternalError" });
+  }
+});
+
+export default router;

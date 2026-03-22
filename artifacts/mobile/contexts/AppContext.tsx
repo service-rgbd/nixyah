@@ -15,6 +15,7 @@ export interface Chef {
   specialty: string;
   location: string;
   zone?: string;
+  specialties?: string[];
   avatarUrl?: string | null;
   heroImageUrl?: string | null;
   rating: number;
@@ -34,9 +35,13 @@ export interface Dish {
   name: string;
   description: string;
   price: number;
+  basePrice?: number;
   category: string;
   prepTime: string;
   isPopular?: boolean;
+  discountPercent?: number;
+  discountLabel?: string;
+  savingsAmount?: number;
   imageUrl?: string | null;
   imageUrls?: string[];
 }
@@ -86,8 +91,23 @@ export interface Story {
   imageUrl?: string | null;
   videoUrl?: string | null;
   videoDurationSeconds?: number | null;
+  likeCount: number;
+  commentCount: number;
+  likedByMe: boolean;
+  comments: StoryComment[];
   createdAt: string;
   expiresAt: string;
+}
+
+export interface StoryComment {
+  id: string;
+  storyId: string;
+  userId: string;
+  userName: string;
+  userAvatarUrl?: string | null;
+  userCoverColor?: string | null;
+  body: string;
+  createdAt: string;
 }
 
 export interface Order {
@@ -100,6 +120,14 @@ export interface Order {
   createdAt: string;
   occasion?: string;
   persons?: number;
+  review?: {
+    restaurantRating: number;
+    restaurantComment?: string;
+    deliveryRating?: number | null;
+    deliveryComment?: string;
+    submittedAt?: string;
+  } | null;
+  canReview?: boolean;
   delivery?: {
     id: string;
     status: "broadcasting" | "available" | "accepted" | "picked_up" | "on_the_way" | "delivered" | "cancelled";
@@ -180,6 +208,8 @@ export interface AuthUser {
     vehicleType: string;
     isAvailable: boolean;
     isVerified: boolean;
+    rating?: number;
+    reviewCount?: number;
     currentLatitude?: number | null;
     currentLongitude?: number | null;
     lastLocationAt?: string | null;
@@ -215,10 +245,11 @@ interface AppContextValue {
   refreshChefs: () => Promise<void>;
   refreshStories: () => Promise<void>;
   likeStory: (storyId: string) => Promise<void>;
+  addStoryComment: (storyId: string, body: string) => Promise<void>;
   postStory: (data: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null; videoUrl?: string | null; videoDurationSeconds?: number | null }) => Promise<void>;
   fetchChefStats: (chefId: string) => Promise<void>;
   fetchChefDishes: (chefId: string) => Promise<void>;
-  updateChefDish: (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean }) => Promise<void>;
+  updateChefDish: (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean; discountPercent?: number; discountLabel?: string }) => Promise<void>;
   deleteChefDish: (dishId: string) => Promise<void>;
   fetchChefOrders: () => Promise<void>;
   updateChefOrderStatus: (orderId: string, status: ReceivedOrder["status"]) => Promise<void>;
@@ -289,10 +320,14 @@ function mapApiChef(c: any): Chef {
     id: d.id,
     name: d.name,
     description: d.description,
-    price: d.price,
+    price: Number(d.price ?? 0),
+    basePrice: Number(d.basePrice ?? d.price ?? 0),
     category: d.category,
     prepTime: d.prepTime,
     isPopular: d.isPopular,
+    discountPercent: Number(d.discountPercent ?? 0),
+    discountLabel: d.discountLabel ?? "",
+    savingsAmount: Number(d.savingsAmount ?? 0),
     imageUrl: normalizeRemoteUrl(d.imageUrl ?? null),
     imageUrls: normalizeImageUrlList(d.imageUrls, d.imageUrl ?? null),
   }));
@@ -324,6 +359,7 @@ function mapApiChef(c: any): Chef {
     specialty: c.specialty,
     location: c.location,
     zone: c.zone,
+    specialties: c.specialties ?? [],
     avatarUrl: normalizeRemoteUrl(c.avatarUrl ?? null),
     heroImageUrl,
     rating: c.rating ?? 5.0,
@@ -378,6 +414,16 @@ function mapApiOrder(order: any): Order {
     createdAt: String(order.createdAt ?? new Date().toISOString()),
     occasion: order.occasion ?? undefined,
     persons: order.persons ?? undefined,
+    review: order.review
+      ? {
+          restaurantRating: Number(order.review.restaurantRating ?? 0),
+          restaurantComment: order.review.restaurantComment ?? "",
+          deliveryRating: order.review.deliveryRating != null ? Number(order.review.deliveryRating) : null,
+          deliveryComment: order.review.deliveryComment ?? "",
+          submittedAt: order.review.submittedAt ?? undefined,
+        }
+      : null,
+    canReview: Boolean(order.canReview),
     delivery: order.delivery
       ? {
           id: String(order.delivery.id),
@@ -486,6 +532,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
         videoUrl: normalizeRemoteUrl(s.videoUrl ?? s.video_url ?? null),
         videoDurationSeconds: s.videoDurationSeconds ?? s.video_duration_seconds ?? null,
+        likeCount: Number(s.likeCount ?? s.like_count ?? 0),
+        commentCount: Number(s.commentCount ?? s.comment_count ?? 0),
+        likedByMe: Boolean(s.likedByMe ?? s.liked_by_me ?? false),
+        comments: (s.comments ?? []).map((comment: any) => ({
+          id: String(comment.id),
+          storyId: String(comment.storyId ?? comment.story_id ?? s.id),
+          userId: String(comment.userId ?? comment.user_id ?? ""),
+          userName: String(comment.userName ?? comment.user_name ?? "Utilisateur"),
+          userAvatarUrl: normalizeRemoteUrl(comment.userAvatarUrl ?? comment.user_avatar_url ?? null),
+          userCoverColor: comment.userCoverColor ?? comment.user_cover_color ?? null,
+          body: String(comment.body ?? ""),
+          createdAt: String(comment.createdAt ?? comment.created_at ?? new Date().toISOString()),
+        })),
         createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
         expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })));
@@ -508,10 +567,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const likeStory = useCallback(async (storyId: string) => {
     try {
-      await apiFetch(`/stories/${storyId}/like`, { method: "POST", token: token ?? undefined });
-      // optionally refresh stories or update local state
+      const response = await apiFetch<{ liked: boolean; likeCount: number }>(`/stories/${storyId}/like`, { method: "POST", token: token ?? undefined });
+      setStories((current) =>
+        current.map((story) =>
+          story.id === storyId
+            ? {
+                ...story,
+                likedByMe: response.liked,
+                likeCount: response.likeCount,
+              }
+            : story
+        )
+      );
     } catch (e) {
       console.warn("Failed to like story:", e);
+    }
+  }, [token]);
+
+  const addStoryComment = useCallback(async (storyId: string, body: string) => {
+    try {
+      const response = await apiFetch<{ comment: any; commentCount: number }>(`/stories/${storyId}/comments`, {
+        method: "POST",
+        token: token ?? undefined,
+        body: JSON.stringify({ body }),
+      });
+
+      setStories((current) =>
+        current.map((story) =>
+          story.id === storyId
+            ? {
+                ...story,
+                commentCount: response.commentCount,
+                comments: [
+                  {
+                    id: String(response.comment.id),
+                    storyId: String(response.comment.storyId ?? storyId),
+                    userId: String(response.comment.userId ?? ""),
+                    userName: String(response.comment.userName ?? "Utilisateur"),
+                    userAvatarUrl: normalizeRemoteUrl(response.comment.userAvatarUrl ?? null),
+                    userCoverColor: response.comment.userCoverColor ?? null,
+                    body: String(response.comment.body ?? body),
+                    createdAt: String(response.comment.createdAt ?? new Date().toISOString()),
+                  },
+                  ...story.comments,
+                ].slice(0, 12),
+              }
+            : story
+        )
+      );
+    } catch (e) {
+      console.warn("Failed to comment story:", e);
     }
   }, [token]);
 
@@ -747,10 +852,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         id: String(d.id),
         name: d.name,
         description: d.description,
-        price: d.price,
+        price: Number(d.price ?? 0),
+        basePrice: Number(d.basePrice ?? d.price ?? 0),
         category: d.category,
         prepTime: d.prepTime,
         isPopular: d.isPopular,
+        discountPercent: Number(d.discountPercent ?? 0),
+        discountLabel: d.discountLabel ?? "",
+        savingsAmount: Number(d.savingsAmount ?? 0),
         imageUrl: normalizeRemoteUrl(d.imageUrl ?? null),
         imageUrls: normalizeImageUrlList(d.imageUrls, d.imageUrl ?? null),
       })));
@@ -759,7 +868,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const updateChefDish = useCallback(async (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean }) => {
+  const updateChefDish = useCallback(async (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean; discountPercent?: number; discountLabel?: string }) => {
     if (!token || !user?.id) throw new Error("Non connecté");
     await apiFetch(`/chef/${user.id}/dishes/${dishId}`, {
       method: "PATCH",
@@ -772,6 +881,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         imageUrl: data.imageUrls[0] ?? null,
         imageUrls: data.imageUrls,
         isPopular: Boolean(data.isPopular),
+        discountPercent: Number(data.discountPercent ?? 0),
+        discountLabel: data.discountLabel ?? "",
       }),
     });
     await Promise.all([fetchChefDishes(user.id), refreshChefs()]);
@@ -871,6 +982,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshChefs,
       refreshStories,
       likeStory,
+      addStoryComment,
       fetchChefStats,
       fetchChefDishes,
       updateChefDish,
@@ -881,7 +993,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, chefOrders, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, updateChefOrderStatus, requestDeliveryForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, chefOrders, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, updateChefOrderStatus, requestDeliveryForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
