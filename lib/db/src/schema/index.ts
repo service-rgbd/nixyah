@@ -2,7 +2,7 @@ import { pgTable, text, serial, boolean, real, integer, timestamp, pgEnum, uniqu
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
-export const userTypeEnum = pgEnum("user_type", ["client", "chef", "courier"]);
+export const userTypeEnum = pgEnum("user_type", ["client", "chef", "courier", "merchant", "admin"]);
 export const orderStatusEnum = pgEnum("order_status", ["pending", "accepted", "preparing", "ready", "delivered"]);
 export const customRequestStatusEnum = pgEnum("custom_request_status", ["pending", "quoted", "accepted", "rejected", "cancelled"]);
 export const deliveryStatusEnum = pgEnum("delivery_status", [
@@ -18,6 +18,7 @@ export const deliveryOfferStatusEnum = pgEnum("delivery_offer_status", ["pending
 export const complaintTargetEnum = pgEnum("complaint_target", ["chef", "courier", "platform"]);
 export const complaintStatusEnum = pgEnum("complaint_status", ["open", "investigating", "resolved", "dismissed"]);
 export const commerceUniverseEnum = pgEnum("commerce_universe", ["courses", "supermarkets", "boutiques"]);
+export const commerceStoreStatusEnum = pgEnum("commerce_store_status", ["draft", "pending_review", "approved", "suspended", "rejected"]);
 
 export const usersTable = pgTable(
   "users",
@@ -98,6 +99,23 @@ export const courierProfilesTable = pgTable(
   },
   (table) => ({
     userUnique: uniqueIndex("courier_profiles_user_id_unique").on(table.userId),
+  }),
+);
+
+export const merchantProfilesTable = pgTable(
+  "merchant_profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => usersTable.id),
+    businessName: text("business_name").notNull(),
+    contactEmail: text("contact_email"),
+    contactPhone: text("contact_phone"),
+    bio: text("bio").notNull().default(""),
+    isVerified: boolean("is_verified").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    userUnique: uniqueIndex("merchant_profiles_user_id_unique").on(table.userId),
   }),
 );
 
@@ -353,6 +371,7 @@ export const cartItemsTable = pgTable("cart_items", {
 
 export const commerceStoresTable = pgTable("commerce_stores", {
   id: serial("id").primaryKey(),
+  merchantProfileId: integer("merchant_profile_id").references(() => merchantProfilesTable.id),
   universe: commerceUniverseEnum("universe").notNull(),
   name: text("name").notNull(),
   tagline: text("tagline").notNull().default(""),
@@ -361,8 +380,11 @@ export const commerceStoresTable = pgTable("commerce_stores", {
   zone: text("zone").notNull().default(""),
   accentColor: text("accent_color").notNull().default("#C4522A"),
   visualKey: text("visual_key").notNull().default(""),
+  logoUrl: text("logo_url"),
+  bannerUrl: text("banner_url"),
   etaMinMinutes: integer("eta_min_minutes").notNull().default(20),
   etaMaxMinutes: integer("eta_max_minutes").notNull().default(40),
+  status: commerceStoreStatusEnum("status").notNull().default("approved"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -445,6 +467,7 @@ export const insertCommerceCartSchema = createInsertSchema(commerceCartsTable).o
 export const insertCommerceCartItemSchema = createInsertSchema(commerceCartItemsTable).omit({ id: true, createdAt: true });
 export const insertCommerceOrderSchema = createInsertSchema(commerceOrdersTable).omit({ id: true, createdAt: true });
 export const insertCommerceOrderItemSchema = createInsertSchema(commerceOrderItemsTable).omit({ id: true });
+export const insertMerchantProfileSchema = createInsertSchema(merchantProfilesTable).omit({ id: true, createdAt: true });
 
 export const storyLikesTable = pgTable(
   "story_likes",
@@ -477,6 +500,7 @@ export type CommerceCart = typeof commerceCartsTable.$inferSelect;
 export type CommerceCartItem = typeof commerceCartItemsTable.$inferSelect;
 export type CommerceOrder = typeof commerceOrdersTable.$inferSelect;
 export type CommerceOrderItem = typeof commerceOrderItemsTable.$inferSelect;
+export type MerchantProfile = typeof merchantProfilesTable.$inferSelect;
 export type StoryLike = typeof storyLikesTable.$inferSelect;
 export type StoryComment = typeof storyCommentsTable.$inferSelect;
 
@@ -501,6 +525,7 @@ export type ChefProfile = typeof chefProfilesTable.$inferSelect;
 export type InsertChefProfile = z.infer<typeof insertChefProfileSchema>;
 export type CourierProfile = typeof courierProfilesTable.$inferSelect;
 export type InsertCourierProfile = z.infer<typeof insertCourierProfileSchema>;
+export type InsertMerchantProfile = z.infer<typeof insertMerchantProfileSchema>;
 export type Dish = typeof dishesTable.$inferSelect;
 export type Story = typeof storiesTable.$inferSelect;
 export type Order = typeof ordersTable.$inferSelect;

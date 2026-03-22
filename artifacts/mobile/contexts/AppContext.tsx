@@ -277,7 +277,7 @@ export interface AuthUser {
   name: string;
   email?: string | null;
   phone?: string | null;
-  type: "client" | "chef" | "courier";
+  type: "client" | "chef" | "courier" | "merchant" | "admin";
   location: string;
   coverColor: string;
   avatarUrl?: string | null;
@@ -317,6 +317,15 @@ export interface AuthUser {
     currentLatitude?: number | null;
     currentLongitude?: number | null;
     lastLocationAt?: string | null;
+  } | null;
+  merchantProfile?: {
+    id: string;
+    userId: string;
+    businessName: string;
+    contactEmail?: string | null;
+    contactPhone?: string | null;
+    bio?: string;
+    isVerified: boolean;
   } | null;
 }
 

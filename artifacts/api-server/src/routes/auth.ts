@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { usersTable, chefProfilesTable, courierProfilesTable } from "@workspace/db/schema";
+import { usersTable, chefProfilesTable, courierProfilesTable, merchantProfilesTable } from "@workspace/db/schema";
 import { eq, or } from "drizzle-orm";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth.js";
 import crypto from "crypto";
@@ -226,7 +226,19 @@ function buildCourierProfile(profile: any) {
   };
 }
 
-function toSafeUser(user: any, extraProfiles?: { chefProfile?: any; courierProfile?: any }) {
+function buildMerchantProfile(profile: any) {
+  return {
+    id: String(profile.id),
+    userId: String(profile.userId),
+    businessName: profile.businessName,
+    contactEmail: profile.contactEmail ?? null,
+    contactPhone: profile.contactPhone ?? null,
+    bio: profile.bio ?? "",
+    isVerified: Boolean(profile.isVerified),
+  };
+}
+
+function toSafeUser(user: any, extraProfiles?: { chefProfile?: any; courierProfile?: any; merchantProfile?: any }) {
   return {
     id: String(user.id),
     name: user.name,
@@ -240,6 +252,7 @@ function toSafeUser(user: any, extraProfiles?: { chefProfile?: any; courierProfi
     freeDeliveryCredits: user.freeDeliveryCredits ?? 0,
     chefProfile: extraProfiles?.chefProfile ?? null,
     courierProfile: extraProfiles?.courierProfile ?? null,
+    merchantProfile: extraProfiles?.merchantProfile ?? null,
   };
 }
 
@@ -507,6 +520,80 @@ router.post("/auth/register/courier", async (req, res) => {
   }
 });
 
+router.post("/auth/register/merchant", async (req, res) => {
+  try {
+    const { name, password, location, businessName, bio } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const phone = normalizePhone(req.body.phone);
+
+    if (!name || !password || !businessName) {
+      res.status(400).json({ error: "BadRequest", message: "Nom, mot de passe et nom commercial requis" });
+      return;
+    }
+    if (!email && !phone) {
+      res.status(400).json({ error: "BadRequest", message: "Email ou téléphone requis" });
+      return;
+    }
+
+    const existing = await db.select().from(usersTable).where(
+      or(
+        email ? eq(usersTable.email, email) : undefined,
+        phone ? eq(usersTable.phone, phone) : undefined,
+      )
+    );
+    if (existing.length > 0) {
+      res.status(409).json({ error: "Conflict", message: "Email ou téléphone déjà utilisé" });
+      return;
+    }
+
+    const [user] = await db.insert(usersTable).values({
+      name,
+      email: email || null,
+      phone: phone || null,
+      passwordHash: hashPassword(password),
+      type: "merchant",
+      location: location || "Abidjan",
+      coverColor: "#0F766E",
+      emailConfirmed: false,
+      emailConfirmToken: null,
+      emailConfirmExpires: null,
+    }).returning();
+    const referralCode = await assignReferralCode(user.id, name);
+    user.referralCode = referralCode;
+
+    const [merchantProfile] = await db.insert(merchantProfilesTable).values({
+      userId: user.id,
+      businessName,
+      contactEmail: email || null,
+      contactPhone: phone || null,
+      bio: typeof bio === "string" ? bio : "",
+      isVerified: false,
+    }).returning();
+
+    const safeMerchantProfile = buildMerchantProfile(merchantProfile);
+
+    if (email) {
+      await createEmailConfirmation(user.id, email, name);
+      res.status(201).json({
+        requiresEmailConfirmation: true,
+        message: "Compte créé. Confirmez votre adresse email pour activer votre espace marchand.",
+        email,
+        user: toSafeUser(user, { merchantProfile: safeMerchantProfile }),
+      });
+      return;
+    }
+
+    const token = signToken({ userId: user.id, type: "merchant" });
+    res.status(201).json({
+      token,
+      user: toSafeUser(user, { merchantProfile: safeMerchantProfile }),
+    });
+  } catch (err) {
+    console.error("register merchant error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
 router.post("/auth/login", async (req, res) => {
   try {
     const emailOrPhone = typeof req.body.emailOrPhone === "string" ? req.body.emailOrPhone.trim() : "";
@@ -542,6 +629,7 @@ router.post("/auth/login", async (req, res) => {
 
     let chefProfile = null;
     let courierProfile = null;
+    let merchantProfile = null;
     if (user.type === "chef") {
       const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, user.id));
       if (cp) {
@@ -554,11 +642,17 @@ router.post("/auth/login", async (req, res) => {
         courierProfile = buildCourierProfile(cp);
       }
     }
+    if (user.type === "merchant") {
+      const [mp] = await db.select().from(merchantProfilesTable).where(eq(merchantProfilesTable.userId, user.id));
+      if (mp) {
+        merchantProfile = buildMerchantProfile(mp);
+      }
+    }
 
     const token = signToken({ userId: user.id, type: user.type });
     res.json({
       token,
-      user: toSafeUser(user, { chefProfile, courierProfile }),
+      user: toSafeUser(user, { chefProfile, courierProfile, merchantProfile }),
     });
   } catch (err) {
     console.error("login error:", err);
@@ -649,6 +743,7 @@ router.get("/auth/me", requireAuth, async (req: AuthRequest, res) => {
 
     let chefProfile = null;
     let courierProfile = null;
+    let merchantProfile = null;
     if (user.type === "chef") {
       const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, user.id));
       if (cp) {
@@ -661,9 +756,15 @@ router.get("/auth/me", requireAuth, async (req: AuthRequest, res) => {
         courierProfile = buildCourierProfile(cp);
       }
     }
+    if (user.type === "merchant") {
+      const [mp] = await db.select().from(merchantProfilesTable).where(eq(merchantProfilesTable.userId, user.id));
+      if (mp) {
+        merchantProfile = buildMerchantProfile(mp);
+      }
+    }
 
     res.json({
-      ...toSafeUser(user, { chefProfile, courierProfile }),
+      ...toSafeUser(user, { chefProfile, courierProfile, merchantProfile }),
     });
     return;
   } catch (err) {
@@ -696,6 +797,7 @@ router.patch("/auth/me", requireAuth, async (req: AuthRequest, res) => {
     const [u] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
     let chefProfile = null;
     let courierProfile = null;
+    let merchantProfile = null;
     if (u.type === "chef") {
       const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, u.id));
       if (cp) {
@@ -708,8 +810,14 @@ router.patch("/auth/me", requireAuth, async (req: AuthRequest, res) => {
         courierProfile = buildCourierProfile(cp);
       }
     }
+    if (u.type === "merchant") {
+      const [mp] = await db.select().from(merchantProfilesTable).where(eq(merchantProfilesTable.userId, u.id));
+      if (mp) {
+        merchantProfile = buildMerchantProfile(mp);
+      }
+    }
     res.json({
-      ...toSafeUser(u, { chefProfile, courierProfile }),
+      ...toSafeUser(u, { chefProfile, courierProfile, merchantProfile }),
     });
   } catch (err) {
     console.error("update me error:", err);

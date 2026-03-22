@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { db } from "@workspace/db";
-import { chefProfilesTable, courierProfilesTable, usersTable, type User } from "@workspace/db/schema";
+import { chefProfilesTable, courierProfilesTable, merchantProfilesTable, usersTable, type User } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyToken } from "../lib/auth.js";
 
@@ -10,6 +10,7 @@ export interface AuthRequest extends Request {
   user?: User;
   chefProfileId?: number;
   courierProfileId?: number;
+  merchantProfileId?: number;
 }
 
 async function authenticateRequest(req: AuthRequest, res: Response): Promise<boolean> {
@@ -68,6 +69,18 @@ async function authenticateRequest(req: AuthRequest, res: Response): Promise<boo
     }
   }
 
+  if (user.type === "merchant") {
+    const [merchantProfile] = await db
+      .select()
+      .from(merchantProfilesTable)
+      .where(eq(merchantProfilesTable.userId, user.id))
+      .limit(1);
+
+    if (merchantProfile) {
+      req.merchantProfileId = merchantProfile.id;
+    }
+  }
+
   return true;
 }
 
@@ -110,6 +123,30 @@ export async function requireCourier(req: AuthRequest, res: Response, next: Next
   }
   if (req.userType !== "courier" || !req.courierProfileId) {
     res.status(403).json({ error: "Forbidden", message: "Réservé aux livreurs" });
+    return;
+  }
+  next();
+}
+
+export async function requireMerchant(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  const isAuthenticated = await authenticateRequest(req, res);
+  if (!isAuthenticated) {
+    return;
+  }
+  if (req.userType !== "merchant" || !req.merchantProfileId) {
+    res.status(403).json({ error: "Forbidden", message: "Réservé aux marchands" });
+    return;
+  }
+  next();
+}
+
+export async function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  const isAuthenticated = await authenticateRequest(req, res);
+  if (!isAuthenticated) {
+    return;
+  }
+  if (req.userType !== "admin") {
+    res.status(403).json({ error: "Forbidden", message: "Réservé aux administrateurs" });
     return;
   }
   next();

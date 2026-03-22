@@ -63,8 +63,8 @@ router.get("/commerce/catalog", async (req, res) => {
       : null;
 
     const stores = universe
-      ? await db.select().from(commerceStoresTable).where(and(eq(commerceStoresTable.universe, universe), eq(commerceStoresTable.isActive, true)))
-      : await db.select().from(commerceStoresTable).where(eq(commerceStoresTable.isActive, true));
+      ? await db.select().from(commerceStoresTable).where(and(eq(commerceStoresTable.universe, universe), eq(commerceStoresTable.isActive, true), eq(commerceStoresTable.status, "approved")))
+      : await db.select().from(commerceStoresTable).where(and(eq(commerceStoresTable.isActive, true), eq(commerceStoresTable.status, "approved")));
     const storeIds = stores.map((store) => store.id);
     const products = storeIds.length > 0
       ? await db.select().from(commerceProductsTable).where(inArray(commerceProductsTable.storeId, storeIds))
@@ -81,6 +81,8 @@ router.get("/commerce/catalog", async (req, res) => {
         zone: store.zone,
         accentColor: store.accentColor,
         visualKey: store.visualKey,
+        logoUrl: store.logoUrl,
+        bannerUrl: store.bannerUrl,
         etaMinMinutes: store.etaMinMinutes,
         etaMaxMinutes: store.etaMaxMinutes,
       })),

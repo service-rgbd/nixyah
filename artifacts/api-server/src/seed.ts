@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { usersTable, chefProfilesTable, dishesTable, storiesTable, commerceProductsTable, commerceStoresTable } from "@workspace/db/schema";
+import { usersTable, chefProfilesTable, dishesTable, storiesTable, commerceProductsTable, commerceStoresTable, merchantProfilesTable } from "@workspace/db/schema";
 import { hashPassword } from "./lib/auth.js";
 
 const CHEFS = [
@@ -149,6 +149,13 @@ type SeedCommerceProduct = {
 
 type SeedCommerceStore = {
   universe: "courses" | "supermarkets" | "boutiques";
+  merchant: {
+    name: string;
+    email: string;
+    phone: string;
+    businessName: string;
+    bio: string;
+  };
   name: string;
   tagline: string;
   description: string;
@@ -164,6 +171,13 @@ type SeedCommerceStore = {
 const COMMERCE_STORES: SeedCommerceStore[] = [
   {
     universe: "courses" as const,
+    merchant: {
+      name: "Aminata Express",
+      email: "merchant-course-express@nixyah.ci",
+      phone: "+22507001001",
+      businessName: "Course Express Cocody",
+      bio: "Petites courses, depannages rapides et paniers urbains.",
+    },
     name: "Course Express Cocody",
     tagline: "Essentiels rapides, retrait et depannage du quotidien.",
     description: "Une enseigne urbaine pour les petites courses utiles dans l'heure.",
@@ -180,6 +194,13 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
   },
   {
     universe: "courses" as const,
+    merchant: {
+      name: "Fatima Plateau",
+      email: "merchant-minute-plateau@nixyah.ci",
+      phone: "+22507001002",
+      businessName: "Minute Plateau",
+      bio: "Courses bureau et petits paniers du quotidien.",
+    },
     name: "Minute Plateau",
     tagline: "Petites courses urbaines et paniers express.",
     description: "Parfait pour les bureaux et depannages de derniere minute.",
@@ -196,6 +217,13 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
   },
   {
     universe: "supermarkets" as const,
+    merchant: {
+      name: "Kouadio Riviera",
+      email: "merchant-marche-riviera@nixyah.ci",
+      phone: "+22507001003",
+      businessName: "Marche Riviera",
+      bio: "Gestion de rayons frais, epicerie, boissons et maison.",
+    },
     name: "Marche Riviera",
     tagline: "Rayons frais, epicerie et maison sous un meme panier.",
     description: "Un supermarche de proximite avec produits du quotidien et frais.",
@@ -220,6 +248,13 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
   },
   {
     universe: "supermarkets" as const,
+    merchant: {
+      name: "Awa Fresh",
+      email: "merchant-fresh-abi@nixyah.ci",
+      phone: "+22507001004",
+      businessName: "Fresh Abi",
+      bio: "Paniers famille, produits frais et rayons du quotidien.",
+    },
     name: "Fresh Abi",
     tagline: "Produits frais et paniers famille avec suivi propre.",
     description: "Une enseigne large pour les paniers de semaine et les besoins famille.",
@@ -243,6 +278,13 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
   },
   {
     universe: "boutiques" as const,
+    merchant: {
+      name: "Nadia Atelier",
+      email: "merchant-atelier-cadeaux@nixyah.ci",
+      phone: "+22507001005",
+      businessName: "Atelier Cadeaux",
+      bio: "Boutique cadeaux, maison et bien-etre.",
+    },
     name: "Atelier Cadeaux",
     tagline: "Coffrets, senteurs et idees a offrir sans perdre du temps.",
     description: "Une vitrine orientee cadeaux, maison et bien-etre.",
@@ -262,6 +304,13 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
   },
   {
     universe: "boutiques" as const,
+    merchant: {
+      name: "Sonia Select",
+      email: "merchant-select-store@nixyah.ci",
+      phone: "+22507001006",
+      businessName: "Select Store",
+      bio: "Selections premium, lifestyle et achats discrets.",
+    },
     name: "Select Store",
     tagline: "Achats specialises, vitrine plus premium et plus discrete.",
     description: "Une boutique plus premium avec selections lifestyle et achats prives.",
@@ -281,14 +330,76 @@ const COMMERCE_STORES: SeedCommerceStore[] = [
   },
 ];
 
+async function getOrCreateMerchantProfile(input: SeedCommerceStore["merchant"]) {
+  const [existingUser] = await db.select().from(usersTable).where(eq(usersTable.email, input.email)).limit(1);
+  const user = existingUser ?? (
+    await db.insert(usersTable).values({
+      name: input.name,
+      email: input.email,
+      phone: input.phone,
+      passwordHash: hashPassword("nixyah2026"),
+      type: "merchant",
+      location: "Abidjan",
+      coverColor: "#0F766E",
+      emailConfirmed: true,
+    }).returning()
+  )[0];
+
+  const [existingProfile] = await db.select().from(merchantProfilesTable).where(eq(merchantProfilesTable.userId, user.id)).limit(1);
+  if (existingProfile) {
+    const [updatedProfile] = await db.update(merchantProfilesTable).set({
+      businessName: input.businessName,
+      contactEmail: input.email,
+      contactPhone: input.phone,
+      bio: input.bio,
+      isVerified: true,
+    }).where(eq(merchantProfilesTable.id, existingProfile.id)).returning();
+    return updatedProfile;
+  }
+
+  const [profile] = await db.insert(merchantProfilesTable).values({
+    userId: user.id,
+    businessName: input.businessName,
+    contactEmail: input.email,
+    contactPhone: input.phone,
+    bio: input.bio,
+    isVerified: true,
+  }).returning();
+  return profile;
+}
+
+async function seedDefaultAdmin() {
+  const adminEmail = "admin@nixyah.ci";
+  const [existingAdmin] = await db.select().from(usersTable).where(eq(usersTable.email, adminEmail)).limit(1);
+  if (existingAdmin) {
+    return;
+  }
+
+  await db.insert(usersTable).values({
+    name: "Nixyah Admin",
+    email: adminEmail,
+    phone: "+22507009999",
+    passwordHash: hashPassword("nixyah2026"),
+    type: "admin",
+    location: "Abidjan",
+    coverColor: "#C4522A",
+    emailConfirmed: true,
+  });
+  console.log("✅ Created default admin account: admin@nixyah.ci");
+}
+
 async function seedCommerceCatalog() {
+  await seedDefaultAdmin();
+
   for (const store of COMMERCE_STORES) {
+    const merchantProfile = await getOrCreateMerchantProfile(store.merchant);
     const [existingStore] = await db.select().from(commerceStoresTable).where(eq(commerceStoresTable.name, store.name)).limit(1);
 
     const createdStore = existingStore
       ? (
         await db.update(commerceStoresTable)
           .set({
+            merchantProfileId: merchantProfile.id,
             universe: store.universe,
             tagline: store.tagline,
             description: store.description,
@@ -298,6 +409,7 @@ async function seedCommerceCatalog() {
             visualKey: store.visualKey,
             etaMinMinutes: store.etaMinMinutes,
             etaMaxMinutes: store.etaMaxMinutes,
+            status: "approved",
             isActive: true,
           })
           .where(eq(commerceStoresTable.id, existingStore.id))
@@ -305,6 +417,7 @@ async function seedCommerceCatalog() {
       )[0]
       : (
         await db.insert(commerceStoresTable).values({
+          merchantProfileId: merchantProfile.id,
           universe: store.universe,
           name: store.name,
           tagline: store.tagline,
@@ -315,6 +428,7 @@ async function seedCommerceCatalog() {
           visualKey: store.visualKey,
           etaMinMinutes: store.etaMinMinutes,
           etaMaxMinutes: store.etaMaxMinutes,
+          status: "approved",
           isActive: true,
         }).returning()
       )[0];
