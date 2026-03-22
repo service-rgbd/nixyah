@@ -266,6 +266,18 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
       });
     }
 
+    await notifyUsers({
+      userIds: [userId],
+      type: "order",
+      title: "Commande enregistrée",
+      message: "Votre commande a bien été enregistrée. Vous recevrez les prochaines étapes en temps réel.",
+      orderId: order.id,
+      data: {
+        screen: "orders",
+        orderId: String(order.id),
+      },
+    });
+
     return res.status(201).json({ orderId: order.id, total, deliveryAddress: resolvedDeliveryAddress || null, cancelAvailableUntil: new Date(order.createdAt.getTime() + 10_000).toISOString() });
   } catch (err) {
     console.error("checkout error", err);

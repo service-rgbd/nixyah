@@ -297,6 +297,18 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       },
     });
 
+    await notifyUsers({
+      userIds: [req.userId!],
+      type: "order",
+      title: "Commande enregistrée",
+      message: "Votre commande a bien été enregistrée. Vous recevrez les prochaines étapes en temps réel.",
+      orderId: order.id,
+      data: {
+        screen: "orders",
+        orderId: String(order.id),
+      },
+    });
+
     res.status(201).json({
       id: String(order.id),
       clientId: String(order.clientId),
