@@ -29,6 +29,10 @@ router.get("/chefs", async (req, res) => {
           specialties: cp.specialties ?? [],
           rating: cp.rating,
           reviewCount: cp.reviewCount,
+          stars: cp.stars ?? 0,
+          complaintCount: cp.complaintCount ?? 0,
+          activeInvestigationCount: cp.activeInvestigationCount ?? 0,
+          isFeatured: Boolean(cp.isFeatured),
           priceRange: cp.priceRange,
           isVerified: cp.isVerified,
           isOnline: cp.isOnline,
@@ -71,6 +75,16 @@ router.get("/chefs", async (req, res) => {
       })
     );
 
+    chefs.sort(
+      (a, b) =>
+        Number(b.isFeatured) - Number(a.isFeatured) ||
+        Number(b.isOnline) - Number(a.isOnline) ||
+        Number(b.isVerified) - Number(a.isVerified) ||
+        b.rating - a.rating ||
+        b.stars - a.stars ||
+        b.reviewCount - a.reviewCount,
+    );
+
     res.json({ chefs });
   } catch (err) {
     console.error("list chefs error:", err);
@@ -102,6 +116,10 @@ router.get("/chefs/:id", async (req, res) => {
       specialties: cp.specialties ?? [],
       rating: cp.rating,
       reviewCount: cp.reviewCount,
+      stars: cp.stars ?? 0,
+      complaintCount: cp.complaintCount ?? 0,
+      activeInvestigationCount: cp.activeInvestigationCount ?? 0,
+      isFeatured: Boolean(cp.isFeatured),
       priceRange: cp.priceRange,
       isVerified: cp.isVerified,
       isOnline: cp.isOnline,

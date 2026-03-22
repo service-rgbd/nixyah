@@ -1,14 +1,22 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { ordersTable, orderItemsTable, chefProfilesTable, courierProfilesTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable, reviewsTable } from "@workspace/db/schema";
+import { ordersTable, orderItemsTable, chefProfilesTable, complaintsTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable, reviewsTable } from "@workspace/db/schema";
 import { desc, eq, inArray } from "drizzle-orm";
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { geocodeAddress } from "../lib/geocoding.js";
 import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
+import { shouldInvestigateComplaint } from "../lib/commerce.js";
+import { maybeGrantReferralReward, quoteDeliveryOrderPricing, refreshChefReviewAggregates, refreshComplaintAggregates, refreshCourierReviewAggregates } from "../lib/fulfillment.js";
 
 const router: IRouter = Router();
 const ORDER_CLIENT_CANCEL_WINDOW_MS = 10_000;
+
+const COMPLAINT_CATEGORIES: Record<"chef" | "courier" | "platform", Set<string>> = {
+  chef: new Set(["hygiene", "taste_quality", "missing_items", "wrong_order", "poor_packaging", "rude_behavior", "unsafe_food"]),
+  courier: new Set(["delay", "unreachable", "damaged_order", "wrong_address", "rude_behavior", "suspicious_behavior"]),
+  platform: new Set(["billing", "refund", "app_issue"]),
+};
 
 function normalizeRatingValue(input: unknown): number | null {
   const value = Number(input);
@@ -24,26 +32,38 @@ function normalizeRatingValue(input: unknown): number | null {
   return rounded;
 }
 
-async function refreshChefReviewAggregates(chefProfileId: number) {
-  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.chefProfileId, chefProfileId));
-  const ratedReviews = reviews.filter((review) => Number.isFinite(review.rating));
-  const reviewCount = ratedReviews.length;
-  const rating = reviewCount > 0
-    ? Number((ratedReviews.reduce((sum, review) => sum + Number(review.rating), 0) / reviewCount).toFixed(1))
-    : 5.0;
+function mapLegacyComplaint(reason: string) {
+  const normalized = reason.trim().toLowerCase();
 
-  await db.update(chefProfilesTable).set({ rating, reviewCount }).where(eq(chefProfilesTable.id, chefProfileId));
+  if (normalized.includes("retard")) {
+    return { target: "courier" as const, category: "delay" };
+  }
+
+  if (normalized.includes("livraison")) {
+    return { target: "courier" as const, category: "damaged_order" };
+  }
+
+  if (normalized.includes("incompl")) {
+    return { target: "chef" as const, category: "missing_items" };
+  }
+
+  return { target: "platform" as const, category: "app_issue" };
 }
 
-async function refreshCourierReviewAggregates(courierUserId: number) {
-  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.courierUserId, courierUserId));
-  const ratedReviews = reviews.filter((review) => Number.isFinite(review.deliveryRating));
-  const reviewCount = ratedReviews.length;
-  const rating = reviewCount > 0
-    ? Number((ratedReviews.reduce((sum, review) => sum + Number(review.deliveryRating ?? 0), 0) / reviewCount).toFixed(1))
-    : 5.0;
+function normalizeComplaintPayload(input: { target?: unknown; category?: unknown; reason?: unknown }): { target: "chef" | "courier" | "platform"; category: string } | null {
+  const fallback = typeof input.reason === "string" ? mapLegacyComplaint(input.reason) : null;
+  const target = typeof input.target === "string" ? input.target.trim().toLowerCase() : fallback?.target ?? "platform";
+  const category = typeof input.category === "string" ? input.category.trim().toLowerCase() : fallback?.category ?? "app_issue";
 
-  await db.update(courierProfilesTable).set({ rating, reviewCount }).where(eq(courierProfilesTable.userId, courierUserId));
+  if (target !== "chef" && target !== "courier" && target !== "platform") {
+    return null;
+  }
+
+  if (!COMPLAINT_CATEGORIES[target].has(category)) {
+    return null;
+  }
+
+  return { target, category };
 }
 
 router.get("/orders", requireClient, async (req: AuthRequest, res) => {
@@ -82,6 +102,12 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
           chefName: u.name,
           status: o.status,
           total: o.total,
+          deliveryFee: Number(o.deliveryFee ?? 0),
+          totalWithDelivery: Number(o.totalWithDelivery ?? o.total ?? 0),
+          deliveryDistanceKm: o.deliveryDistanceKm != null ? Number(o.deliveryDistanceKm) : null,
+          deliveryDemandMultiplier: Number(o.deliveryDemandMultiplier ?? 1),
+          freeDeliveryApplied: Boolean(o.freeDeliveryApplied),
+          referralCreditUsed: Boolean(o.referralCreditUsed),
           occasion: o.occasion,
           persons: o.persons,
           deliveryAddress: o.deliveryAddress,
@@ -257,12 +283,26 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       Number.isFinite(Number(deliveryLatitude)) && Number.isFinite(Number(deliveryLongitude))
         ? null
         : await geocodeAddress(fallbackDeliveryAddress);
+    const pricing = await quoteDeliveryOrderPricing({
+      subtotal: total,
+      restaurantAddress: cp.location,
+      deliveryAddress: fallbackDeliveryAddress,
+      deliveryLatitude: Number.isFinite(Number(deliveryLatitude)) ? Number(deliveryLatitude) : geocodedDeliveryPoint?.latitude ?? null,
+      deliveryLongitude: Number.isFinite(Number(deliveryLongitude)) ? Number(deliveryLongitude) : geocodedDeliveryPoint?.longitude ?? null,
+      hasReferralCredit: (clientUser?.freeDeliveryCredits ?? 0) > 0,
+    });
 
     const [order] = await db.insert(ordersTable).values({
       clientId: req.userId!,
       chefProfileId: cp.id,
       status: "pending",
       total,
+      deliveryFee: pricing.deliveryFee,
+      totalWithDelivery: pricing.totalWithDelivery,
+      deliveryDistanceKm: pricing.distanceKm,
+      deliveryDemandMultiplier: pricing.demandMultiplier,
+      freeDeliveryApplied: pricing.freeDeliveryApplied,
+      referralCreditUsed: pricing.referralCreditWillBeUsed,
       occasion: occasion || null,
       persons: persons ? Number(persons) : null,
       budget: budget || null,
@@ -271,6 +311,12 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       deliveryLongitude: Number.isFinite(Number(deliveryLongitude)) ? Number(deliveryLongitude) : geocodedDeliveryPoint?.longitude ?? null,
       notes: notes || null,
     }).returning();
+
+    if (pricing.referralCreditWillBeUsed && (clientUser?.freeDeliveryCredits ?? 0) > 0) {
+      await db.update(usersTable).set({
+        freeDeliveryCredits: Math.max(0, (clientUser?.freeDeliveryCredits ?? 0) - 1),
+      }).where(eq(usersTable.id, req.userId!));
+    }
 
     if (finalItems.length > 0) {
       await db.insert(orderItemsTable).values(
@@ -288,12 +334,14 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       userIds: [cp.userId],
       type: "order",
       title: "Nouvelle commande",
-      message: `${clientUser?.name ?? "Une cliente"} a passé une nouvelle commande.`,
+      message: `${clientUser?.name ?? "Une cliente"} a passé une nouvelle commande.${pricing.freeDeliveryApplied ? " Livraison offerte appliquée." : ""}`,
       orderId: order.id,
       data: {
         orderId: order.id,
         chefProfileId: cp.id,
         total,
+        deliveryFee: String(pricing.deliveryFee),
+        totalWithDelivery: String(pricing.totalWithDelivery),
       },
     });
 
@@ -306,8 +354,12 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       data: {
         screen: "orders",
         orderId: String(order.id),
+        deliveryFee: String(pricing.deliveryFee),
+        totalWithDelivery: String(pricing.totalWithDelivery),
       },
     });
+
+    await maybeGrantReferralReward(req.userId!);
 
     res.status(201).json({
       id: String(order.id),
@@ -316,6 +368,12 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       chefName: u.name,
       status: order.status,
       total: order.total,
+      deliveryFee: Number(order.deliveryFee ?? 0),
+      totalWithDelivery: Number(order.totalWithDelivery ?? order.total),
+      deliveryDistanceKm: order.deliveryDistanceKm != null ? Number(order.deliveryDistanceKm) : null,
+      deliveryDemandMultiplier: Number(order.deliveryDemandMultiplier ?? 1),
+      freeDeliveryApplied: Boolean(order.freeDeliveryApplied),
+      referralCreditUsed: Boolean(order.referralCreditUsed),
       occasion: order.occasion,
       persons: order.persons,
       deliveryAddress: order.deliveryAddress,
@@ -440,6 +498,11 @@ router.post("/orders/:orderId/report-issue", requireClient, async (req: AuthRequ
     const parsedOrderId = Number(req.params.orderId);
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
     const details = typeof req.body?.details === "string" ? req.body.details.trim() : "";
+    const normalizedComplaint = normalizeComplaintPayload({
+      target: req.body?.target,
+      category: req.body?.category,
+      reason,
+    });
 
     if (!Number.isInteger(parsedOrderId) || parsedOrderId <= 0) {
       res.status(400).json({ error: "BadRequest", message: "Commande invalide" });
@@ -448,6 +511,10 @@ router.post("/orders/:orderId/report-issue", requireClient, async (req: AuthRequ
 
     if (!reason) {
       res.status(400).json({ error: "BadRequest", message: "Le motif du signalement est requis" });
+      return;
+    }
+    if (!normalizedComplaint) {
+      res.status(400).json({ error: "BadRequest", message: "Catégorie de signalement invalide" });
       return;
     }
 
@@ -464,22 +531,46 @@ router.post("/orders/:orderId/report-issue", requireClient, async (req: AuthRequ
     const recipients = [chefProfile?.userId, deliveryJob?.courierUserId].filter(
       (value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0,
     );
+    const complaintStatus = shouldInvestigateComplaint(normalizedComplaint.target, normalizedComplaint.category)
+      ? "investigating"
+      : "open";
+
+    const [complaint] = await db.insert(complaintsTable).values({
+      orderId: order.id,
+      reporterUserId: req.userId!,
+      chefProfileId: chefProfile?.id ?? null,
+      courierUserId: deliveryJob?.courierUserId ?? null,
+      target: normalizedComplaint.target,
+      category: normalizedComplaint.category,
+      details: details || reason,
+      status: complaintStatus,
+      investigationNotes: complaintStatus === "investigating" ? "Ouvert automatiquement depuis l'application mobile." : "",
+    }).returning();
+
+    await refreshComplaintAggregates({
+      chefProfileId: chefProfile?.id ?? null,
+      courierUserId: deliveryJob?.courierUserId ?? null,
+    });
 
     await notifyUsers({
       userIds: recipients,
       type: "order",
-      title: "Problème signalé sur une commande",
+      title: complaintStatus === "investigating" ? "Réclamation sous enquête" : "Problème signalé sur une commande",
       message: `${clientUser?.name ?? "Une cliente"} a signalé: ${reason}${details ? ` (${details})` : ""}`,
       orderId: order.id,
       deliveryJobId: deliveryJob?.id ?? null,
       data: {
         orderId: order.id,
+        complaintId: String(complaint.id),
+        complaintTarget: normalizedComplaint.target,
+        complaintCategory: normalizedComplaint.category,
+        complaintStatus,
         reason,
         details,
       },
     });
 
-    res.status(201).json({ success: true });
+    res.status(201).json({ success: true, complaintId: String(complaint.id), status: complaintStatus });
   } catch (err) {
     console.error("report order issue error:", err);
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });

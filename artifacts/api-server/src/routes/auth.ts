@@ -5,6 +5,8 @@ import { eq, or } from "drizzle-orm";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth.js";
 import crypto from "crypto";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
+import { buildReferralCode } from "../lib/commerce.js";
+import { resolveReferralCode } from "../lib/fulfillment.js";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM ?? "no-reply@example.com";
@@ -191,6 +193,10 @@ function buildChefProfile(user: any, profile: any) {
     bio: profile.bio,
     rating: profile.rating,
     reviewCount: profile.reviewCount,
+    stars: profile.stars ?? 0,
+    complaintCount: profile.complaintCount ?? 0,
+    activeInvestigationCount: profile.activeInvestigationCount ?? 0,
+    isFeatured: Boolean(profile.isFeatured),
     priceRange: profile.priceRange,
     isVerified: profile.isVerified,
     isOnline: profile.isOnline,
@@ -209,6 +215,11 @@ function buildCourierProfile(profile: any) {
     isVerified: profile.isVerified,
     rating: profile.rating,
     reviewCount: profile.reviewCount,
+    stars: profile.stars ?? 0,
+    complaintCount: profile.complaintCount ?? 0,
+    activeInvestigationCount: profile.activeInvestigationCount ?? 0,
+    bonusEarnedAmount: profile.bonusEarnedAmount ?? 0,
+    bonusUnlockedAt: profile.bonusUnlockedAt ? profile.bonusUnlockedAt.toISOString() : null,
     currentLatitude: profile.currentLatitude ?? null,
     currentLongitude: profile.currentLongitude ?? null,
     lastLocationAt: profile.lastLocationAt ? profile.lastLocationAt.toISOString() : null,
@@ -225,9 +236,26 @@ function toSafeUser(user: any, extraProfiles?: { chefProfile?: any; courierProfi
     location: user.location,
     coverColor: user.coverColor,
     avatarUrl: user.avatarUrl ?? null,
+    referralCode: user.referralCode ?? null,
+    freeDeliveryCredits: user.freeDeliveryCredits ?? 0,
     chefProfile: extraProfiles?.chefProfile ?? null,
     courierProfile: extraProfiles?.courierProfile ?? null,
   };
+}
+
+async function resolveReferrerUserId(input: unknown) {
+  if (typeof input !== "string" || !input.trim()) {
+    return null;
+  }
+
+  const referrer = await resolveReferralCode(input.trim().toUpperCase());
+  return referrer?.id ?? null;
+}
+
+async function assignReferralCode(userId: number, name: string) {
+  const referralCode = buildReferralCode(name, userId);
+  await db.update(usersTable).set({ referralCode }).where(eq(usersTable.id, userId));
+  return referralCode;
 }
 
 async function createEmailConfirmation(userId: number, email: string, name: string) {
@@ -243,6 +271,7 @@ async function createEmailConfirmation(userId: number, email: string, name: stri
 router.post("/auth/register/client", async (req, res) => {
   try {
     const { name, password, location, preferences } = req.body;
+    const referredByUserId = await resolveReferrerUserId(req.body.referralCode);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
 
@@ -265,6 +294,10 @@ router.post("/auth/register/client", async (req, res) => {
       res.status(409).json({ error: "Conflict", message: "Email ou téléphone déjà utilisé" });
       return;
     }
+    if (typeof req.body.referralCode === "string" && req.body.referralCode.trim() && !referredByUserId) {
+      res.status(400).json({ error: "BadRequest", message: "Code de parrainage invalide" });
+      return;
+    }
 
     const COLORS = ["#C4522A", "#8B5CF6", "#059669", "#D97706", "#DC2626", "#BE185D"];
     const coverColor = COLORS[Math.floor(Math.random() * COLORS.length)];
@@ -275,6 +308,7 @@ router.post("/auth/register/client", async (req, res) => {
       phone: phone || null,
       passwordHash: hashPassword(password),
       type: "client",
+      referredByUserId,
       location: location || "Abidjan",
       coverColor,
       preferences: preferences || [],
@@ -282,6 +316,8 @@ router.post("/auth/register/client", async (req, res) => {
       emailConfirmToken: null,
       emailConfirmExpires: null,
     }).returning();
+    const referralCode = await assignReferralCode(user.id, name);
+    user.referralCode = referralCode;
 
     if (email) {
       await createEmailConfirmation(user.id, email, name);
@@ -308,6 +344,7 @@ router.post("/auth/register/client", async (req, res) => {
 router.post("/auth/register/chef", async (req, res) => {
   try {
     const { name, password, specialty, location, zone, bio, priceRange, coverColor, specialties } = req.body;
+    const referredByUserId = await resolveReferrerUserId(req.body.referralCode);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
 
@@ -330,6 +367,10 @@ router.post("/auth/register/chef", async (req, res) => {
       res.status(409).json({ error: "Conflict", message: "Email ou téléphone déjà utilisé" });
       return;
     }
+    if (typeof req.body.referralCode === "string" && req.body.referralCode.trim() && !referredByUserId) {
+      res.status(400).json({ error: "BadRequest", message: "Code de parrainage invalide" });
+      return;
+    }
 
     const COLORS = ["#C4522A", "#8B5CF6", "#059669", "#D97706", "#DC2626", "#BE185D"];
     const chefColor = coverColor || COLORS[Math.floor(Math.random() * COLORS.length)];
@@ -340,12 +381,15 @@ router.post("/auth/register/chef", async (req, res) => {
       phone: phone || null,
       passwordHash: hashPassword(password),
       type: "chef",
+      referredByUserId,
       location,
       coverColor: chefColor,
       emailConfirmed: false,
       emailConfirmToken: null,
       emailConfirmExpires: null,
     }).returning();
+    const referralCode = await assignReferralCode(user.id, name);
+    user.referralCode = referralCode;
 
     const [profile] = await db.insert(chefProfilesTable).values({
       userId: user.id,
@@ -387,6 +431,7 @@ router.post("/auth/register/chef", async (req, res) => {
 router.post("/auth/register/courier", async (req, res) => {
   try {
     const { name, password, location, zone, vehicleType } = req.body;
+    const referredByUserId = await resolveReferrerUserId(req.body.referralCode);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
 
@@ -409,6 +454,10 @@ router.post("/auth/register/courier", async (req, res) => {
       res.status(409).json({ error: "Conflict", message: "Email ou téléphone déjà utilisé" });
       return;
     }
+    if (typeof req.body.referralCode === "string" && req.body.referralCode.trim() && !referredByUserId) {
+      res.status(400).json({ error: "BadRequest", message: "Code de parrainage invalide" });
+      return;
+    }
 
     const [user] = await db.insert(usersTable).values({
       name,
@@ -416,12 +465,15 @@ router.post("/auth/register/courier", async (req, res) => {
       phone: phone || null,
       passwordHash: hashPassword(password),
       type: "courier",
+      referredByUserId,
       location,
       coverColor: "#0F766E",
       emailConfirmed: false,
       emailConfirmToken: null,
       emailConfirmExpires: null,
     }).returning();
+    const referralCode = await assignReferralCode(user.id, name);
+    user.referralCode = referralCode;
 
     const [courierProfile] = await db.insert(courierProfilesTable).values({
       userId: user.id,

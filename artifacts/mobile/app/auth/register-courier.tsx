@@ -27,6 +27,7 @@ export default function RegisterCourierScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [referralCode, setReferralCode] = useState("");
   const [password, setPassword] = useState("");
   const [location, setLocation] = useState("Abidjan");
   const [zone, setZone] = useState("");
@@ -56,6 +57,7 @@ export default function RegisterCourierScreen() {
         name: name.trim(),
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
+        referralCode: referralCode.trim() || undefined,
         password,
         location: location.trim(),
         zone: zone.trim() || undefined,
@@ -122,6 +124,14 @@ export default function RegisterCourierScreen() {
             <View style={styles.inputRow}>
               <Feather name="phone" size={16} color={Colors.light.textTertiary} />
               <TextInput style={styles.input} value={phone} onChangeText={setPhone} placeholder="+225 ..." placeholderTextColor={Colors.light.textTertiary} />
+            </View>
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Code de parrainage</Text>
+            <View style={styles.inputRow}>
+              <Feather name="gift" size={16} color={Colors.light.textTertiary} />
+              <TextInput style={styles.input} value={referralCode} onChangeText={setReferralCode} placeholder="Ex: NIXYAH1234" placeholderTextColor={Colors.light.textTertiary} autoCapitalize="characters" autoCorrect={false} />
             </View>
           </View>
 

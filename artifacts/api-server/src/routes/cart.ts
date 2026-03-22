@@ -5,6 +5,7 @@ import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
+import { maybeGrantReferralReward, quoteDeliveryOrderPricing } from "../lib/fulfillment.js";
 
 const router = express.Router();
 
@@ -166,6 +167,46 @@ router.delete("/cart/items/:id", requireClient, async (req: AuthRequest, res) =>
 });
 
 // POST /api/cart/checkout - convert cart to order
+router.post("/cart/quote", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const cart = await getOrCreateCart(req.userId!);
+    const items = await db.select().from(cartItemsTable).where(eq(cartItemsTable.cartId, cart.id));
+    if (!items.length) {
+      return res.status(400).json({ error: "CartEmpty", message: "Le panier est vide" });
+    }
+
+    const dishIds = items
+      .map((item) => item.dishId)
+      .filter((value): value is number => typeof value === "number");
+    const dishes = await db.select().from(dishesTable).where(inArray(dishesTable.id, dishIds));
+    if (!dishes.length) {
+      return res.status(400).json({ error: "InvalidCart", message: "Le panier ne contient plus de plats valides" });
+    }
+
+    const subtotal = dishes.reduce((sum, dish) => {
+      const matchingItem = items.find((item) => item.dishId === dish.id);
+      return sum + getDishEffectivePrice(dish) * Number(matchingItem?.quantity ?? 0);
+    }, 0);
+    const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
+    const [chefProfile] = dishes[0]?.chefProfileId
+      ? await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, dishes[0].chefProfileId)).limit(1)
+      : [];
+    const quote = await quoteDeliveryOrderPricing({
+      subtotal,
+      restaurantAddress: chefProfile?.location ?? null,
+      deliveryAddress: typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : clientUser?.location ?? null,
+      deliveryLatitude: Number.isFinite(Number(req.body?.deliveryLatitude)) ? Number(req.body.deliveryLatitude) : null,
+      deliveryLongitude: Number.isFinite(Number(req.body?.deliveryLongitude)) ? Number(req.body.deliveryLongitude) : null,
+      hasReferralCredit: (clientUser?.freeDeliveryCredits ?? 0) > 0,
+    });
+
+    return res.json(quote);
+  } catch (err) {
+    console.error("cart quote error", err);
+    return res.status(500).json({ error: "InternalError" });
+  }
+});
+
 router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
@@ -218,18 +259,39 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
     const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
     const resolvedDeliveryAddress = deliveryAddress || clientUser?.location || "";
+    const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, chefProfileId)).limit(1);
+    const pricing = await quoteDeliveryOrderPricing({
+      subtotal: total,
+      restaurantAddress: chefProfile?.location ?? null,
+      deliveryAddress: resolvedDeliveryAddress || null,
+      deliveryLatitude: Number.isFinite(deliveryLatitude) ? deliveryLatitude : null,
+      deliveryLongitude: Number.isFinite(deliveryLongitude) ? deliveryLongitude : null,
+      hasReferralCredit: (clientUser?.freeDeliveryCredits ?? 0) > 0,
+    });
     const [order] = await db
       .insert(ordersTable)
       .values({
         clientId: userId,
         chefProfileId,
         total,
+        deliveryFee: pricing.deliveryFee,
+        totalWithDelivery: pricing.totalWithDelivery,
+        deliveryDistanceKm: pricing.distanceKm,
+        deliveryDemandMultiplier: pricing.demandMultiplier,
+        freeDeliveryApplied: pricing.freeDeliveryApplied,
+        referralCreditUsed: pricing.referralCreditWillBeUsed,
         deliveryAddress: resolvedDeliveryAddress || null,
         deliveryLatitude: Number.isFinite(deliveryLatitude) ? deliveryLatitude : null,
         deliveryLongitude: Number.isFinite(deliveryLongitude) ? deliveryLongitude : null,
         notes: notes || null,
       })
       .returning();
+
+    if (pricing.referralCreditWillBeUsed && (clientUser?.freeDeliveryCredits ?? 0) > 0) {
+      await db.update(usersTable).set({
+        freeDeliveryCredits: Math.max(0, (clientUser?.freeDeliveryCredits ?? 0) - 1),
+      }).where(eq(usersTable.id, userId));
+    }
 
     for (const item of normalizedItems) {
       await db.insert(orderItemsTable).values({
@@ -262,6 +324,8 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
           screen: "orders",
           orderId: String(order.id),
           total,
+          deliveryFee: String(pricing.deliveryFee),
+          totalWithDelivery: String(pricing.totalWithDelivery),
         },
       });
     }
@@ -275,10 +339,25 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
       data: {
         screen: "orders",
         orderId: String(order.id),
+        deliveryFee: String(pricing.deliveryFee),
+        totalWithDelivery: String(pricing.totalWithDelivery),
       },
     });
 
-    return res.status(201).json({ orderId: order.id, total, deliveryAddress: resolvedDeliveryAddress || null, cancelAvailableUntil: new Date(order.createdAt.getTime() + 10_000).toISOString() });
+    await maybeGrantReferralReward(userId);
+
+    return res.status(201).json({
+      orderId: order.id,
+      total,
+      deliveryFee: pricing.deliveryFee,
+      totalWithDelivery: pricing.totalWithDelivery,
+      deliveryDistanceKm: pricing.distanceKm,
+      demandMultiplier: pricing.demandMultiplier,
+      freeDeliveryApplied: pricing.freeDeliveryApplied,
+      referralCreditUsed: pricing.referralCreditWillBeUsed,
+      deliveryAddress: resolvedDeliveryAddress || null,
+      cancelAvailableUntil: new Date(order.createdAt.getTime() + 10_000).toISOString(),
+    });
   } catch (err) {
     console.error("checkout error", err);
     return res.status(500).json({ error: "InternalError" });

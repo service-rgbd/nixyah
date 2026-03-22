@@ -15,6 +15,8 @@ export const deliveryStatusEnum = pgEnum("delivery_status", [
   "cancelled",
 ]);
 export const deliveryOfferStatusEnum = pgEnum("delivery_offer_status", ["pending", "accepted", "rejected", "expired"]);
+export const complaintTargetEnum = pgEnum("complaint_target", ["chef", "courier", "platform"]);
+export const complaintStatusEnum = pgEnum("complaint_status", ["open", "investigating", "resolved", "dismissed"]);
 
 export const usersTable = pgTable(
   "users",
@@ -28,6 +30,10 @@ export const usersTable = pgTable(
     emailConfirmExpires: timestamp("email_confirm_expires"),
     passwordHash: text("password_hash").notNull(),
     type: userTypeEnum("type").notNull().default("client"),
+    referralCode: text("referral_code"),
+    referredByUserId: integer("referred_by_user_id").references((): any => usersTable.id),
+    referralRewardGrantedAt: timestamp("referral_reward_granted_at"),
+    freeDeliveryCredits: integer("free_delivery_credits").notNull().default(0),
     location: text("location").notNull().default(""),
     coverColor: text("cover_color").notNull().default("#C4522A"),
     avatarUrl: text("avatar_url"),
@@ -37,6 +43,7 @@ export const usersTable = pgTable(
   (table) => ({
     emailUnique: uniqueIndex("users_email_unique").on(table.email),
     phoneUnique: uniqueIndex("users_phone_unique").on(table.phone),
+    referralCodeUnique: uniqueIndex("users_referral_code_unique").on(table.referralCode),
   }),
 );
 
@@ -51,6 +58,10 @@ export const chefProfilesTable = pgTable(
     bio: text("bio").notNull().default(""),
     rating: real("rating").notNull().default(5.0),
     reviewCount: integer("review_count").notNull().default(0),
+    stars: integer("stars").notNull().default(0),
+    complaintCount: integer("complaint_count").notNull().default(0),
+    activeInvestigationCount: integer("active_investigation_count").notNull().default(0),
+    isFeatured: boolean("is_featured").notNull().default(false),
     priceRange: text("price_range").notNull().default(""),
     isVerified: boolean("is_verified").notNull().default(false),
     isOnline: boolean("is_online").notNull().default(true),
@@ -74,6 +85,11 @@ export const courierProfilesTable = pgTable(
     isVerified: boolean("is_verified").notNull().default(false),
     rating: real("rating").notNull().default(5.0),
     reviewCount: integer("review_count").notNull().default(0),
+    stars: integer("stars").notNull().default(0),
+    complaintCount: integer("complaint_count").notNull().default(0),
+    activeInvestigationCount: integer("active_investigation_count").notNull().default(0),
+    bonusEarnedAmount: integer("bonus_earned_amount").notNull().default(0),
+    bonusUnlockedAt: timestamp("bonus_unlocked_at"),
     currentLatitude: real("current_latitude"),
     currentLongitude: real("current_longitude"),
     lastLocationAt: timestamp("last_location_at"),
@@ -122,6 +138,12 @@ export const ordersTable = pgTable("orders", {
   chefProfileId: integer("chef_profile_id").notNull().references(() => chefProfilesTable.id),
   status: orderStatusEnum("status").notNull().default("pending"),
   total: real("total").notNull().default(0),
+  deliveryFee: real("delivery_fee").notNull().default(0),
+  totalWithDelivery: real("total_with_delivery").notNull().default(0),
+  deliveryDistanceKm: real("delivery_distance_km"),
+  deliveryDemandMultiplier: real("delivery_demand_multiplier").notNull().default(1),
+  freeDeliveryApplied: boolean("free_delivery_applied").notNull().default(false),
+  referralCreditUsed: boolean("referral_credit_used").notNull().default(false),
   occasion: text("occasion"),
   persons: integer("persons"),
   budget: text("budget"),
@@ -277,6 +299,22 @@ export const reviewsTable = pgTable(
   }),
 );
 
+export const complaintsTable = pgTable("complaints", {
+  id: serial("id").primaryKey(),
+  orderId: integer("order_id").notNull().references(() => ordersTable.id),
+  reporterUserId: integer("reporter_user_id").notNull().references(() => usersTable.id),
+  chefProfileId: integer("chef_profile_id").references(() => chefProfilesTable.id),
+  courierUserId: integer("courier_user_id").references(() => usersTable.id),
+  target: complaintTargetEnum("target").notNull(),
+  category: text("category").notNull(),
+  details: text("details").notNull().default(""),
+  status: complaintStatusEnum("status").notNull().default("open"),
+  investigationNotes: text("investigation_notes").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
 export const pushSubscriptionsTable = pgTable("push_subscriptions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => usersTable.id),
@@ -353,6 +391,7 @@ export const insertCustomRequestSchema = createInsertSchema(customRequestsTable)
 export const insertMessageSchema = createInsertSchema(messagesTable).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notificationsTable).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviewsTable).omit({ id: true, createdAt: true });
+export const insertComplaintSchema = createInsertSchema(complaintsTable).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
 export const insertDeliveryJobSchema = createInsertSchema(deliveryJobsTable).omit({ id: true, createdAt: true, broadcastedAt: true, acceptedAt: true, pickedUpAt: true, deliveredAt: true });
 export const insertDeliveryOfferSchema = createInsertSchema(deliveryOffersTable).omit({ id: true, notifiedAt: true, respondedAt: true });
 export const insertDeliveryLocationUpdateSchema = createInsertSchema(deliveryLocationUpdatesTable).omit({ id: true, createdAt: true });
@@ -370,6 +409,7 @@ export type CustomRequest = typeof customRequestsTable.$inferSelect;
 export type Message = typeof messagesTable.$inferSelect;
 export type Notification = typeof notificationsTable.$inferSelect;
 export type Review = typeof reviewsTable.$inferSelect;
+export type Complaint = typeof complaintsTable.$inferSelect;
 export type DeliveryJob = typeof deliveryJobsTable.$inferSelect;
 export type DeliveryOffer = typeof deliveryOffersTable.$inferSelect;
 export type DeliveryLocationUpdate = typeof deliveryLocationUpdatesTable.$inferSelect;

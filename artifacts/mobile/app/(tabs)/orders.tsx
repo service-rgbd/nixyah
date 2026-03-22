@@ -406,7 +406,7 @@ function ClientHistoryCard({
         <View style={styles.historyCardMain}>
           <View style={styles.historyCardHeadlineRow}>
             <Text style={styles.historyCardTitle} numberOfLines={1}>{`${order.delivery ? "Livraison" : order.chefName}, ${orderTime}`}</Text>
-            <Text style={styles.historyCardAmount}>{`${Math.round(order.total).toLocaleString("fr-FR")}F`}</Text>
+            <Text style={styles.historyCardAmount}>{`${Math.round(order.totalWithDelivery ?? order.total).toLocaleString("fr-FR")}F`}</Text>
           </View>
           <Text style={[styles.historyCardMeta, status.label === "Annulée" && styles.historyDangerMeta]} numberOfLines={1}>
             {status.label === "Annulée" ? status.label : primaryAddress}
@@ -417,6 +417,11 @@ function ClientHistoryCard({
           {primaryDish ? (
             <Text style={styles.historyCardDishLine} numberOfLines={1}>{primaryDish.name}</Text>
           ) : null}
+          <Text style={styles.historyCardSubline} numberOfLines={1}>
+            {order.freeDeliveryApplied
+              ? "Livraison offerte"
+              : `Livraison ${Math.round(order.deliveryFee ?? 0).toLocaleString("fr-FR")}F`}
+          </Text>
         </View>
       </View>
 
@@ -1004,7 +1009,7 @@ export default function OrdersScreen() {
     }
   };
 
-  const submitIssue = async (order: Order, reason: string) => {
+  const submitIssue = async (order: Order, payload: { reason: string; target: "chef" | "courier" | "platform"; category: string }) => {
     if (!token) {
       router.push("/auth/login");
       return;
@@ -1015,7 +1020,7 @@ export default function OrdersScreen() {
       await apiFetch(`/orders/${order.id}/report-issue`, {
         method: "POST",
         token,
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify(payload),
       });
       Alert.alert("Signalement envoyé", "L'équipe concernée a été notifiée.");
     } catch (error) {
@@ -1027,9 +1032,11 @@ export default function OrdersScreen() {
 
   const handleReportIssue = (order: Order) => {
     Alert.alert("Signaler un problème", "Choisissez le motif principal.", [
-      { text: "Retard important", onPress: () => void submitIssue(order, "Retard important") },
-      { text: "Commande incomplète", onPress: () => void submitIssue(order, "Commande incomplète") },
-      { text: "Problème de livraison", onPress: () => void submitIssue(order, "Problème de livraison") },
+      { text: "Retard du livreur", onPress: () => void submitIssue(order, { reason: "Retard du livreur", target: "courier", category: "delay" }) },
+      { text: "Commande incomplète", onPress: () => void submitIssue(order, { reason: "Commande incomplète", target: "chef", category: "missing_items" }) },
+      { text: "Qualité / hygiène", onPress: () => void submitIssue(order, { reason: "Qualité / hygiène", target: "chef", category: "hygiene" }) },
+      { text: "Comportement livreur", onPress: () => void submitIssue(order, { reason: "Comportement livreur", target: "courier", category: "rude_behavior" }) },
+      { text: "Facturation", onPress: () => void submitIssue(order, { reason: "Facturation", target: "platform", category: "billing" }) },
       { text: "Annuler", style: "cancel" },
     ]);
   };

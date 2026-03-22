@@ -312,9 +312,11 @@ export default function SearchScreen() {
         })
         .sort(
           (a, b) =>
+            Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured)) ||
             Number(b.isOnline) - Number(a.isOnline) ||
             Number(b.isVerified) - Number(a.isVerified) ||
             b.rating - a.rating ||
+            Number(b.stars ?? 0) - Number(a.stars ?? 0) ||
             b.reviewCount - a.reviewCount
         ),
     [chefs, query, selectedFilter]

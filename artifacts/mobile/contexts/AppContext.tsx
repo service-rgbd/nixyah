@@ -32,6 +32,10 @@ export interface Chef {
   heroImageUrl?: string | null;
   rating: number;
   reviewCount: number;
+  stars?: number;
+  complaintCount?: number;
+  activeInvestigationCount?: number;
+  isFeatured?: boolean;
   priceRange: string;
   isVerified: boolean;
   isOnline: boolean;
@@ -88,6 +92,15 @@ export interface ChefStats {
     revenue: number;
   };
   reviews: number;
+  stars?: number;
+  complaintCount?: number;
+  activeInvestigations?: number;
+  isFeatured?: boolean;
+  featureThreshold?: number;
+  deliveryRevenue?: number;
+  promoOrders?: number;
+  referralOrders?: number;
+  complaintBreakdown?: Record<string, number>;
 }
 
 export interface Story {
@@ -128,6 +141,12 @@ export interface Order {
   chefName: string;
   dishes: { dish: Dish; quantity: number }[];
   total: number;
+  deliveryFee?: number;
+  totalWithDelivery?: number;
+  deliveryDistanceKm?: number | null;
+  deliveryDemandMultiplier?: number;
+  freeDeliveryApplied?: boolean;
+  referralCreditUsed?: boolean;
   status: "pending" | "accepted" | "preparing" | "ready" | "delivered";
   createdAt: string;
   cancelAvailableUntil?: string | null;
@@ -249,6 +268,8 @@ export interface AuthUser {
   location: string;
   coverColor: string;
   avatarUrl?: string | null;
+  referralCode?: string | null;
+  freeDeliveryCredits?: number;
   chefProfile?: {
     id: string;
     specialty: string;
@@ -257,6 +278,10 @@ export interface AuthUser {
     bio: string;
     rating: number;
     reviewCount: number;
+    stars?: number;
+    complaintCount?: number;
+    activeInvestigationCount?: number;
+    isFeatured?: boolean;
     priceRange: string;
     isVerified: boolean;
     isOnline: boolean;
@@ -271,6 +296,11 @@ export interface AuthUser {
     isVerified: boolean;
     rating?: number;
     reviewCount?: number;
+    stars?: number;
+    complaintCount?: number;
+    activeInvestigationCount?: number;
+    bonusEarnedAmount?: number;
+    bonusUnlockedAt?: string | null;
     currentLatitude?: number | null;
     currentLongitude?: number | null;
     lastLocationAt?: string | null;
@@ -349,6 +379,7 @@ export interface RegisterClientData {
   name: string;
   email?: string;
   phone?: string;
+  referralCode?: string;
   password: string;
   location: string;
   preferences?: string[];
@@ -358,6 +389,7 @@ export interface RegisterChefData {
   name: string;
   email?: string;
   phone?: string;
+  referralCode?: string;
   password: string;
   specialty: string;
   location: string;
@@ -372,6 +404,7 @@ export interface RegisterCourierData {
   name: string;
   email?: string;
   phone?: string;
+  referralCode?: string;
   password: string;
   location: string;
   zone?: string;
@@ -451,6 +484,10 @@ function mapApiChef(c: any): Chef {
     heroImageUrl,
     rating: c.rating ?? 5.0,
     reviewCount: c.reviewCount ?? 0,
+    stars: Number(c.stars ?? 0),
+    complaintCount: Number(c.complaintCount ?? 0),
+    activeInvestigationCount: Number(c.activeInvestigationCount ?? 0),
+    isFeatured: Boolean(c.isFeatured),
     priceRange: c.priceRange ?? "",
     isVerified: c.isVerified ?? false,
     isOnline: c.isOnline ?? true,
@@ -497,6 +534,12 @@ function mapApiOrder(order: any): Order {
         }))
       : [],
     total: Number(order.total ?? 0),
+    deliveryFee: Number(order.deliveryFee ?? 0),
+    totalWithDelivery: Number(order.totalWithDelivery ?? order.total ?? 0),
+    deliveryDistanceKm: order.deliveryDistanceKm != null ? Number(order.deliveryDistanceKm) : null,
+    deliveryDemandMultiplier: Number(order.deliveryDemandMultiplier ?? 1),
+    freeDeliveryApplied: Boolean(order.freeDeliveryApplied),
+    referralCreditUsed: Boolean(order.referralCreditUsed),
     status: order.status,
     createdAt: String(order.createdAt ?? new Date().toISOString()),
     cancelAvailableUntil: order.cancelAvailableUntil ? String(order.cancelAvailableUntil) : null,

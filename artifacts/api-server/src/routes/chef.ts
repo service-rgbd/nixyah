@@ -4,6 +4,7 @@ import {
   deliveryLocationUpdatesTable,
   dishesTable,
   chefProfilesTable,
+  complaintsTable,
   notificationsTable,
   orderItemsTable,
   ordersTable,
@@ -208,6 +209,10 @@ router.get("/:id/stats", requireChef, async (req: AuthRequest, res) => {
       .select()
       .from(reviewsTable)
       .where(eq(reviewsTable.chefProfileId, profileId));
+    const complaints = await db
+      .select()
+      .from(complaintsTable)
+      .where(eq(complaintsTable.chefProfileId, profileId));
 
     // Calculate stats
     const totalRevenue = totalOrders.reduce((sum, order) => sum + order.total, 0);
@@ -230,6 +235,13 @@ router.get("/:id/stats", requireChef, async (req: AuthRequest, res) => {
       ready: totalOrders.filter((o) => o.status === "ready").length,
       delivered: totalOrders.filter((o) => o.status === "delivered").length,
     };
+    const complaintBreakdown = complaints.reduce<Record<string, number>>((accumulator, complaint) => {
+      accumulator[complaint.category] = (accumulator[complaint.category] ?? 0) + 1;
+      return accumulator;
+    }, {});
+    const freeDeliveryOrders = totalOrders.filter((order) => order.freeDeliveryApplied).length;
+    const referralOrders = totalOrders.filter((order) => order.referralCreditUsed).length;
+    const deliveryRevenue = totalOrders.reduce((sum, order) => sum + Number(order.deliveryFee ?? 0), 0);
 
     return res.json({
       totalOrders: totalOrders.length,
@@ -244,6 +256,15 @@ router.get("/:id/stats", requireChef, async (req: AuthRequest, res) => {
         revenue: monthRevenue,
       },
       reviews: reviews.length,
+      stars: chefProfile[0].stars ?? 0,
+      complaintCount: complaints.length,
+      activeInvestigations: complaints.filter((complaint) => complaint.status === "open" || complaint.status === "investigating").length,
+      isFeatured: Boolean(chefProfile[0].isFeatured),
+      featureThreshold: 200,
+      deliveryRevenue,
+      promoOrders: freeDeliveryOrders,
+      referralOrders,
+      complaintBreakdown,
     });
   } catch (error) {
     console.error("Error fetching chef stats:", error);

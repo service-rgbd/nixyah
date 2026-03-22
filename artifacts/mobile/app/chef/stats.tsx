@@ -38,6 +38,15 @@ export default function StatsScreen() {
     breakdown: { pending: 0, accepted: 0, preparing: 0, ready: 0, delivered: 0 },
     thisMonth: { orders: 0, revenue: 0 },
     reviews: 0,
+    stars: 0,
+    complaintCount: 0,
+    activeInvestigations: 0,
+    isFeatured: false,
+    featureThreshold: 200,
+    deliveryRevenue: 0,
+    promoOrders: 0,
+    referralOrders: 0,
+    complaintBreakdown: {},
   };
 
   return (
@@ -73,8 +82,8 @@ export default function StatsScreen() {
                 </View>
                 <View style={styles.overviewMiniDivider} />
                 <View style={styles.overviewMiniItem}>
-                  <Text style={styles.overviewMiniValue}>{stats.reviews}</Text>
-                  <Text style={styles.overviewMiniLabel}>Avis</Text>
+                  <Text style={styles.overviewMiniValue}>{stats.stars ?? 0}</Text>
+                  <Text style={styles.overviewMiniLabel}>Étoiles</Text>
                 </View>
               </View>
             </Gradient>
@@ -103,6 +112,53 @@ export default function StatsScreen() {
                 <Text style={styles.statValue}>{stats.activeOrders}</Text>
                 <Text style={styles.statLabel}>En cours de service</Text>
               </Gradient>
+
+              <Gradient colors={["#DC2626", "#B91C1C"]} style={styles.statCard}>
+                <Feather name="alert-triangle" size={22} color="#fff" />
+                <Text style={styles.statValue}>{stats.activeInvestigations ?? 0}</Text>
+                <Text style={styles.statLabel}>Enquêtes ouvertes</Text>
+              </Gradient>
+
+              <Gradient colors={["#0F766E", "#115E59"]} style={styles.statCard}>
+                <Feather name="award" size={22} color="#fff" />
+                <Text style={styles.statValue}>{stats.isFeatured ? "Oui" : "Bientôt"}</Text>
+                <Text style={styles.statLabel}>Premier plan</Text>
+              </Gradient>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Réputation et litiges</Text>
+              <View style={styles.monthCard}>
+                <View style={styles.monthItem}>
+                  <View style={styles.monthIcon}>
+                    <Feather name="star" size={18} color={Colors.light.tint} />
+                  </View>
+                  <View style={styles.monthInfo}>
+                    <Text style={styles.monthLabel}>Étoiles cumulées</Text>
+                    <Text style={styles.monthValue}>{stats.stars ?? 0}</Text>
+                  </View>
+                </View>
+                <View style={styles.monthDivider} />
+                <View style={styles.monthItem}>
+                  <View style={styles.monthIcon}>
+                    <Feather name="alert-circle" size={18} color="#DC2626" />
+                  </View>
+                  <View style={styles.monthInfo}>
+                    <Text style={styles.monthLabel}>Réclamations</Text>
+                    <Text style={styles.monthValue}>{stats.complaintCount ?? 0}</Text>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.detailRow}>
+                <View style={styles.detailLeft}>
+                  <View style={[styles.detailDot, { backgroundColor: stats.isFeatured ? "#0F766E" : "#D97706" }]} />
+                  <Text style={styles.detailLabel}>
+                    {stats.isFeatured
+                      ? "Votre cuisine est déjà mise en premier plan"
+                      : `${Math.max(0, (stats.featureThreshold ?? 200) - (stats.stars ?? 0))} étoiles restantes avant mise en avant`}
+                  </Text>
+                </View>
+              </View>
             </View>
 
             <View style={styles.section}>
@@ -129,6 +185,54 @@ export default function StatsScreen() {
                 </View>
               </View>
             </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Livraison et avantages</Text>
+              <View style={styles.monthCard}>
+                <View style={styles.monthItem}>
+                  <View style={styles.monthIcon}>
+                    <Feather name="truck" size={18} color="#2563EB" />
+                  </View>
+                  <View style={styles.monthInfo}>
+                    <Text style={styles.monthLabel}>CA livraison</Text>
+                    <Text style={styles.monthValue}>{Number(stats.deliveryRevenue ?? 0).toLocaleString()} FCFA</Text>
+                  </View>
+                </View>
+                <View style={styles.monthDivider} />
+                <View style={styles.monthItem}>
+                  <View style={styles.monthIcon}>
+                    <Feather name="gift" size={18} color="#0F766E" />
+                  </View>
+                  <View style={styles.monthInfo}>
+                    <Text style={styles.monthLabel}>Livraisons offertes</Text>
+                    <Text style={styles.monthValue}>{stats.promoOrders ?? 0}</Text>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.detailRow}>
+                <View style={styles.detailLeft}>
+                  <View style={[styles.detailDot, { backgroundColor: "#8B5CF6" }]} />
+                  <Text style={styles.detailLabel}>{`${stats.referralOrders ?? 0} commande(s) ont utilisé un avantage parrainage.`}</Text>
+                </View>
+              </View>
+            </View>
+
+            {(stats.complaintBreakdown && Object.keys(stats.complaintBreakdown).length > 0) ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Motifs signalés</Text>
+                {Object.entries(stats.complaintBreakdown).map(([category, count]) => (
+                  <View key={category} style={styles.detailRow}>
+                    <View style={styles.detailLeft}>
+                      <View style={[styles.detailDot, { backgroundColor: "#DC2626" }]} />
+                      <Text style={styles.detailLabel}>{category.replace(/_/g, " ")}</Text>
+                    </View>
+                    <View style={styles.detailPill}>
+                      <Text style={styles.detailCount}>{count}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Flux des commandes</Text>

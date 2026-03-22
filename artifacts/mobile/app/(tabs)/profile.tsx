@@ -444,7 +444,7 @@ export default function ProfileScreen() {
                   <Text style={styles.chefHeroTitle}>{user.chefProfile?.specialty ?? "Votre cuisine"}</Text>
                 </View>
                 <View style={styles.verifiedBadge}>
-                  <Ionicons name="restaurant" size={14} color={Colors.light.tint} />
+                  <Ionicons name={user.chefProfile?.isFeatured ? "sparkles" : "restaurant"} size={14} color={Colors.light.tint} />
                   <Text style={styles.verifiedBadgeText}>{user.chefProfile?.isVerified ? "Vérifiée" : "En construction"}</Text>
                 </View>
               </View>
@@ -453,22 +453,37 @@ export default function ProfileScreen() {
                 {user.chefProfile?.bio || "Pilotez les commandes, le menu et la story du jour depuis des groupes d'actions plus clairs."}
               </Text>
 
+              <View style={styles.insightBanner}>
+                <Feather name={user.chefProfile?.isFeatured ? "award" : "bar-chart-2"} size={16} color={Colors.light.tint} />
+                <Text style={styles.insightBannerText}>
+                  {user.chefProfile?.isFeatured
+                    ? "Votre cuisine est mise en premier plan grâce à vos étoiles."
+                    : `${Math.max(0, 200 - (user.chefProfile?.stars ?? 0))} étoiles restantes pour passer en premier plan.`}
+                </Text>
+              </View>
+
               <View style={styles.chefMetricRow}>
                 <View style={styles.chefMetricCard}>
                   <Text style={styles.chefMetricValue}>{chefSummary.pendingOrders}</Text>
                   <Text style={styles.chefMetricLabel}>En attente</Text>
                 </View>
                 <View style={styles.chefMetricCard}>
-                  <Text style={styles.chefMetricValue}>{chefSummary.readyOrders}</Text>
-                  <Text style={styles.chefMetricLabel}>Prêtes</Text>
+                  <Text style={styles.chefMetricValue}>{user.chefProfile?.stars ?? 0}</Text>
+                  <Text style={styles.chefMetricLabel}>Étoiles</Text>
                 </View>
                 <View style={styles.chefMetricCard}>
-                  <Text style={styles.chefMetricValue}>{user.chefProfile?.reviewCount ?? 0}</Text>
-                  <Text style={styles.chefMetricLabel}>Avis</Text>
+                  <Text style={styles.chefMetricValue}>{user.chefProfile?.activeInvestigationCount ?? 0}</Text>
+                  <Text style={styles.chefMetricLabel}>Enquêtes</Text>
                 </View>
               </View>
             </View>
           ) : null}
+
+          <View style={styles.clientMetaCard}>
+            <Text style={styles.clientMetaLabel}>Parrainage</Text>
+            <Text style={styles.clientMetaValue}>{user.referralCode || "Code bientôt disponible"}</Text>
+            <Text style={styles.clientMetaSub}>{`${user.freeDeliveryCredits ?? 0} livraison(s) offerte(s) disponible(s)`}</Text>
+          </View>
 
           <View style={styles.statsRow}>
             <View style={styles.statItemCard}>
@@ -551,6 +566,30 @@ export default function ProfileScreen() {
                   <Text style={styles.courierInfoValue}>{courierVehicleLabel}</Text>
                   <Text style={styles.courierInfoLabel}>Véhicule</Text>
                 </View>
+              </View>
+
+              <View style={styles.courierInfoGrid}>
+                <View style={styles.courierInfoCard}>
+                  <Text style={styles.courierInfoValue}>{user.courierProfile?.stars ?? 0}</Text>
+                  <Text style={styles.courierInfoLabel}>Étoiles</Text>
+                </View>
+                <View style={styles.courierInfoCard}>
+                  <Text style={styles.courierInfoValue}>{user.courierProfile?.activeInvestigationCount ?? 0}</Text>
+                  <Text style={styles.courierInfoLabel}>Enquêtes</Text>
+                </View>
+                <View style={styles.courierInfoCard}>
+                  <Text style={styles.courierInfoValue}>{`${Math.round(user.courierProfile?.bonusEarnedAmount ?? 0).toLocaleString("fr-FR")} F`}</Text>
+                  <Text style={styles.courierInfoLabel}>Bonus cumulés</Text>
+                </View>
+              </View>
+
+              <View style={styles.insightBanner}>
+                <Feather name={(user.courierProfile?.bonusUnlockedAt ?? null) ? "award" : "truck"} size={16} color="#0F766E" />
+                <Text style={[styles.insightBannerText, { color: "#0F766E" }]}> 
+                  {(user.courierProfile?.bonusUnlockedAt ?? null)
+                    ? "Bonus de 10 000 XOF débloqué. Continuez pour rester parmi les meilleurs livreurs."
+                    : `${Math.max(0, 250 - (user.courierProfile?.stars ?? 0))} étoiles restantes avant le bonus de 10 000 XOF.`}
+                </Text>
               </View>
             </View>
 
@@ -769,6 +808,7 @@ const styles = StyleSheet.create({
   },
   clientMetaLabel: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12 },
   clientMetaValue: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 15, marginTop: 6 },
+  clientMetaSub: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12, marginTop: 6 },
   clientFavoritesRow: { gap: 12 },
   clientFavoriteChip: { width: 112, gap: 10, backgroundColor: "#F5F2EE", borderRadius: 22, padding: 12, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)" },
   clientFavoriteAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center" },
@@ -823,6 +863,8 @@ const styles = StyleSheet.create({
   chefMetricCard: { flex: 1, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12, gap: 4 },
   chefMetricValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   chefMetricLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  insightBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, backgroundColor: "rgba(196,82,42,0.08)", paddingHorizontal: 14, paddingVertical: 12 },
+  insightBannerText: { flex: 1, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_500Medium", color: Colors.light.tint },
   statsRow: { flexDirection: "row", gap: 10 },
   statItemCard: { flex: 1, backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 18, paddingVertical: 14, paddingHorizontal: 10, borderWidth: 1, borderColor: "rgba(90,63,49,0.06)" },
   statItem: { flex: 1, alignItems: "center", gap: 3 },

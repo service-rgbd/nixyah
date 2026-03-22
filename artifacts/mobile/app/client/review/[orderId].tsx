@@ -126,6 +126,10 @@ export default function ClientReviewScreen() {
 					<Text style={styles.subtitle}>
 						Donnez une note honnête sur le restaurant et la livraison pour améliorer l'expérience des prochaines commandes.
 					</Text>
+					<View style={styles.noteBanner}>
+						<Feather name="award" size={16} color="#F59E0B" />
+						<Text style={styles.noteBannerText}>Chaque étoile alimente la mise en avant des cuisinières et les bonus des livreurs.</Text>
+					</View>
 
 					{!bootstrapped && !order ? (
 						<View style={styles.loadingWrap}>
@@ -218,6 +222,8 @@ const styles = StyleSheet.create({
 	},
 	reviewedBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, backgroundColor: "rgba(134,239,172,0.12)", paddingHorizontal: 14, paddingVertical: 12 },
 	reviewedBannerText: { fontSize: 14, fontFamily: "Poppins_500Medium", color: "#D1FAE5" },
+	noteBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, backgroundColor: "rgba(245,158,11,0.12)", paddingHorizontal: 14, paddingVertical: 12 },
+	noteBannerText: { flex: 1, fontSize: 13, lineHeight: 19, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.82)" },
 	submitBtn: { marginTop: 8, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.18)", paddingVertical: 18, alignItems: "center", justifyContent: "center" },
 	submitBtnDisabled: { opacity: 0.7 },
 	submitBtnText: { fontSize: 18, fontFamily: "Poppins_700Bold", color: "#FFFFFF" },

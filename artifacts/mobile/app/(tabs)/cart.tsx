@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, ActivityIndicator, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
@@ -18,6 +18,7 @@ export default function CartScreen() {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [savedAddress, setSavedAddress] = useState<SavedDeliveryAddress | null>(null);
   const [cashAnswer, setCashAnswer] = useState<"yes" | "no" | null>(null);
+  const [pricingQuote, setPricingQuote] = useState<any>(null);
 
   const loadDeliveryAddress = useCallback(async () => {
     const address = await loadSavedDeliveryAddress(addressScope);
@@ -68,6 +69,33 @@ export default function CartScreen() {
     }
   }, [loadCart, token]);
 
+  const loadPricingQuote = useCallback(async () => {
+    if (!token || !user || user.type !== "client" || !(cart?.items?.length > 0)) {
+      setPricingQuote(null);
+      return;
+    }
+
+    try {
+      const quote = await apiFetch(`/cart/quote`, {
+        method: "POST",
+        token,
+        body: JSON.stringify({
+          deliveryAddress: savedAddress?.label?.trim() || user.location || null,
+          deliveryLatitude: savedAddress?.latitude ?? null,
+          deliveryLongitude: savedAddress?.longitude ?? null,
+        }),
+      });
+      setPricingQuote(quote);
+    } catch (error) {
+      console.warn("Failed to load cart pricing quote", error);
+      setPricingQuote(null);
+    }
+  }, [cart?.items?.length, savedAddress?.label, savedAddress?.latitude, savedAddress?.longitude, token, user]);
+
+  useEffect(() => {
+    void loadPricingQuote();
+  }, [loadPricingQuote]);
+
   const checkout = useCallback(async () => {
     if (!token) return;
     const resolvedDeliveryAddress = savedAddress?.label?.trim() || user?.location?.trim() || "";
@@ -103,7 +131,7 @@ export default function CartScreen() {
         }),
       });
       await Promise.all([loadCart(), refreshOrders()]);
-      Alert.alert("Commande creee", `Commande #${res.orderId} - Total: ${Number(res.total).toLocaleString()} FCFA`, [
+      Alert.alert("Commande creee", `Commande #${res.orderId} - Total a payer: ${Number(res.totalWithDelivery ?? res.total).toLocaleString()} FCFA`, [
         {
           text: "Voir mes commandes",
           onPress: () => router.push("/(tabs)/orders"),
@@ -123,6 +151,12 @@ export default function CartScreen() {
   const cartItems = cart?.items ?? [];
   const total = cartItems.reduce((sum: number, item: any) => sum + Number(item.price ?? 0) * Number(item.quantity ?? 0), 0);
   const totalItems = cartItems.reduce((sum: number, item: any) => sum + Number(item.quantity ?? 0), 0);
+  const totalWithDelivery = Number(pricingQuote?.totalWithDelivery ?? total);
+  const freeDeliveryLabel = pricingQuote?.freeDeliveryReason === "promo"
+    ? "Offerte des 3 000 FCFA / 5 km"
+    : pricingQuote?.freeDeliveryReason === "referral"
+      ? "Offerte via parrainage"
+      : null;
   const deliveryLabel = savedAddress?.label ?? user?.location ?? "Aucune adresse enregistree";
 
   if (!user) return (
@@ -166,6 +200,12 @@ export default function CartScreen() {
               <Text style={styles.addressLinkText}>Modifier</Text>
             </Pressable>
           </View>
+          {typeof user?.freeDeliveryCredits === "number" && user.freeDeliveryCredits > 0 ? (
+            <View style={styles.creditPill}>
+              <Feather name="gift" size={14} color={Colors.light.tint} />
+              <Text style={styles.creditPillText}>{`${user.freeDeliveryCredits} livraison(s) offerte(s) disponible(s)`}</Text>
+            </View>
+          ) : null}
         </View>
 
         {cartItems.length > 0 ? (
@@ -220,16 +260,40 @@ export default function CartScreen() {
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Livraison</Text>
-              <Text style={styles.summaryHint}>Calculee apres attribution du livreur</Text>
+              <Text style={styles.summaryValue}>
+                {pricingQuote
+                  ? pricingQuote.deliveryFee > 0
+                    ? `${Number(pricingQuote.deliveryFee).toLocaleString()} FCFA`
+                    : "Offerte"
+                  : "Calcul..."}
+              </Text>
             </View>
+            {pricingQuote ? (
+              <>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Distance</Text>
+                  <Text style={styles.summaryHint}>{`${Number(pricingQuote.distanceKm ?? 0).toFixed(1)} km`}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Demande</Text>
+                  <Text style={styles.summaryHint}>{`x${Number(pricingQuote.demandMultiplier ?? 1).toFixed(2)}`}</Text>
+                </View>
+                {freeDeliveryLabel ? (
+                  <View style={styles.freeDeliveryBanner}>
+                    <Feather name="check-circle" size={14} color="#0F766E" />
+                    <Text style={styles.freeDeliveryBannerText}>{freeDeliveryLabel}</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 12, 16) }]}>
         <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>Total</Text>
-          <Text style={styles.totalValue}>{total.toLocaleString()} FCFA</Text>
+          <Text style={styles.totalLabel}>Total à payer</Text>
+          <Text style={styles.totalValue}>{totalWithDelivery.toLocaleString()} FCFA</Text>
         </View>
         <Pressable style={[styles.checkoutBtn, (!cartItems.length || isCheckingOut || !cashAnswer) && styles.checkoutBtnDisabled]} onPress={checkout} disabled={!cartItems.length || isCheckingOut || !cashAnswer}>
           <Text style={styles.checkoutText}>{isCheckingOut ? "Validation..." : "Valider la commande"}</Text>
@@ -257,6 +321,8 @@ const styles = StyleSheet.create({
   addressMeta: { marginTop: 4, color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular" },
   addressLinkBtn: { paddingVertical: 6 },
   addressLinkText: { color: Colors.light.tint, fontFamily: "Poppins_600SemiBold" },
+  creditPill: { marginTop: 12, flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 999, backgroundColor: "rgba(196,82,42,0.08)", paddingHorizontal: 12, paddingVertical: 9 },
+  creditPillText: { color: Colors.light.tint, fontFamily: "Poppins_600SemiBold", fontSize: 12 },
   cashChoiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 },
   cashChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.backgroundSecondary },
   cashChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
@@ -275,6 +341,8 @@ const styles = StyleSheet.create({
   summaryLabel: { color: Colors.light.textSecondary, fontFamily: "Poppins_500Medium" },
   summaryValue: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold" },
   summaryHint: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", maxWidth: 180, textAlign: "right" },
+  freeDeliveryBanner: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 12, backgroundColor: "rgba(15,118,110,0.10)", paddingHorizontal: 12, paddingVertical: 10 },
+  freeDeliveryBannerText: { color: "#0F766E", fontFamily: "Poppins_500Medium", flex: 1 },
   footer: { padding: 16, borderTopWidth: 1, borderTopColor: Colors.light.divider, backgroundColor: Colors.light.card },
   totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   totalLabel: { fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
