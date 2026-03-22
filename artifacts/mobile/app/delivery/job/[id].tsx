@@ -37,6 +37,8 @@ type DeliveryJobDetail = {
   createdAt?: string | null;
   acceptedAt?: string | null;
   deliveredAt?: string | null;
+  client?: { id: string; name: string; phone?: string | null } | null;
+  chef?: { id: string; name: string; phone?: string | null } | null;
   courier?: { id: string; name: string; phone?: string | null } | null;
   latestLocation?: {
     latitude: number;
@@ -501,6 +503,19 @@ export default function DeliveryJobScreen() {
     }
   };
 
+  const callPhoneNumber = async (phone?: string | null, contactLabel?: string) => {
+    if (!phone) {
+      Alert.alert("Numéro indisponible", `Aucun numéro de téléphone n'est disponible pour ${contactLabel ?? "ce contact"}.`);
+      return;
+    }
+
+    try {
+      await Linking.openURL(`tel:${phone}`);
+    } catch {
+      Alert.alert("Appel indisponible", "Impossible d'ouvrir l'application téléphone.");
+    }
+  };
+
   const handleAction = async (action: "pickup" | "complete") => {
     if (!token || !job) return;
     setActionLoading(true);
@@ -709,6 +724,33 @@ export default function DeliveryJobScreen() {
             <Text style={styles.infoPrimaryText}>{job?.courier?.name ?? job?.clientName ?? "Mission"}</Text>
             <Text style={styles.infoSecondaryText}>{isCourier ? "Livreur" : job?.courier ? "Coursier" : "Affectation en attente"}</Text>
           </View>
+
+          {isCourier && job ? (
+            <View style={styles.contactCard}>
+              <View style={styles.contactHeaderRow}>
+                <View style={styles.contactTitleBlock}>
+                  <Text style={styles.contactEyebrow}>Cliente</Text>
+                  <Text style={styles.contactName}>{job.client?.name ?? job.clientName}</Text>
+                </View>
+                <Pressable
+                  style={[styles.contactCallBtn, !job.client?.phone && styles.contactCallBtnDisabled]}
+                  onPress={() => callPhoneNumber(job.client?.phone, job.client?.name ?? job.clientName)}
+                  disabled={!job.client?.phone}
+                >
+                  <Feather name="phone-call" size={16} color="#fff" />
+                  <Text style={styles.contactCallBtnText}>Appeler</Text>
+                </Pressable>
+              </View>
+              <View style={styles.contactInfoRow}>
+                <Feather name="phone" size={16} color={Colors.light.textSecondary} />
+                <Text style={styles.contactInfoText}>{job.client?.phone ?? "Numéro non disponible"}</Text>
+              </View>
+              <View style={styles.contactInfoRow}>
+                <Feather name="map-pin" size={16} color={Colors.light.textSecondary} />
+                <Text style={styles.contactInfoText}>{job.deliveryAddress}</Text>
+              </View>
+            </View>
+          ) : null}
 
           <View style={styles.sectionTitleBlock}>
             <Text style={styles.sectionHeading}>Prix</Text>
@@ -1032,6 +1074,66 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontFamily: "Poppins_400Regular",
     color: "#8C827B",
+  },
+  contactCard: {
+    marginHorizontal: 18,
+    marginBottom: 18,
+    backgroundColor: Colors.light.card,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    padding: 16,
+    gap: 12,
+  },
+  contactHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  contactTitleBlock: {
+    flex: 1,
+  },
+  contactEyebrow: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.textTertiary,
+    textTransform: "uppercase",
+  },
+  contactName: {
+    marginTop: 4,
+    fontSize: 18,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+  },
+  contactCallBtn: {
+    minHeight: 42,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    backgroundColor: "#0F766E",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  contactCallBtnDisabled: {
+    opacity: 0.45,
+  },
+  contactCallBtnText: {
+    color: "#fff",
+    fontFamily: "Poppins_600SemiBold",
+  },
+  contactInfoRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  contactInfoText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.text,
   },
   priceCard: {
     marginHorizontal: 18,

@@ -6,6 +6,7 @@ import {
   deliveryJobsTable,
   deliveryLocationUpdatesTable,
   deliveryOffersTable,
+  notificationsTable,
   ordersTable,
   usersTable,
 } from "@workspace/db/schema";
@@ -16,9 +17,9 @@ import { requireAuth, requireChef, requireClient, requireCourier, type AuthReque
 
 const router = express.Router();
 
-const BROADCAST_RADIUS_STEPS_KM = [5, 10, 15, 20] as const;
-const BROADCAST_STEP_DURATION_MS = 5 * 60 * 1000;
-const BROADCAST_WINDOW_MS = 20 * 60 * 1000;
+const BROADCAST_ETA_STEPS_MINUTES = [10, 20] as const;
+const BROADCAST_STEP_DURATION_MS = 1 * 60 * 1000;
+const BROADCAST_WINDOW_MS = BROADCAST_ETA_STEPS_MINUTES.length * BROADCAST_STEP_DURATION_MS;
 
 type MapPoint = {
   latitude: number;
@@ -47,6 +48,26 @@ function getDistanceKm(from: MapPoint, to: MapPoint): number {
   return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function getCourierSpeedKmPerHour(vehicleType?: string | null): number {
+  const normalizedType = String(vehicleType ?? "").trim().toLowerCase();
+
+  if (normalizedType.includes("velo") || normalizedType.includes("vélo")) {
+    return 16;
+  }
+
+  if (normalizedType.includes("voiture") || normalizedType.includes("car")) {
+    return 24;
+  }
+
+  return 28;
+}
+
+function getTravelMinutes(from: MapPoint, to: MapPoint, vehicleType?: string | null): number {
+  const speedKmPerHour = getCourierSpeedKmPerHour(vehicleType);
+  const distanceKm = getDistanceKm(from, to);
+  return Math.max(1, Math.round((distanceKm / speedKmPerHour) * 60));
+}
+
 function getBroadcastAgeMs(broadcastedAt: Date, now = new Date()): number {
   return Math.max(0, now.getTime() - broadcastedAt.getTime());
 }
@@ -55,14 +76,14 @@ function isBroadcastExpired(broadcastedAt: Date, now = new Date()): boolean {
   return getBroadcastAgeMs(broadcastedAt, now) >= BROADCAST_WINDOW_MS;
 }
 
-function getBroadcastRadiusKm(broadcastedAt: Date, now = new Date()): number {
+function getBroadcastMaxEtaMinutes(broadcastedAt: Date, now = new Date()): number {
   const ageMs = getBroadcastAgeMs(broadcastedAt, now);
   const stepIndex = Math.min(
-    BROADCAST_RADIUS_STEPS_KM.length - 1,
+    BROADCAST_ETA_STEPS_MINUTES.length - 1,
     Math.floor(ageMs / BROADCAST_STEP_DURATION_MS),
   );
 
-  return BROADCAST_RADIUS_STEPS_KM[stepIndex];
+  return BROADCAST_ETA_STEPS_MINUTES[stepIndex];
 }
 
 function getBroadcastEndsAt(broadcastedAt: Date): Date {
@@ -104,10 +125,56 @@ async function notifyCouriersAboutDeliveryJob(jobId: number, courierUserIds: num
   });
 }
 
+async function notifyChefNoCourierAvailable(jobId: number) {
+  const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
+  if (!job || job.courierUserId) {
+    return;
+  }
+
+  const [chefProfile] = await db
+    .select()
+    .from(chefProfilesTable)
+    .where(eq(chefProfilesTable.id, job.chefProfileId))
+    .limit(1);
+  if (!chefProfile) {
+    return;
+  }
+
+  const [existingNotification] = await db
+    .select({ id: notificationsTable.id })
+    .from(notificationsTable)
+    .where(
+      and(
+        eq(notificationsTable.deliveryJobId, job.id),
+        eq(notificationsTable.userId, chefProfile.userId),
+        eq(notificationsTable.title, "Aucun livreur disponible pour le moment"),
+      ),
+    )
+    .limit(1);
+
+  if (existingNotification) {
+    return;
+  }
+
+  await notifyUsers({
+    userIds: [chefProfile.userId],
+    type: "system",
+    title: "Aucun livreur disponible pour le moment",
+    message: "Aucun livreur a proximite n'a accepte la mission. Vous pouvez relancer la recherche dans quelques instants.",
+    orderId: job.orderId,
+    deliveryJobId: job.id,
+    data: {
+      screen: "chef-orders",
+      orderId: String(job.orderId),
+      deliveryJobId: String(job.id),
+    },
+  });
+}
+
 async function syncDeliveryJobOffers(jobId: number) {
   const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
   if (!job || job.courierUserId || ["delivered", "cancelled"].includes(job.status)) {
-    return { radiusKm: 0, remainingMinutes: 0, newCourierIds: [] as number[] };
+    return { maxEtaMinutes: 0, remainingMinutes: 0, newCourierIds: [] as number[] };
   }
 
   const now = new Date();
@@ -117,10 +184,16 @@ async function syncDeliveryJobOffers(jobId: number) {
       .set({ status: "expired", respondedAt: now })
       .where(and(eq(deliveryOffersTable.deliveryJobId, job.id), eq(deliveryOffersTable.status, "pending")));
 
-    return { radiusKm: BROADCAST_RADIUS_STEPS_KM[BROADCAST_RADIUS_STEPS_KM.length - 1], remainingMinutes: 0, newCourierIds: [] as number[] };
+    await notifyChefNoCourierAvailable(job.id);
+
+    return {
+      maxEtaMinutes: BROADCAST_ETA_STEPS_MINUTES[BROADCAST_ETA_STEPS_MINUTES.length - 1],
+      remainingMinutes: 0,
+      newCourierIds: [] as number[],
+    };
   }
 
-  const radiusKm = getBroadcastRadiusKm(job.broadcastedAt, now);
+  const maxEtaMinutes = getBroadcastMaxEtaMinutes(job.broadcastedAt, now);
   const restaurantPoint = toPoint(job.restaurantLatitude, job.restaurantLongitude);
 
   const [existingOffers, couriers] = await Promise.all([
@@ -139,7 +212,7 @@ async function syncDeliveryJobOffers(jobId: number) {
       return true;
     }
 
-    return getDistanceKm(restaurantPoint, courierPoint) <= radiusKm;
+    return getTravelMinutes(restaurantPoint, courierPoint, courier.vehicleType) <= maxEtaMinutes;
   });
 
   if (newCouriers.length > 0) {
@@ -155,7 +228,7 @@ async function syncDeliveryJobOffers(jobId: number) {
   }
 
   return {
-    radiusKm,
+    maxEtaMinutes,
     remainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
     newCourierIds: newCouriers.map((courier) => courier.userId),
   };
@@ -177,9 +250,18 @@ async function syncOpenDeliveryBroadcasts() {
 }
 
 async function getDeliveryJobPayload(jobId: number) {
-  const [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
+  let [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
   if (!job) {
     return null;
+  }
+
+  if (!job.courierUserId && !["delivered", "cancelled"].includes(job.status)) {
+    await syncDeliveryJobOffers(job.id);
+    const [freshJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
+    if (!freshJob) {
+      return null;
+    }
+    job = freshJob;
   }
 
   const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, job.orderId)).limit(1);
@@ -224,7 +306,8 @@ async function getDeliveryJobPayload(jobId: number) {
     deliveryLongitude: job.deliveryLongitude,
     notes: job.notes,
     broadcastedAt: job.broadcastedAt.toISOString(),
-    broadcastRadiusKm: restaurantPoint ? getBroadcastRadiusKm(job.broadcastedAt, now) : null,
+    broadcastRadiusKm: restaurantPoint ? null : null,
+    broadcastEtaMinutes: restaurantPoint ? getBroadcastMaxEtaMinutes(job.broadcastedAt, now) : null,
     broadcastEndsAt: getBroadcastEndsAt(job.broadcastedAt).toISOString(),
     broadcastRemainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
     acceptedAt: job.acceptedAt?.toISOString() ?? null,
