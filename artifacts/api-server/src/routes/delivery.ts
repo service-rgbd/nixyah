@@ -70,6 +70,102 @@ function getTravelMinutes(from: MapPoint, to: MapPoint, vehicleType?: string | n
   return Math.max(1, Math.round((distanceKm / speedKmPerHour) * 60));
 }
 
+function formatEtaMessage(minutes: number) {
+  if (minutes <= 1) {
+    return "dans environ 1 minute";
+  }
+
+  if (minutes < 60) {
+    return `dans environ ${minutes} minutes`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder > 0 ? `dans environ ${hours} h ${remainder} min` : `dans environ ${hours} h`;
+}
+
+function getEstimatedArrival(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+function getDeliveryArrivalMetrics(params: {
+  job: typeof deliveryJobsTable.$inferSelect;
+  courierPoint?: MapPoint | null;
+  vehicleType?: string | null;
+  now?: Date;
+}) {
+  const now = params.now ?? new Date();
+  const restaurantPoint = toPoint(params.job.restaurantLatitude, params.job.restaurantLongitude);
+  const clientPoint = toPoint(params.job.deliveryLatitude, params.job.deliveryLongitude);
+  const courierPoint = params.courierPoint ?? null;
+
+  const courierToClientDistanceKm = courierPoint && clientPoint ? getDistanceKm(courierPoint, clientPoint) : null;
+  const courierToRestaurantMinutes = courierPoint && restaurantPoint
+    ? getTravelMinutes(courierPoint, restaurantPoint, params.vehicleType)
+    : null;
+  const restaurantToClientMinutes = restaurantPoint && clientPoint
+    ? getTravelMinutes(restaurantPoint, clientPoint, params.vehicleType)
+    : null;
+
+  let etaToClientMinutes: number | null = null;
+  if (["picked_up", "on_the_way"].includes(params.job.status) && courierPoint && clientPoint) {
+    etaToClientMinutes = getTravelMinutes(courierPoint, clientPoint, params.vehicleType);
+  } else if (params.job.status === "accepted" && restaurantToClientMinutes != null) {
+    etaToClientMinutes = (courierToRestaurantMinutes ?? 0) + restaurantToClientMinutes;
+  }
+
+  return {
+    courierToClientDistanceKm,
+    etaToClientMinutes,
+    estimatedArrivalAt: etaToClientMinutes != null ? getEstimatedArrival(now, etaToClientMinutes) : null,
+    almostArrived: etaToClientMinutes != null && etaToClientMinutes <= 2,
+    arrivedAtDestination: courierToClientDistanceKm != null && courierToClientDistanceKm <= 0.08,
+  };
+}
+
+async function hasExistingDeliveryNotification(userId: number, jobId: number, title: string) {
+  const [existingNotification] = await db
+    .select({ id: notificationsTable.id })
+    .from(notificationsTable)
+    .where(
+      and(
+        eq(notificationsTable.userId, userId),
+        eq(notificationsTable.deliveryJobId, jobId),
+        eq(notificationsTable.title, title),
+      ),
+    )
+    .limit(1);
+
+  return Boolean(existingNotification);
+}
+
+async function notifyClientDeliveryMilestone(params: {
+  userId: number;
+  job: typeof deliveryJobsTable.$inferSelect;
+  title: string;
+  message: string;
+  data?: Record<string, string>;
+}) {
+  if (await hasExistingDeliveryNotification(params.userId, params.job.id, params.title)) {
+    return;
+  }
+
+  await notifyUsers({
+    userIds: [params.userId],
+    type: "order",
+    title: params.title,
+    message: params.message,
+    orderId: params.job.orderId,
+    deliveryJobId: params.job.id,
+    data: {
+      screen: "delivery-tracking",
+      orderId: String(params.job.orderId),
+      deliveryJobId: String(params.job.id),
+      ...(params.data ?? {}),
+    },
+  });
+}
+
 function getBroadcastAgeMs(broadcastedAt: Date, now = new Date()): number {
   return Math.max(0, now.getTime() - broadcastedAt.getTime());
 }
@@ -319,6 +415,9 @@ async function getDeliveryJobPayload(jobId: number) {
   const [courierUser] = job.courierUserId
     ? await db.select().from(usersTable).where(eq(usersTable.id, job.courierUserId)).limit(1)
     : [];
+  const [courierProfile] = job.courierUserId
+    ? await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, job.courierUserId)).limit(1)
+    : [];
   const [latestLocation] = await db
     .select()
     .from(deliveryLocationUpdatesTable)
@@ -328,6 +427,16 @@ async function getDeliveryJobPayload(jobId: number) {
 
   const now = new Date();
   const restaurantPoint = toPoint(job.restaurantLatitude, job.restaurantLongitude);
+  const courierPoint = toPoint(
+    latestLocation?.latitude ?? courierProfile?.currentLatitude,
+    latestLocation?.longitude ?? courierProfile?.currentLongitude,
+  );
+  const arrivalMetrics = getDeliveryArrivalMetrics({
+    job,
+    courierPoint,
+    vehicleType: courierProfile?.vehicleType,
+    now,
+  });
   const canCancelSearch = canCancelDeliverySearch(job, now);
   const canRebroadcast = canRebroadcastDeliverySearch(job, now);
 
@@ -355,6 +464,11 @@ async function getDeliveryJobPayload(jobId: number) {
     broadcastRemainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
     canCancelSearch,
     canRebroadcast,
+    courierToClientDistanceKm: arrivalMetrics.courierToClientDistanceKm != null ? Number(arrivalMetrics.courierToClientDistanceKm.toFixed(2)) : null,
+    etaToClientMinutes: arrivalMetrics.etaToClientMinutes,
+    estimatedArrivalAt: arrivalMetrics.estimatedArrivalAt?.toISOString() ?? null,
+    almostArrived: arrivalMetrics.almostArrived,
+    arrivedAtDestination: arrivalMetrics.arrivedAtDestination,
     acceptedAt: job.acceptedAt?.toISOString() ?? null,
     pickedUpAt: job.pickedUpAt?.toISOString() ?? null,
     deliveredAt: job.deliveredAt?.toISOString() ?? null,
@@ -886,13 +1000,24 @@ router.post("/delivery/jobs/:jobId/pickup", requireCourier, async (req: AuthRequ
     const [chefUser] = chefProfile
       ? await db.select().from(usersTable).where(eq(usersTable.id, chefProfile.userId)).limit(1)
       : [];
+    const [courierProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, req.userId!)).limit(1);
+    const courierPoint = toPoint(courierProfile?.currentLatitude, courierProfile?.currentLongitude);
+    const arrivalMetrics = getDeliveryArrivalMetrics({ job, courierPoint, vehicleType: courierProfile?.vehicleType });
+    const etaSnippet = arrivalMetrics.etaToClientMinutes != null
+      ? ` Livraison estimée ${formatEtaMessage(arrivalMetrics.etaToClientMinutes)}.`
+      : "";
     await notifyUsers({
       userIds: [job.clientId, chefUser?.id].filter((value): value is number => typeof value === "number"),
       type: "order",
       title: "Commande recuperee",
-      message: "Le livreur a recupere la commande au restaurant.",
+      message: `Le livreur a recupere la commande et se dirige vers votre destination.${etaSnippet}`,
       orderId: job.orderId,
       deliveryJobId: job.id,
+      data: {
+        screen: "delivery-tracking",
+        orderId: String(job.orderId),
+        deliveryJobId: String(job.id),
+      },
     });
 
     return res.json({ job: await getDeliveryJobPayload(job.id) });
@@ -944,6 +1069,13 @@ router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRe
       })
       .where(eq(courierProfilesTable.userId, req.userId!));
 
+    const [courierProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, req.userId!)).limit(1);
+    const arrivalMetrics = getDeliveryArrivalMetrics({
+      job,
+      courierPoint: { latitude, longitude },
+      vehicleType: courierProfile?.vehicleType,
+    });
+
     if (job.status === "picked_up") {
       await db.update(deliveryJobsTable).set({ status: "on_the_way" }).where(eq(deliveryJobsTable.id, job.id));
 
@@ -951,11 +1083,14 @@ router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRe
       const [chefUser] = chefProfile
         ? await db.select().from(usersTable).where(eq(usersTable.id, chefProfile.userId)).limit(1)
         : [];
+      const etaSnippet = arrivalMetrics.etaToClientMinutes != null
+        ? ` Arrivée estimée ${formatEtaMessage(arrivalMetrics.etaToClientMinutes)}.`
+        : "";
       await notifyUsers({
         userIds: [job.clientId, chefUser?.id].filter((value): value is number => typeof value === "number"),
         type: "order",
         title: "Commande en route",
-        message: "Le livreur est maintenant en route vers le client.",
+        message: `Le livreur est maintenant en route vers votre destination.${etaSnippet}`,
         orderId: job.orderId,
         deliveryJobId: job.id,
         data: {
@@ -964,6 +1099,24 @@ router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRe
           deliveryJobId: String(job.id),
         },
       });
+    }
+
+    if (["picked_up", "on_the_way"].includes(job.status)) {
+      if (arrivalMetrics.arrivedAtDestination) {
+        await notifyClientDeliveryMilestone({
+          userId: job.clientId,
+          job,
+          title: "Livreur arrivé",
+          message: "Votre livreur est arrivé devant votre destination. Vous pouvez le joindre si besoin.",
+        });
+      } else if (arrivalMetrics.almostArrived) {
+        await notifyClientDeliveryMilestone({
+          userId: job.clientId,
+          job,
+          title: "Livreur presque arrivé",
+          message: "Votre livreur est presque à votre porte, à environ 2 minutes de votre destination.",
+        });
+      }
     }
 
     return res.json({ ok: true });

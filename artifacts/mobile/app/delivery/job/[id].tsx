@@ -36,6 +36,11 @@ type DeliveryJobDetail = {
   deliveryLongitude?: number | null;
   notes?: string | null;
   orderTotal?: number | null;
+  courierToClientDistanceKm?: number | null;
+  etaToClientMinutes?: number | null;
+  estimatedArrivalAt?: string | null;
+  almostArrived?: boolean;
+  arrivedAtDestination?: boolean;
   createdAt?: string | null;
   acceptedAt?: string | null;
   deliveredAt?: string | null;
@@ -184,6 +189,17 @@ function formatEta(distanceKm: number | null, speedKmPerHour: number): string | 
 function formatJobClock(value?: string | null) {
   if (!value) {
     return "--:--";
+  }
+
+  return new Date(value).toLocaleTimeString("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatArrivalWindow(value?: string | null) {
+  if (!value) {
+    return "Calcul en cours";
   }
 
   return new Date(value).toLocaleTimeString("fr-FR", {
@@ -550,6 +566,13 @@ export default function DeliveryJobScreen() {
 
   const jobTimeLabel = formatJobClock(job?.acceptedAt ?? job?.createdAt ?? job?.deliveredAt);
   const statusMeta = getJobStatusMeta(job?.status);
+  const clientArrivalTone = job?.arrivedAtDestination
+    ? { title: "Le livreur est arrivé", text: "Votre commande est devant votre destination. Vous pouvez appeler le livreur si nécessaire.", color: "#0F766E", background: "rgba(15,118,110,0.10)" }
+    : job?.almostArrived
+      ? { title: "Le livreur est presque à votre porte", text: "Plus que quelques instants avant la remise de votre commande.", color: "#B45309", background: "rgba(217,119,6,0.12)" }
+      : job?.estimatedArrivalAt
+        ? { title: `Arrivée estimée à ${formatArrivalWindow(job.estimatedArrivalAt)}`, text: job.etaToClientMinutes != null ? `Le livreur devrait arriver dans environ ${job.etaToClientMinutes} minute(s).` : "Le trajet est en cours de calcul.", color: Colors.light.tint, background: "rgba(37,99,235,0.10)" }
+        : null;
 
   return (
     <View style={styles.screen}>
@@ -697,6 +720,21 @@ export default function DeliveryJobScreen() {
             </View>
           ) : null}
 
+          {isClient && clientArrivalTone ? (
+            <View style={[styles.clientArrivalCard, { backgroundColor: clientArrivalTone.background }]}> 
+              <View style={[styles.clientArrivalIconWrap, { backgroundColor: `${clientArrivalTone.color}18` }]}> 
+                <Feather name={job?.arrivedAtDestination ? "map-pin" : job?.almostArrived ? "clock" : "navigation"} size={16} color={clientArrivalTone.color} />
+              </View>
+              <View style={styles.clientArrivalBody}>
+                <Text style={[styles.clientArrivalTitle, { color: clientArrivalTone.color }]}>{clientArrivalTone.title}</Text>
+                <Text style={styles.clientArrivalText}>{clientArrivalTone.text}</Text>
+                {job?.courierToClientDistanceKm != null ? (
+                  <Text style={styles.clientArrivalMeta}>{`Distance restante: ${formatDistanceKm(job.courierToClientDistanceKm)}`}</Text>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
           {canClientEditLocation ? (
             <View style={styles.routeActionsCard}>
               <Text style={styles.routeActionsTitle}>Votre point exact</Text>
@@ -765,6 +803,35 @@ export default function DeliveryJobScreen() {
                 <Feather name="map-pin" size={16} color={Colors.light.textSecondary} />
                 <Text style={styles.contactInfoText}>{job.deliveryAddress}</Text>
               </View>
+            </View>
+          ) : null}
+
+          {isClient && job?.courier ? (
+            <View style={styles.contactCard}>
+              <View style={styles.contactHeaderRow}>
+                <View style={styles.contactTitleBlock}>
+                  <Text style={styles.contactEyebrow}>Livreur</Text>
+                  <Text style={styles.contactName}>{job.courier.name}</Text>
+                </View>
+                <Pressable
+                  style={[styles.contactCallBtn, !job.courier.phone && styles.contactCallBtnDisabled]}
+                  onPress={() => callPhoneNumber(job.courier?.phone, job.courier?.name)}
+                  disabled={!job.courier.phone}
+                >
+                  <Feather name="phone-call" size={16} color="#fff" />
+                  <Text style={styles.contactCallBtnText}>Appeler</Text>
+                </Pressable>
+              </View>
+              <View style={styles.contactInfoRow}>
+                <Feather name="phone" size={16} color={Colors.light.textSecondary} />
+                <Text style={styles.contactInfoText}>{job.courier.phone ?? "Numéro non disponible"}</Text>
+              </View>
+              {job.estimatedArrivalAt ? (
+                <View style={styles.contactInfoRow}>
+                  <Feather name="clock" size={16} color={Colors.light.textSecondary} />
+                  <Text style={styles.contactInfoText}>{`Arrivée estimée à ${formatArrivalWindow(job.estimatedArrivalAt)}`}</Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -977,6 +1044,43 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.cardBorder,
     marginLeft: 4,
     marginVertical: 6,
+  },
+  clientArrivalCard: {
+    marginHorizontal: 18,
+    marginBottom: 14,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    gap: 10,
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  clientArrivalIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clientArrivalBody: {
+    flex: 1,
+    gap: 3,
+  },
+  clientArrivalTitle: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+  },
+  clientArrivalText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#5E544E",
+  },
+  clientArrivalMeta: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+    marginTop: 2,
   },
   routeActionsCard: {
     marginHorizontal: 18,
