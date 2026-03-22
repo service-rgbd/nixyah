@@ -36,6 +36,8 @@ type DeliveryJobDetail = {
   deliveryLongitude?: number | null;
   notes?: string | null;
   orderTotal?: number | null;
+  routeDistanceKm?: number | null;
+  routeEtaMinutes?: number | null;
   courierToClientDistanceKm?: number | null;
   etaToClientMinutes?: number | null;
   estimatedArrivalAt?: string | null;
@@ -728,8 +730,8 @@ export default function DeliveryJobScreen() {
               <View style={styles.clientArrivalBody}>
                 <Text style={[styles.clientArrivalTitle, { color: clientArrivalTone.color }]}>{clientArrivalTone.title}</Text>
                 <Text style={styles.clientArrivalText}>{clientArrivalTone.text}</Text>
-                {job?.courierToClientDistanceKm != null ? (
-                  <Text style={styles.clientArrivalMeta}>{`Distance restante: ${formatDistanceKm(job.courierToClientDistanceKm)}`}</Text>
+                {job?.routeDistanceKm != null ? (
+                  <Text style={styles.clientArrivalMeta}>{`Distance de la course: ${formatDistanceKm(job.routeDistanceKm)}`}</Text>
                 ) : null}
               </View>
             </View>
@@ -830,6 +832,12 @@ export default function DeliveryJobScreen() {
                 <View style={styles.contactInfoRow}>
                   <Feather name="clock" size={16} color={Colors.light.textSecondary} />
                   <Text style={styles.contactInfoText}>{`Arrivée estimée à ${formatArrivalWindow(job.estimatedArrivalAt)}`}</Text>
+                </View>
+              ) : null}
+              {job.routeDistanceKm != null ? (
+                <View style={styles.contactInfoRow}>
+                  <Feather name="map-pin" size={16} color={Colors.light.textSecondary} />
+                  <Text style={styles.contactInfoText}>{`Distance cuisinière → client: ${formatDistanceKm(job.routeDistanceKm)}`}</Text>
                 </View>
               ) : null}
             </View>

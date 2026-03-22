@@ -98,6 +98,10 @@ function getDeliveryArrivalMetrics(params: {
   const restaurantPoint = toPoint(params.job.restaurantLatitude, params.job.restaurantLongitude);
   const clientPoint = toPoint(params.job.deliveryLatitude, params.job.deliveryLongitude);
   const courierPoint = params.courierPoint ?? null;
+  const routeDistanceKm = restaurantPoint && clientPoint ? getDistanceKm(restaurantPoint, clientPoint) : null;
+  const routeEtaMinutes = restaurantPoint && clientPoint
+    ? getTravelMinutes(restaurantPoint, clientPoint, params.vehicleType)
+    : null;
 
   const courierToClientDistanceKm = courierPoint && clientPoint ? getDistanceKm(courierPoint, clientPoint) : null;
   const courierToRestaurantMinutes = courierPoint && restaurantPoint
@@ -115,6 +119,8 @@ function getDeliveryArrivalMetrics(params: {
   }
 
   return {
+    routeDistanceKm,
+    routeEtaMinutes,
     courierToClientDistanceKm,
     etaToClientMinutes,
     estimatedArrivalAt: etaToClientMinutes != null ? getEstimatedArrival(now, etaToClientMinutes) : null,
@@ -464,6 +470,8 @@ async function getDeliveryJobPayload(jobId: number) {
     broadcastRemainingMinutes: getRemainingBroadcastMinutes(job.broadcastedAt, now),
     canCancelSearch,
     canRebroadcast,
+    routeDistanceKm: arrivalMetrics.routeDistanceKm != null ? Number(arrivalMetrics.routeDistanceKm.toFixed(2)) : null,
+    routeEtaMinutes: arrivalMetrics.routeEtaMinutes,
     courierToClientDistanceKm: arrivalMetrics.courierToClientDistanceKm != null ? Number(arrivalMetrics.courierToClientDistanceKm.toFixed(2)) : null,
     etaToClientMinutes: arrivalMetrics.etaToClientMinutes,
     estimatedArrivalAt: arrivalMetrics.estimatedArrivalAt?.toISOString() ?? null,
