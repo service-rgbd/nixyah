@@ -44,6 +44,7 @@ function normalizeDishImageUrls(input: unknown, fallbackImageUrl?: unknown): str
     .map((value) => value.trim())
     .filter(Boolean);
 
+
   if (typeof fallbackImageUrl === "string" && fallbackImageUrl.trim()) {
     collected.unshift(fallbackImageUrl.trim());
   }

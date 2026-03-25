@@ -19,3 +19,20 @@ services:
         value: mobile://
       - key: R2_PUBLIC_BASE_URL
         value: https://media.nixyah.com
+
+  - type: static
+    name: ivory-diaspora-admin-web
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @workspace/admin-web build
+    staticPublishPath: artifacts/admin-web/dist
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: BASE_PATH
+        value: /
+      - key: VITE_API_BASE_URL
+        value: https://api.nixyah.com/api
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
