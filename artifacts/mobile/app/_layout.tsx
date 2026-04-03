@@ -16,6 +16,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { apiFetch } from "@/constants/api";
+import { getPushNotificationsEnabled, registerExpoPushSubscription, isRemotePushSupportedInCurrentRuntime } from "@/constants/push-notifications";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -27,16 +28,72 @@ function PushNotificationsBootstrap() {
   const { token, user } = useApp();
 
   useEffect(() => {
-    const appOwnership = (Constants as any).appOwnership;
-    const executionEnvironment = (Constants as any).executionEnvironment;
-    const isExpoGo = appOwnership === "expo" || executionEnvironment === "storeClient";
+    const supportsRemotePushInCurrentRuntime = isRemotePushSupportedInCurrentRuntime();
 
-    if (!token || !user || Platform.OS === "web" || isExpoGo) {
+    if (!token || !user || Platform.OS === "web" || !supportsRemotePushInCurrentRuntime) {
       return;
     }
 
     let isMounted = true;
     let responseSubscription: { remove: () => void } | null = null;
+
+    const handleNotificationResponse = async (response: {
+      notification: {
+        request: {
+          content: {
+            data?: {
+              type?: string;
+              storyId?: string;
+              orderId?: string | number;
+              deliveryJobId?: string | number;
+              customRequestId?: string | number;
+              screen?: string;
+            };
+          };
+        };
+      };
+    } | null | undefined) => {
+      const data = response?.notification.request.content.data;
+
+      if (data?.type === "story-video" && data.storyId) {
+        const { router } = await import("expo-router");
+        router.push({ pathname: "/story/[id]", params: { id: data.storyId } });
+        return;
+      }
+
+      if (data?.screen === "courier/orders") {
+        const { router } = await import("expo-router");
+        router.push("/(tabs)/orders?mode=delivery");
+        return;
+      }
+
+      if (data?.screen === "chef-orders" || data?.screen === "orders") {
+        const { router } = await import("expo-router");
+        router.push("/(tabs)/orders");
+        return;
+      }
+
+      if (data?.screen === "client-review" && data.orderId) {
+        const { router } = await import("expo-router");
+        router.push({ pathname: "/client/review/[orderId]", params: { orderId: String(data.orderId) } });
+        return;
+      }
+
+      if ((data?.screen === "delivery-tracking" || data?.deliveryJobId) && data?.deliveryJobId) {
+        const { router } = await import("expo-router");
+        router.push({ pathname: "/delivery/job/[id]", params: { id: String(data.deliveryJobId) } });
+        return;
+      }
+
+      if (data?.orderId || data?.customRequestId) {
+        const { router } = await import("expo-router");
+        router.push("/(tabs)/orders");
+        return;
+      }
+
+      const { router } = await import("expo-router");
+      router.push("/(tabs)/stories");
+    };
 
     const registerForPushNotifications = async () => {
       try {
@@ -63,97 +120,22 @@ function PushNotificationsBootstrap() {
           });
         }
 
-        const currentPermissions = await Notifications.getPermissionsAsync();
-        let finalStatus = currentPermissions.status;
-
-        if (finalStatus !== "granted") {
-          const requested = await Notifications.requestPermissionsAsync();
-          finalStatus = requested.status;
-        }
-
-        if (finalStatus !== "granted") {
+        const notificationsEnabled = await getPushNotificationsEnabled();
+        if (!notificationsEnabled) {
           return;
         }
 
-        const projectId =
-          Constants.expoConfig?.extra?.eas?.projectId ??
-          Constants.easConfig?.projectId ??
-          undefined;
-
-        if (!projectId) {
-          return;
-        }
+        const lastResponse = await Notifications.getLastNotificationResponseAsync();
+        await handleNotificationResponse(lastResponse);
 
         responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-          const data = response.notification.request.content.data as {
-            type?: string;
-            storyId?: string;
-            orderId?: string | number;
-            deliveryJobId?: string | number;
-            customRequestId?: string | number;
-            screen?: string;
-          } | undefined;
-          if (data?.type === "story-video" && data.storyId) {
-            void import("expo-router").then(({ router }) => {
-              router.push({ pathname: "/story/[id]", params: { id: data.storyId! } });
-            });
-            return;
-          }
-
-          if (data?.screen === "courier/orders") {
-            void import("expo-router").then(({ router }) => {
-              router.push("/(tabs)/orders?mode=delivery");
-            });
-            return;
-          }
-
-          if (data?.screen === "chef-orders" || data?.screen === "orders") {
-            void import("expo-router").then(({ router }) => {
-              router.push("/(tabs)/orders");
-            });
-            return;
-          }
-
-          if (data?.screen === "client-review" && data.orderId) {
-            void import("expo-router").then(({ router }) => {
-              router.push({ pathname: "/client/review/[orderId]", params: { orderId: String(data.orderId) } });
-            });
-            return;
-          }
-
-          if ((data?.screen === "delivery-tracking" || data?.deliveryJobId) && data?.deliveryJobId) {
-            void import("expo-router").then(({ router }) => {
-              router.push({ pathname: "/delivery/job/[id]", params: { id: String(data.deliveryJobId) } });
-            });
-            return;
-          }
-
-          if (data?.orderId || data?.customRequestId) {
-            void import("expo-router").then(({ router }) => {
-              router.push("/(tabs)/orders");
-            });
-            return;
-          }
-
-          void import("expo-router").then(({ router }) => {
-            router.push("/(tabs)/stories");
-          });
+          void handleNotificationResponse(response);
         });
 
-        const expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-
-        if (!isMounted || !expoPushToken) {
+        const registration = await registerExpoPushSubscription(token);
+        if (!isMounted || !registration.ok) {
           return;
         }
-
-        await apiFetch("/push/subscribe", {
-          method: "POST",
-          token,
-          body: JSON.stringify({
-            platform: "expo",
-            token: expoPushToken,
-          }),
-        });
       } catch (error) {
         console.warn("push registration failed", error);
       }
@@ -248,6 +230,10 @@ function RootLayoutNav() {
       />
       <Stack.Screen
         name="help/general"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="settings/notifications"
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       

@@ -5,7 +5,6 @@ import {
   Animated,
   Easing,
   FlatList,
-  ImageBackground,
   Modal,
   Platform,
   Pressable,
@@ -22,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 
+import { CachedRemoteBackground, prefetchRemoteImages } from "@/components/CachedRemoteImage";
 import Colors from "@/constants/colors";
 import { Story, useApp, type StoryComment } from "@/contexts/AppContext";
 
@@ -293,7 +293,7 @@ function StoryItem({
       <VideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} />
     </View>
   ) : story.imageUrl ? (
-    <ImageBackground source={{ uri: story.imageUrl }} style={styles.mediaLayer} imageStyle={styles.imageFill} />
+    <CachedRemoteBackground uri={story.imageUrl} style={styles.mediaLayer} imageStyle={styles.imageFill} />
   ) : (
     <View
       style={[
@@ -478,6 +478,11 @@ export default function StoriesFeed() {
 
     setCurrentIndex((index) => Math.min(index, orderedStories.length - 1));
   }, [orderedStories.length]);
+
+  useEffect(() => {
+    const nearbyStories = orderedStories.slice(Math.max(0, currentIndex - 1), currentIndex + 4);
+    void prefetchRemoteImages(nearbyStories.map((story) => story.imageUrl));
+  }, [currentIndex, orderedStories]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 });
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<ViewToken<Story>> }) => {

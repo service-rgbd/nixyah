@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { CachedRemoteImage } from "@/components/CachedRemoteImage";
 import Colors from "@/constants/colors";
 import { uploadFile } from "@/constants/api";
 import { useApp } from "@/contexts/AppContext";
@@ -123,7 +124,7 @@ export default function ProfileScreen() {
     {
       title: "Relation client",
       items: [
-        { icon: "bell" as const, label: "Notifications", sub: "Commandes, retours et alertes", onPress: () => router.push("/chef/notifications") },
+        { icon: "bell" as const, label: "Notifications", sub: "Push, alertes et centre de notifications", onPress: () => router.push("/settings/notifications") },
         { icon: "help-circle" as const, label: "Aide", sub: "Questions frequentes et support", onPress: () => router.push("/(tabs)/help") },
       ],
     },
@@ -151,7 +152,7 @@ export default function ProfileScreen() {
     } else if (item.label === "Statistiques") {
       router.push("/chef/stats");
     } else if (item.label === "Notifications") {
-      router.push("/chef/notifications");
+      router.push("/settings/notifications");
     } else if (item.label === "Commandes reçues" || item.label === "Mes missions") {
       router.push("/(tabs)/orders");
     } else if (item.label === "Aide & Support") {
@@ -298,11 +299,11 @@ export default function ProfileScreen() {
     return (
       <View style={[styles.clientContainer, { paddingTop: topInset }]}> 
         <ScrollView contentContainerStyle={styles.clientContent} showsVerticalScrollIndicator={false}>
-          <Gradient colors={[Colors.light.tint, Colors.light.terracotta, Colors.light.tintDark]} style={styles.clientHeroCard}>
+          <View style={styles.clientHeroCard}>
             <View style={styles.clientHeroTopRow}>
               <View style={styles.clientHeroBadge}>
-                <Feather name="user" size={14} color="#fff" />
-                <Text style={styles.clientHeroBadgeText}>Compte</Text>
+                <Feather name="user" size={14} color={Colors.light.tint} />
+                <Text style={styles.clientHeroBadgeText}>Mon compte</Text>
               </View>
               <Pressable style={styles.clientHelpBtn} onPress={() => router.push("/(tabs)/help")}>
                 <Text style={styles.clientHelpText}>Aide</Text>
@@ -310,13 +311,20 @@ export default function ProfileScreen() {
             </View>
 
             <View style={styles.clientHeroIdentity}>
-              <View style={[styles.clientAvatar, { backgroundColor: avatarColor }]}> 
-                <Text style={styles.clientAvatarText}>{initials}</Text>
+              <View style={[styles.clientAvatar, { backgroundColor: avatarColor }]}>
+                {user.avatarUrl ? (
+                  <CachedRemoteImage uri={user.avatarUrl} style={styles.clientAvatarImage} contentFit="cover" />
+                ) : (
+                  <Text style={styles.clientAvatarText}>{initials}</Text>
+                )}
               </View>
               <View style={styles.clientIdentityTextWrap}>
                 <Text style={styles.clientName}>{user.name}</Text>
-                <Text style={styles.clientSubtitle}>Commandez, suivez et recevez simplement</Text>
-                <Text style={styles.clientHeroLocation}>📍 {user.location || "Abidjan"}</Text>
+                <Text style={styles.clientSubtitle}>{user.email ?? user.phone ?? "Compte Nixyah"}</Text>
+                <View style={styles.clientLocationRow}>
+                  <Feather name="map-pin" size={12} color={Colors.light.textTertiary} />
+                  <Text style={styles.clientHeroLocation}>{user.location || "Abidjan"}</Text>
+                </View>
               </View>
             </View>
 
@@ -330,8 +338,13 @@ export default function ProfileScreen() {
                 <Text style={styles.clientMiniStatValue}>{favorites.length}</Text>
                 <Text style={styles.clientMiniStatLabel}>Favoris</Text>
               </View>
+              <View style={styles.clientMiniStatDivider} />
+              <View style={styles.clientMiniStatItem}>
+                <Text style={styles.clientMiniStatValue}>{user.freeDeliveryCredits ?? 0}</Text>
+                <Text style={styles.clientMiniStatLabel}>Livraisons offertes</Text>
+              </View>
             </View>
-          </Gradient>
+          </View>
 
           {clientSections.map((section) => (
             <View key={section.title} style={styles.clientSectionBlock}>
@@ -385,9 +398,9 @@ export default function ProfileScreen() {
           ) : null}
 
           <Pressable style={styles.clientLogoutBtn} onPress={handleLogout} disabled={loggingOut}>
-            {loggingOut ? <ActivityIndicator color="#fff" size="small" /> : <>
-              <Feather name="log-out" size={18} color="#fff" />
-              <Text style={styles.clientLogoutText}>Confirmer la deconnexion</Text>
+            {loggingOut ? <ActivityIndicator color={Colors.light.textSecondary} size="small" /> : <>
+              <Feather name="log-out" size={16} color={Colors.light.textSecondary} />
+              <Text style={styles.clientLogoutText}>Déconnexion</Text>
             </>}
           </Pressable>
         </ScrollView>
@@ -410,7 +423,7 @@ export default function ProfileScreen() {
             {isChef ? (
               <Pressable style={styles.avatarWrapper} onPress={handleAvatarUpload} disabled={uploadingAvatar}>
                 {user.avatarUrl ? (
-                  <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
+                  <CachedRemoteImage uri={user.avatarUrl} style={styles.avatarImage} />
                 ) : (
                   <View style={[styles.avatar, { backgroundColor: avatarColor }]}> 
                     <Text style={styles.avatarText}>{initials}</Text>
@@ -422,7 +435,7 @@ export default function ProfileScreen() {
               </Pressable>
             ) : user.avatarUrl ? (
               <View style={styles.avatarWrapper}>
-                <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
+                <CachedRemoteImage uri={user.avatarUrl} style={styles.avatarImage} />
               </View>
             ) : (
               <View style={styles.avatarWrapper}>
@@ -673,7 +686,7 @@ export default function ProfileScreen() {
                   onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
                 >
                   {chef.avatarUrl ? (
-                    <Image source={{ uri: chef.avatarUrl }} style={styles.favoriteAvatarImage} />
+                    <CachedRemoteImage uri={chef.avatarUrl} style={styles.favoriteAvatarImage} />
                   ) : (
                     <View style={[styles.favoriteAvatar, { backgroundColor: chef.coverColor }]}> 
                       <Text style={styles.favoriteAvatarText}>
@@ -729,55 +742,59 @@ const styles = StyleSheet.create({
   clientHeroCard: {
     marginHorizontal: 20,
     marginTop: 10,
-    borderRadius: 30,
+    borderRadius: 24,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 18,
-    overflow: "hidden",
-    shadowColor: "rgba(42,28,18,0.12)",
-    shadowOffset: { width: 0, height: 12 },
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(104,83,69,0.08)",
+    shadowColor: "rgba(42,28,18,0.06)",
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 1,
-    shadowRadius: 24,
-    elevation: 5,
+    shadowRadius: 20,
+    elevation: 3,
   },
   clientHeroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   clientHeroBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "#FFF3E6",
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
   },
-  clientHeroBadgeText: { color: "#fff", fontFamily: "Poppins_600SemiBold", fontSize: 12 },
+  clientHeroBadgeText: { color: Colors.light.tint, fontFamily: "Poppins_600SemiBold", fontSize: 12 },
   clientHelpBtn: {
-    backgroundColor: "rgba(255,255,255,0.16)",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: Colors.light.backgroundSecondary,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderRadius: 999,
   },
-  clientHelpText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 16 },
+  clientHelpText: { color: Colors.light.textSecondary, fontFamily: "Poppins_600SemiBold", fontSize: 13 },
   clientHeroIdentity: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 18 },
-  clientAvatar: { width: 76, height: 76, borderRadius: 38, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "rgba(255,255,255,0.18)" },
+  clientAvatar: { width: 76, height: 76, borderRadius: 38, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   clientAvatarText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 28 },
+  clientAvatarImage: { width: 76, height: 76, borderRadius: 38 },
   clientIdentityTextWrap: { flex: 1 },
-  clientName: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 20 },
-  clientSubtitle: { color: "rgba(255,255,255,0.9)", fontFamily: "Poppins_400Regular", fontSize: 13, marginTop: 2 },
-  clientHeroLocation: { color: "rgba(255,255,255,0.76)", fontFamily: "Poppins_400Regular", fontSize: 12, marginTop: 6 },
+  clientName: { color: Colors.light.text, fontFamily: "Poppins_700Bold", fontSize: 20 },
+  clientSubtitle: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 13, marginTop: 2 },
+  clientLocationRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
+  clientHeroLocation: { color: Colors.light.textTertiary, fontFamily: "Poppins_400Regular", fontSize: 12 },
   clientMiniStats: {
     marginTop: 18,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.12)",
+    backgroundColor: Colors.light.backgroundSecondary,
     borderRadius: 18,
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
   clientMiniStatItem: { flex: 1, alignItems: "center", gap: 2 },
-  clientMiniStatDivider: { width: 1, height: 28, backgroundColor: "rgba(255,255,255,0.18)" },
-  clientMiniStatValue: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 18 },
-  clientMiniStatLabel: { color: "rgba(255,255,255,0.78)", fontFamily: "Poppins_400Regular", fontSize: 11 },
+  clientMiniStatDivider: { width: 1, height: 28, backgroundColor: Colors.light.divider },
+  clientMiniStatValue: { color: Colors.light.text, fontFamily: "Poppins_700Bold", fontSize: 18 },
+  clientMiniStatLabel: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 11 },
   clientSectionBlock: { marginTop: 20, paddingHorizontal: 20 },
   clientSectionHeading: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 18, marginBottom: 10 },
   clientSectionCard: {
@@ -826,8 +843,8 @@ const styles = StyleSheet.create({
   clientFavoriteAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center" },
   clientFavoriteAvatarText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 16 },
   clientFavoriteName: { color: Colors.light.text, fontFamily: "Poppins_400Regular", fontSize: 12 },
-  clientLogoutBtn: { marginTop: 20, marginHorizontal: 20, backgroundColor: Colors.light.tint, borderRadius: 16, minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
-  clientLogoutText: { color: "#FFFFFF", fontFamily: "Poppins_600SemiBold", fontSize: 15 },
+  clientLogoutBtn: { marginTop: 20, marginBottom: 12, marginHorizontal: 20, backgroundColor: "transparent", borderRadius: 16, minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderWidth: 1, borderColor: Colors.light.divider },
+  clientLogoutText: { color: Colors.light.textSecondary, fontFamily: "Poppins_500Medium", fontSize: 14 },
   guestScrollContent: { paddingBottom: Platform.OS === "web" ? 120 : 100 },
   guestContent: { padding: 16, alignItems: "center", gap: 12, width: "100%", maxWidth: 520, alignSelf: "center" },
   guestHero: { width: "100%", minHeight: 340, borderRadius: 28, overflow: "hidden", justifyContent: "flex-end", marginBottom: 12 },

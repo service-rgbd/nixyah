@@ -1,7 +1,7 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import * as Location from "expo-location";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { CachedRemoteImage } from "@/components/CachedRemoteImage";
 import Colors from "@/constants/colors";
 import { resolveCommerceVisual } from "@/constants/commerce-catalog";
 import { ApiError, apiFetch } from "@/constants/api";
@@ -549,7 +550,7 @@ function ClientHistoryCard({
     <View style={styles.historyCard}>
       <View style={styles.historyCardTopRow}>
         {primaryDishImage ? (
-          <Image source={{ uri: primaryDishImage }} style={styles.historyDishThumb} />
+          <CachedRemoteImage uri={primaryDishImage} style={styles.historyDishThumb} />
         ) : commerceImageSource ? (
           <Image source={commerceImageSource} style={styles.historyDishThumb} />
         ) : (
@@ -982,7 +983,7 @@ export default function OrdersScreen() {
   const courierLocationSyncedAtRef = useRef(0);
   const alertedMissionIdsRef = useRef<Set<string>>(new Set());
 
-  const syncCourierAvailabilityLocation = async () => {
+  const syncCourierAvailabilityLocation = useCallback(async () => {
     if (!token || !isCourier) {
       return;
     }
@@ -1012,9 +1013,9 @@ export default function OrdersScreen() {
     } catch (error) {
       console.warn("Failed to sync courier location:", error);
     }
-  };
+  }, [isCourier, token]);
 
-  const loadCourierJobs = async () => {
+  const loadCourierJobs = useCallback(async () => {
     if (!token) return;
     setLoadingCourier(true);
     try {
@@ -1043,7 +1044,7 @@ export default function OrdersScreen() {
     } finally {
       setLoadingCourier(false);
     }
-  };
+  }, [syncCourierAvailabilityLocation, token]);
 
   useEffect(() => {
     if (!isCourier || loadingCourier || availableJobs.length === 0) {
@@ -1076,6 +1077,59 @@ export default function OrdersScreen() {
     );
   }, [availableJobs, isCourier, loadingCourier]);
 
+  useEffect(() => {
+    if (!token || Platform.OS === "web") {
+      return undefined;
+    }
+
+    let isMounted = true;
+    let notificationSubscription: { remove: () => void } | null = null;
+
+    const bindNotificationRefresh = async () => {
+      try {
+        const Notifications = await import("expo-notifications");
+
+        if (!isMounted) {
+          return;
+        }
+
+        notificationSubscription = Notifications.addNotificationReceivedListener((event) => {
+          const data = event.request.content.data as {
+            orderId?: string | number;
+            customRequestId?: string | number;
+            deliveryJobId?: string | number;
+            screen?: string;
+          } | undefined;
+
+          if (isCourier && data?.screen === "courier/orders") {
+            void loadCourierJobs();
+            return;
+          }
+
+          if (isChef && (data?.screen === "chef-orders" || data?.screen === "delivery-tracking" || data?.orderId)) {
+            void fetchChefOrders();
+            void fetchChefCustomRequests();
+            return;
+          }
+
+          if (!isCourier && !isChef && (data?.screen === "orders" || data?.screen === "delivery-tracking" || data?.screen === "client-review" || data?.orderId || data?.customRequestId)) {
+            void refreshOrders();
+            void fetchCustomRequests();
+          }
+        });
+      } catch (error) {
+        console.warn("Failed to bind notification refresh listener:", error);
+      }
+    };
+
+    void bindNotificationRefresh();
+
+    return () => {
+      isMounted = false;
+      notificationSubscription?.remove();
+    };
+  }, [fetchChefCustomRequests, fetchChefOrders, fetchCustomRequests, isChef, isCourier, loadCourierJobs, refreshOrders, token]);
+
   useFocusEffect(
     React.useCallback(() => {
       if (!token) {
@@ -1102,7 +1156,7 @@ export default function OrdersScreen() {
         isCourier ? COURIER_REFRESH_INTERVAL_MS : isChef ? CHEF_REFRESH_INTERVAL_MS : CLIENT_REFRESH_INTERVAL_MS,
       );
       return () => clearInterval(interval);
-    }, [token, isCourier, isChef, refreshOrders, fetchCustomRequests, fetchChefOrders, fetchChefCustomRequests])
+    }, [token, isCourier, isChef, refreshOrders, fetchCustomRequests, fetchChefOrders, fetchChefCustomRequests, loadCourierJobs])
   );
 
   const acceptJob = async (jobId: string) => {

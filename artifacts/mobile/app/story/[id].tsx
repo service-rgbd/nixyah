@@ -6,12 +6,12 @@ import {
   StyleSheet,
   Pressable,
   Platform,
-  ImageBackground,
   ScrollView,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
+import { CachedRemoteBackground, prefetchRemoteImages } from "@/components/CachedRemoteImage";
 import { useApp, Story } from "@/contexts/AppContext";
 import { Feather } from "@expo/vector-icons";
 import { useVideoPlayer, VideoView } from "expo-video";
@@ -98,6 +98,13 @@ export default function StoryViewer() {
     videoPlayer.currentTime = 0;
     videoPlayer.play();
   }, [story?.id, story?.videoUrl, videoPlayer]);
+
+  useEffect(() => {
+    void prefetchRemoteImages([
+      story?.imageUrl,
+      ...previewStories.map((previewStory) => previewStory.imageUrl),
+    ]);
+  }, [previewStories, story?.imageUrl]);
 
   useEffect(() => {
     if (pendingStoryIndex == null) {
@@ -193,8 +200,8 @@ export default function StoryViewer() {
                 onPress={() => goToStory(stories.findIndex((item) => item.id === previewStory.id))}
               >
                 {previewStory.imageUrl ? (
-                  <ImageBackground
-                    source={{ uri: previewStory.imageUrl }}
+                  <CachedRemoteBackground
+                    uri={previewStory.imageUrl}
                     style={styles.previewDotMedia}
                     imageStyle={styles.previewDotRadius}
                   >
@@ -204,7 +211,7 @@ export default function StoryViewer() {
                         <Feather name="play" size={10} color="#fff" />
                       </View>
                     ) : null}
-                  </ImageBackground>
+                  </CachedRemoteBackground>
                 ) : (
                   <View
                     style={[
@@ -307,10 +314,10 @@ export default function StoryViewer() {
           {cardContent}
         </View>
       ) : story.imageUrl ? (
-        <ImageBackground source={{ uri: story.imageUrl }} style={styles.imageBg}>
+        <CachedRemoteBackground uri={story.imageUrl} style={styles.imageBg}>
           <View style={[styles.overlay, { backgroundColor: "rgba(26,18,10,0.34)" }]} />
           {cardContent}
-        </ImageBackground>
+        </CachedRemoteBackground>
       ) : (
         <View style={[styles.fallbackBg, { backgroundColor: bgColor }]}>
           <View style={[styles.overlay, { backgroundColor: "rgba(26,18,10,0.22)" }]} />

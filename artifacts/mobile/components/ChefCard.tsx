@@ -2,14 +2,13 @@ import { Feather, Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React from "react";
 import {
-  Image,
-  ImageBackground,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 
+import { CachedRemoteBackground, CachedRemoteImage } from "@/components/CachedRemoteImage";
 import Colors from "@/constants/colors";
 
 interface ChefCardProps {
@@ -52,7 +51,7 @@ export function ChefCard({
         <View style={styles.compactCard}>
           <View style={styles.compactAvatarWrapper}>
             {chef.avatarUrl ? (
-              <Image source={{ uri: chef.avatarUrl as string }} style={styles.compactAvatarImage} />
+              <CachedRemoteImage uri={chef.avatarUrl as string} style={styles.compactAvatarImage} />
             ) : (
               <View style={[styles.compactAvatar, { backgroundColor: chef.coverColor }]}> 
                 <Text style={styles.avatarInitials}>{initials}</Text>
@@ -75,7 +74,7 @@ export function ChefCard({
       <Pressable onPress={handlePress}>
         <View style={styles.featuredCard}>
           {heroImage ? (
-            <ImageBackground source={{ uri: heroImage }} style={styles.featuredBanner} imageStyle={styles.featuredBannerImage}>
+            <CachedRemoteBackground uri={heroImage} style={styles.featuredBanner} imageStyle={styles.featuredBannerImage}>
               <View style={styles.featuredOverlay}>
                 <View style={styles.bannerTopRow}>
                   {firstDish?.isPopular ? (
@@ -96,7 +95,7 @@ export function ChefCard({
 
                 <View style={styles.bannerBottomRow}>
                   {chef.avatarUrl ? (
-                    <Image source={{ uri: chef.avatarUrl as string }} style={styles.featuredAvatarImage} />
+                    <CachedRemoteImage uri={chef.avatarUrl as string} style={styles.featuredAvatarImage} />
                   ) : (
                     <View style={styles.featuredAvatarFallback}>
                       <Text style={styles.featuredAvatarText}>{initials}</Text>
@@ -110,11 +109,11 @@ export function ChefCard({
                   ) : null}
                 </View>
               </View>
-            </ImageBackground>
+            </CachedRemoteBackground>
           ) : (
             <View style={[styles.featuredBanner, { backgroundColor: chef.coverColor }]}> 
               {chef.avatarUrl ? (
-                <Image source={{ uri: chef.avatarUrl as string }} style={styles.featuredAvatarImage} />
+                <CachedRemoteImage uri={chef.avatarUrl as string} style={styles.featuredAvatarImage} />
               ) : (
                 <Text style={styles.featuredAvatarText}>{initials}</Text>
               )}
@@ -160,7 +159,7 @@ export function ChefCard({
     <Pressable onPress={handlePress}>
       <View style={styles.card}>
         {heroImage ? (
-          <ImageBackground source={{ uri: heroImage }} style={styles.cardBanner} imageStyle={styles.cardBannerImage}>
+          <CachedRemoteBackground uri={heroImage} style={styles.cardBanner} imageStyle={styles.cardBannerImage}>
             <View style={styles.cardBannerOverlay}>
               {firstDish?.isPopular ? (
                 <View style={styles.smallBadge}>
@@ -177,11 +176,11 @@ export function ChefCard({
                 </Pressable>
               ) : null}
             </View>
-          </ImageBackground>
+          </CachedRemoteBackground>
         ) : (
           <View style={[styles.cardBanner, { backgroundColor: chef.coverColor }]}> 
             {chef.avatarUrl ? (
-              <Image source={{ uri: chef.avatarUrl as string }} style={styles.cardAvatarImage} />
+              <CachedRemoteImage uri={chef.avatarUrl as string} style={styles.cardAvatarImage} />
             ) : (
               <Text style={styles.cardAvatarText}>{initials}</Text>
             )}

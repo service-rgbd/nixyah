@@ -22,6 +22,15 @@ export $(cat ../../.env | grep EXPO_PUBLIC)
 pnpm exec expo start
 ```
 
+### 3️⃣ **Admin Web Backoffice** (Vite + React)
+
+```bash
+# Terminal 3 — Start Admin Web
+cd /Users/macbookpro/Downloads/Ivory-Diaspora
+pnpm --filter @workspace/admin-web dev
+# Listens on http://localhost:4173
+```
+
 #### Test the app:
 - **Web browser**: Press `w` in Expo terminal → http://localhost:8081
 - **iOS Simulator**: Press `i` in Expo terminal
@@ -185,6 +194,7 @@ Ivory-Diaspora/
 | Lint backend | `tsc -p artifacts/api-server` |
 | Start backend | `pnpm --filter @workspace/api-server dev` |
 | Start mobile | `cd artifacts/mobile && pnpm exec expo start` |
+| Start admin web | `pnpm --filter @workspace/admin-web dev` |
 | Push DB migrations | `pnpm --filter @workspace/db push` |
 
 ---

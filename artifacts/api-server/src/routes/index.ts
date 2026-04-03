@@ -22,7 +22,7 @@ router.use(authRouter);
 router.use(chefsRouter);
 router.use("/chef", chefRouter);
 router.use(storiesRouter);
-router.use(pushRouter);
+router.use("/push", pushRouter);
 router.use(cartRouter);
 router.use(uploadsRouter);
 router.use(ordersRouter);

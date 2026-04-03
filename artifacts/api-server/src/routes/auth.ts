@@ -690,8 +690,8 @@ router.get("/auth/confirmation-status", async (req, res) => {
       return;
     }
 
-    const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
-    res.json({ confirmed: Boolean(user?.emailConfirmed) });
+    // Do not disclose whether an email exists or whether it is already confirmed.
+    res.json({ ok: true });
   } catch (err) {
     console.error("confirmation status error", err);
     res.status(500).json({ error: "InternalError" });

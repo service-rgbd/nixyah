@@ -415,6 +415,7 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
       message: `${clientUser?.name ?? "Une cliente"} a passé une nouvelle commande.${pricing.freeDeliveryApplied ? " Livraison offerte appliquée." : ""}`,
       orderId: order.id,
       data: {
+        screen: "orders",
         orderId: order.id,
         chefProfileId: cp.id,
         total,

@@ -19,6 +19,10 @@ interface NotifyUsersInput {
   orderId?: number | null;
   deliveryJobId?: number | null;
   data?: Record<string, unknown>;
+  pushOptions?: {
+    channelId?: string;
+    priority?: "default" | "normal" | "high";
+  };
 }
 
 type StoredPushSubscription = typeof pushSubscriptionsTable.$inferSelect;
@@ -29,6 +33,7 @@ async function sendExpoPushNotifications(subscriptions: StoredPushSubscription[]
   data?: Record<string, unknown>;
   orderId?: number | null;
   deliveryJobId?: number | null;
+  pushOptions?: NotifyUsersInput["pushOptions"];
 }) {
   if (subscriptions.length === 0) {
     return [] as Array<{ endpoint: string; status: string }>;
@@ -37,6 +42,8 @@ async function sendExpoPushNotifications(subscriptions: StoredPushSubscription[]
   const messages = subscriptions.map((subscription) => ({
     to: subscription.endpoint,
     sound: "default",
+    channelId: payload.pushOptions?.channelId,
+    priority: payload.pushOptions?.priority,
     title: payload.title,
     body: payload.message,
     data: {
@@ -73,6 +80,7 @@ export async function notifyUsers({
   orderId = null,
   deliveryJobId = null,
   data,
+  pushOptions,
 }: NotifyUsersInput) {
   const uniqueUserIds = Array.from(new Set(userIds.filter((value) => Number.isInteger(value) && value > 0)));
   if (uniqueUserIds.length === 0) {
@@ -109,6 +117,7 @@ export async function notifyUsers({
       data,
       orderId,
       deliveryJobId,
+      pushOptions,
     });
     results.push(...expoResults);
   }

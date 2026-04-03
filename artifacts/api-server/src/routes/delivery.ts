@@ -230,6 +230,10 @@ async function notifyCouriersAboutDeliveryJob(jobId: number, courierUserIds: num
     message: `${chefUser?.name ?? job.restaurantName} a une commande prete pour ${clientUser?.name ?? job.clientName}.`,
     orderId: job.orderId,
     deliveryJobId: job.id,
+    pushOptions: {
+      channelId: "default",
+      priority: "high",
+    },
     data: {
       screen: "courier/orders",
       deliveryJobId: String(job.id),

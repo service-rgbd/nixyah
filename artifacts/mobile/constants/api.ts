@@ -7,8 +7,19 @@ export class ApiError extends Error {
   body?: any;
 }
 
-const EXPO_PUBLIC_API_URL = process.env.EXPO_PUBLIC_API_URL;
 const DEFAULT_PRODUCTION_API_URL = "https://api.nixyah.com/api";
+
+function readPublicEnv(name: string): string | null {
+  const processEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  const fromProcess = processEnv?.[name];
+  if (typeof fromProcess === "string" && fromProcess.trim()) {
+    return fromProcess;
+  }
+
+  const extra = ((Constants as any).expoConfig?.extra ?? (Constants as any).manifest?.extra ?? {}) as Record<string, unknown>;
+  const fromExtra = extra[name];
+  return typeof fromExtra === "string" && fromExtra.trim() ? fromExtra : null;
+}
 
 function normalizeApiBaseUrl(value?: string | null): string | null {
   if (typeof value !== "string") return null;
@@ -52,8 +63,8 @@ function hostFromExpoConstants(): string | null {
 }
 
 const API_BASE_URL = (() => {
-  const explicitApiUrl = normalizeApiBaseUrl(EXPO_PUBLIC_API_URL);
-  const allowLocalApi = process.env.EXPO_PUBLIC_USE_LOCAL_API === "1";
+  const explicitApiUrl = normalizeApiBaseUrl(readPublicEnv("EXPO_PUBLIC_API_URL"));
+  const allowLocalApi = readPublicEnv("EXPO_PUBLIC_USE_LOCAL_API") === "1";
 
   if (explicitApiUrl) {
     if (Platform.OS !== "web" && isLocalApiUrl(explicitApiUrl) && !allowLocalApi) {
@@ -61,13 +72,12 @@ const API_BASE_URL = (() => {
     }
     return explicitApiUrl;
   }
-  if (Platform.OS === "web") return "/api";
-
-  const envDomain = process.env.EXPO_PUBLIC_DOMAIN;
+  const envDomain = readPublicEnv("EXPO_PUBLIC_DOMAIN");
   if (envDomain && envDomain !== "localhost" && allowLocalApi) return `http://${envDomain}:3333/api`;
 
   const constantHost = hostFromExpoConstants();
   if (constantHost && allowLocalApi) return `http://${constantHost}:3333/api`;
+  if (allowLocalApi) return "http://127.0.0.1:3333/api";
 
   return DEFAULT_PRODUCTION_API_URL;
 })();

@@ -35,6 +35,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "8d45b27c-1dd3-47b7-b34c-46c7eb7d0303"
+      }
+    },
+    "owner": "vini2427"
   }
 }

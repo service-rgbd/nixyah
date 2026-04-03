@@ -1,11 +1,11 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useMemo, useState } from "react";
+import * as Location from "expo-location";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
   ImageSourcePropType,
-  ImageBackground,
   Platform,
   Pressable,
   ScrollView,
@@ -17,9 +17,10 @@ import {
 import { SvgUri } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { CachedRemoteBackground, CachedRemoteImage, prefetchRemoteImages } from "@/components/CachedRemoteImage";
 import Colors from "@/constants/colors";
 import { getProductsByUniverse, getStoresByUniverse } from "@/constants/commerce-catalog";
-import { Chef, useApp } from "@/contexts/AppContext";
+import { Chef, Dish, useApp } from "@/contexts/AppContext";
 
 const quickCollectionImageA = require("@/assets/images/en-ce-moment.jpg");
 const quickCollectionImageB = require("@/assets/images/confort-ivoirien.jpg");
@@ -114,6 +115,206 @@ function getStartingPrice(chef: Chef) {
   return `Dès ${Math.min(...prices).toLocaleString("fr-FR")} FCFA`;
 }
 
+function getEstimatedDelivery(chef: Chef): string {
+  const rt = chef.responseTime ?? "";
+  const match = rt.match(/(\d+)/);
+  if (!match) return "~45 min";
+  const baseMin = parseInt(match[1], 10);
+  return `~${baseMin + 15} min`;
+}
+
+// ── Abidjan zone → approximate GPS ──────────────────────────────
+const ZONE_COORDS: Record<string, [number, number]> = {
+  cocody:       [ 5.3609,  -3.9976],
+  yopougon:     [ 5.3365,  -4.0706],
+  plateau:      [ 5.3190,  -4.0169],
+  adjame:       [ 5.3606,  -4.0336],
+  marcory:      [ 5.2954,  -3.9914],
+  koumassi:     [ 5.2924,  -4.0190],
+  treichville:  [ 5.2972,  -4.0032],
+  abobo:        [ 5.4151,  -4.0470],
+  bingerville:  [ 5.3596,  -3.8831],
+  angre:        [ 5.3742,  -3.9717],
+  riviera:      [ 5.3718,  -3.9628],
+  port_bouet:   [ 5.2607,  -3.9326],
+  williamsville:[ 5.3582,  -4.0286],
+  attiecoube:   [ 5.3673,  -4.0476],
+};
+
+function resolveZoneCoords(text: string): [number, number] | null {
+  const lower = text.toLowerCase();
+  for (const [key, coords] of Object.entries(ZONE_COORDS)) {
+    if (lower.includes(key.replace("_", " ")) || lower.includes(key)) return coords;
+  }
+  return null;
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDistance(km: number): string {
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1)} km`;
+}
+
+function NearbyChefCard({
+  chef,
+  distanceKm,
+  isFavorite,
+  onFavoriteToggle,
+  defaultChefProfileUri,
+}: {
+  chef: Chef;
+  distanceKm: number | null;
+  isFavorite: boolean;
+  onFavoriteToggle: () => void;
+  defaultChefProfileUri: string | null;
+}) {
+  return (
+    <Pressable
+      style={styles.nearbyCard}
+      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
+    >
+      <View style={styles.nearbyAvatarWrap}>
+        {chef.avatarUrl ? (
+          <CachedRemoteImage uri={chef.avatarUrl} style={styles.nearbyAvatar} contentFit="cover" />
+        ) : defaultChefProfileUri ? (
+          <View style={[styles.nearbyAvatar, { overflow: "hidden" }]}>
+            <SvgUri width="110%" height="110%" uri={defaultChefProfileUri} />
+          </View>
+        ) : (
+          <View style={[styles.nearbyAvatar, styles.nearbyAvatarFallback, { backgroundColor: chef.coverColor || "#F2DFC6" }]}>
+            <Text style={styles.nearbyAvatarInitials}>{chef.name.slice(0, 2).toUpperCase()}</Text>
+          </View>
+        )}
+        {chef.isOnline && <View style={styles.nearbyOnlineDot} />}
+      </View>
+
+      <View style={styles.nearbyInfo}>
+        <View style={styles.nearbyNameRow}>
+          <Text style={styles.nearbyName} numberOfLines={1}>{chef.name}</Text>
+          {chef.isVerified ? <Ionicons name="shield-checkmark" size={13} color={Colors.light.tint} /> : null}
+        </View>
+        <Text style={styles.nearbySpecialty} numberOfLines={1}>{chef.specialty}</Text>
+        <View style={styles.nearbyMetaRow}>
+          {distanceKm !== null ? (
+            <View style={styles.nearbyDistancePill}>
+              <Feather name="navigation" size={10} color={Colors.light.tint} />
+              <Text style={styles.nearbyDistanceText}>{formatDistance(distanceKm)}</Text>
+            </View>
+          ) : null}
+          <View style={styles.nearbyTimePill}>
+            <Feather name="clock" size={10} color="#74635A" />
+            <Text style={styles.nearbyTimeText}>{getEstimatedDelivery(chef)}</Text>
+          </View>
+        </View>
+      </View>
+
+      <Pressable style={styles.nearbyFav} onPress={onFavoriteToggle} hitSlop={10}>
+        <Ionicons
+          name={isFavorite ? "heart" : "heart-outline"}
+          size={16}
+          color={isFavorite ? "#FF5B5B" : Colors.light.textTertiary}
+        />
+      </Pressable>
+    </Pressable>
+  );
+}
+
+function PopularDishCard({
+  dish,
+  chef,
+  rank,
+}: {
+  dish: Dish;
+  chef: Chef;
+  rank: number;
+}) {
+  const imageUri = dish.imageUrls?.[0] ?? dish.imageUrl ?? null;
+  const orderProxy = Math.round((chef.reviewCount ?? 0) * 3.2 + (chef.stars ?? 0) * 4);
+  const rankBg = rank === 1 ? "#E8872A" : rank === 2 ? "#909090" : rank === 3 ? "#955C30" : "rgba(20,12,8,0.72)";
+  return (
+    <Pressable
+      style={styles.popDishCard}
+      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id, dishId: dish.id } })}
+    >
+      {imageUri ? (
+        <CachedRemoteBackground uri={imageUri} style={styles.popDishMedia} imageStyle={styles.popDishMediaRadius}>
+          <View style={[styles.popDishRankBadge, { backgroundColor: rankBg }]}>
+            <Text style={styles.popDishRankText}>#{rank}</Text>
+          </View>
+          {orderProxy > 0 ? (
+            <View style={styles.popDishOrderBadge}>
+              <Text style={styles.popDishOrderText}>🔥 {orderProxy > 999 ? `${Math.round(orderProxy / 100) / 10}k` : orderProxy} cmd</Text>
+            </View>
+          ) : null}
+        </CachedRemoteBackground>
+      ) : (
+        <View style={[styles.popDishMedia, { backgroundColor: "#F2DFC6", alignItems: "center", justifyContent: "center" }]}>
+          <Text style={{ fontSize: 42 }}>🍽</Text>
+          <View style={[styles.popDishRankBadge, { backgroundColor: rankBg }]}><Text style={styles.popDishRankText}>#{rank}</Text></View>
+        </View>
+      )}
+      <View style={styles.popDishInfo}>
+        <Text style={styles.popDishName} numberOfLines={2}>{dish.name}</Text>
+        <View style={styles.popDishChefRow}>
+          <Text style={styles.popDishChef} numberOfLines={1}>{chef.name}</Text>
+          <View style={styles.popDishRatingPill}>
+            <Feather name="star" size={9} color={Colors.light.tintDark} />
+            <Text style={styles.popDishRatingText}>{chef.rating.toFixed(1)}</Text>
+          </View>
+        </View>
+        <Text style={styles.popDishPrice}>{dish.price > 0 ? `${dish.price.toLocaleString("fr-FR")} F` : "Sur demande"}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function DishVerticalCard({
+  dish,
+  chefName,
+  chefId,
+}: {
+  dish: Dish;
+  chefName: string;
+  chefId: string;
+}) {
+  const imageUri = dish.imageUrls?.[0] ?? dish.imageUrl ?? null;
+  return (
+    <Pressable
+      style={styles.dishVertCard}
+      onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chefId, dishId: dish.id } })}
+    >
+      {imageUri ? (
+        <CachedRemoteBackground uri={imageUri} style={styles.dishVertMedia} imageStyle={styles.dishVertMediaRadius}>
+          <View style={styles.dishVertScrim} />
+          {dish.isPopular ? (
+            <View style={styles.dishVertPopular}>
+              <Text style={styles.dishVertPopularText}>⚡ Populaire</Text>
+            </View>
+          ) : null}
+        </CachedRemoteBackground>
+      ) : (
+        <View style={[styles.dishVertMedia, { backgroundColor: "#F2DFC6", alignItems: "center", justifyContent: "center" }]}>
+          <Text style={{ fontSize: 32 }}>🍽</Text>
+        </View>
+      )}
+      <View style={styles.dishVertInfo}>
+        <Text style={styles.dishVertName} numberOfLines={2}>{dish.name}</Text>
+        <Text style={styles.dishVertChef} numberOfLines={1}>par {chefName}</Text>
+        <Text style={styles.dishVertPrice}>{dish.price > 0 ? `${dish.price.toLocaleString("fr-FR")} FCFA` : "Sur demande"}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function DiscoveryChip({
   label,
   emoji,
@@ -155,7 +356,7 @@ function CollectionCard({
   image: ImageSourcePropType;
 }) {
   return (
-    <ImageBackground source={image} style={styles.collectionCard} imageStyle={styles.collectionImage}>
+    <CachedRemoteBackground uri={resolveLocalAssetUri(image as number) ?? ""} style={styles.collectionCard} imageStyle={styles.collectionImage}>
       <View style={[styles.collectionOverlay, { backgroundColor: accent }]} />
       <View style={styles.collectionSheen} />
       <View style={styles.collectionContent}>
@@ -170,7 +371,7 @@ function CollectionCard({
         <Text style={styles.collectionTitle}>{title}</Text>
         <Text style={styles.collectionSubtitle}>{subtitle}</Text>
       </View>
-    </ImageBackground>
+    </CachedRemoteBackground>
   );
 }
 
@@ -189,7 +390,7 @@ function SpotlightCard({
   return (
     <Pressable style={styles.spotlightCard} onPress={onPress}>
       {heroImage ? (
-        <ImageBackground source={{ uri: heroImage }} style={styles.spotlightMedia} imageStyle={styles.spotlightMediaRadius}>
+        <CachedRemoteBackground uri={heroImage} style={styles.spotlightMedia} imageStyle={styles.spotlightMediaRadius}>
           <View style={styles.spotlightOverlay} />
           <View style={styles.spotlightBadgeRow}>
             <View style={styles.spotlightBadge}>
@@ -213,11 +414,11 @@ function SpotlightCard({
               <Text style={styles.spotlightStatsText}>{chef.location.split(",")[0]}</Text>
             </View>
           </View>
-        </ImageBackground>
+        </CachedRemoteBackground>
       ) : (
         <View style={[styles.spotlightMedia, styles.spotlightFallback, { backgroundColor: chef.coverColor }]}> 
           {chef.avatarUrl ? (
-            <Image source={{ uri: chef.avatarUrl }} style={styles.spotlightFallbackAvatarImage} resizeMode="cover" />
+            <CachedRemoteImage uri={chef.avatarUrl} style={styles.spotlightFallbackAvatarImage} contentFit="cover" />
           ) : defaultChefProfileUri ? (
             <View style={styles.spotlightFallbackAvatarArt}>
               <SvgUri width="138%" height="138%" uri={defaultChefProfileUri} />
@@ -236,14 +437,39 @@ function ChefRowCard({
   isFavorite,
   onFavoriteToggle,
   defaultChefProfileUri,
+  variant = "default",
 }: {
   chef: Chef;
   isFavorite: boolean;
   onFavoriteToggle: () => void;
   defaultChefProfileUri: string | null;
+  variant?: "trending" | "online" | "default";
 }) {
   const heroImage = getChefHeroImage(chef);
-  const topDish = getTopDish(chef);
+
+  const coverOverlay = (
+    <>
+      <View style={styles.chefRowCoverScrim} />
+      {variant === "trending" && (
+        <View style={[styles.chefRowVariantBadge, styles.chefRowTrendBadge]}>
+          <Text style={styles.chefRowVariantBadgeText}>🔥 Tendance</Text>
+        </View>
+      )}
+      {variant === "online" && chef.isOnline && (
+        <View style={[styles.chefRowVariantBadge, styles.chefRowOnlineBadge]}>
+          <View style={styles.chefRowOnlineDot} />
+          <Text style={styles.chefRowVariantBadgeText}>En ligne</Text>
+        </View>
+      )}
+      <Pressable style={styles.chefRowFavBtn} onPress={onFavoriteToggle} hitSlop={10}>
+        <Ionicons
+          name={isFavorite ? "heart" : "heart-outline"}
+          size={18}
+          color={isFavorite ? "#FF5B5B" : "#fff"}
+        />
+      </Pressable>
+    </>
+  );
 
   return (
     <Pressable
@@ -251,37 +477,27 @@ function ChefRowCard({
       onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
     >
       {heroImage ? (
-        <ImageBackground source={{ uri: heroImage }} style={styles.chefRowMedia} imageStyle={styles.chefRowMediaRadius}>
-          <View style={styles.chefRowMediaOverlay} />
-        </ImageBackground>
+        <CachedRemoteBackground
+          uri={heroImage}
+          style={styles.chefRowCoverBg}
+          imageStyle={styles.chefRowCoverRadius}
+        >
+          {coverOverlay}
+        </CachedRemoteBackground>
       ) : (
-        <View style={[styles.chefRowMedia, styles.chefRowMediaFallback, { backgroundColor: chef.coverColor }]}> 
-          {chef.avatarUrl ? (
-            <Image source={{ uri: chef.avatarUrl }} style={styles.chefRowFallbackAvatarImage} resizeMode="cover" />
-          ) : defaultChefProfileUri ? (
-            <View style={styles.chefRowFallbackAvatarArt}>
-              <SvgUri width="138%" height="138%" uri={defaultChefProfileUri} />
-            </View>
-          ) : (
-            <Text style={styles.chefRowFallbackInitials}>{chef.name.slice(0, 2).toUpperCase()}</Text>
-          )}
+        <View style={[styles.chefRowCoverBg, { backgroundColor: chef.coverColor || "#F2DFC6" }]}>
+          {coverOverlay}
         </View>
       )}
 
-      <View style={styles.chefRowContent}>
-        <View style={styles.chefRowHeader}>
-          <View style={styles.chefRowHeaderText}>
-            <Text style={styles.chefRowName} numberOfLines={1}>{chef.name}</Text>
-            <Text style={styles.chefRowSpecialty} numberOfLines={1}>{chef.specialty}</Text>
-          </View>
-          <Pressable style={styles.chefRowFavoriteButton} onPress={onFavoriteToggle} hitSlop={10}>
-            <Ionicons
-              name={isFavorite ? "heart" : "heart-outline"}
-              size={18}
-              color={isFavorite ? Colors.light.error : Colors.light.text}
-            />
-          </Pressable>
+      <View style={styles.chefRowInfoPanel}>
+        <View style={styles.chefRowNameRow}>
+          <Text style={styles.chefRowName} numberOfLines={1}>{chef.name}</Text>
+          {chef.isVerified && (
+            <Ionicons name="shield-checkmark" size={15} color={Colors.light.tint} />
+          )}
         </View>
+        <Text style={styles.chefRowSpecialty} numberOfLines={1}>{chef.specialty}</Text>
 
         <View style={styles.chefRowMetrics}>
           <View style={styles.metricPill}>
@@ -298,16 +514,41 @@ function ChefRowCard({
           </View>
         </View>
 
-        <View style={styles.chefRowBottom}>
-          <View style={styles.chefRowMetaBlock}>
-            <Text style={styles.chefRowMetaLabel}>Quartier</Text>
-            <Text style={styles.chefRowMetaValue} numberOfLines={1}>{chef.location.split(",")[0]}</Text>
+        <View style={styles.chefRowFooter}>
+          <View style={styles.chefRowFooterLeft}>
+            <Feather name="map-pin" size={11} color="#A18069" />
+            <Text style={styles.chefRowFooterText} numberOfLines={1}>{chef.location.split(",")[0]}</Text>
           </View>
-          <View style={styles.chefRowMetaBlock}>
-            <Text style={styles.chefRowMetaLabel}>Carte</Text>
-            <Text style={styles.chefRowMetaValue} numberOfLines={1}>{topDish?.name ?? getStartingPrice(chef)}</Text>
-          </View>
+          <Text style={styles.chefRowStartingPrice}>{getStartingPrice(chef)}</Text>
         </View>
+
+        <View style={styles.chefRowDelivery}>
+          <Feather name="truck" size={11} color={Colors.light.success} />
+          <Text style={styles.chefRowDeliveryText}>{getEstimatedDelivery(chef)} livraison estimée</Text>
+        </View>
+
+        <View style={styles.chefRowCta}>
+          <Text style={styles.chefRowCtaText}>Voir le menu</Text>
+          <Feather name="arrow-right" size={13} color={Colors.light.tint} />
+        </View>
+      </View>
+
+      {/* Floating avatar — rendered last to layer above cover + panel */}
+      <View style={styles.chefRowAvatarFloat}>
+        <View style={styles.chefRowAvatarRing}>
+          {chef.avatarUrl ? (
+            <CachedRemoteImage uri={chef.avatarUrl} style={styles.chefRowAvatar} contentFit="cover" />
+          ) : defaultChefProfileUri ? (
+            <View style={[styles.chefRowAvatar, { overflow: "hidden" }]}>
+              <SvgUri width="138%" height="138%" uri={defaultChefProfileUri} />
+            </View>
+          ) : (
+            <View style={[styles.chefRowAvatar, styles.chefRowAvatarFallback, { backgroundColor: chef.coverColor || "#F2DFC6" }]}>
+              <Text style={styles.chefRowAvatarInitials}>{chef.name.slice(0, 2).toUpperCase()}</Text>
+            </View>
+          )}
+        </View>
+        {chef.isOnline && <View style={styles.chefRowOnlineIndicator} />}
       </View>
     </Pressable>
   );
@@ -318,7 +559,22 @@ export default function SearchScreen() {
   const { chefs, favorites, toggleFavorite, isLoadingChefs } = useApp();
   const [query, setQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
   const defaultChefProfileUri = useMemo(() => resolveLocalAssetUri(defaultChefProfileAsset), []);
+
+  // Request location once on mount
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      } catch {
+        // location unavailable — silent
+      }
+    })();
+  }, []);
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const onlineCount = chefs.filter((chef) => chef.isOnline).length;
@@ -362,6 +618,66 @@ export default function SearchScreen() {
   const onlineChefs = filteredChefs.filter((chef) => chef.isOnline).slice(0, 4);
   const hiddenGems = filteredChefs.filter((chef) => !chef.isOnline).slice(0, 4);
 
+  // Nearby chefs sorted by haversine distance when GPS available
+  const nearbyChefs = useMemo(() => {
+    if (!userCoords) return [];
+    return [...chefs]
+      .map((chef) => {
+        const coords = resolveZoneCoords(chef.location + " " + (chef.zone ?? ""));
+        const distanceKm = coords
+          ? haversineKm(userCoords.lat, userCoords.lon, coords[0], coords[1])
+          : null;
+        return { chef, distanceKm };
+      })
+      .filter((item): item is { chef: Chef; distanceKm: number } => item.distanceKm !== null)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, 6);
+  }, [chefs, userCoords]);
+
+  // Most ordered dishes — all `isPopular` dishes ranked by chef.reviewCount + stars
+  const mostOrderedDishes = useMemo(() => {
+    const result: { dish: Dish; chef: Chef }[] = [];
+    for (const chef of [...chefs].sort((a, b) => (b.reviewCount + (b.stars ?? 0)) - (a.reviewCount + (a.stars ?? 0)))) {
+      for (const dish of chef.dishes) {
+        if (dish.isPopular && (dish.imageUrls?.[0] || dish.imageUrl)) {
+          result.push({ dish, chef });
+        }
+      }
+    }
+    // Fill with any dish that has image if population < 8
+    if (result.length < 8) {
+      for (const chef of chefs) {
+        for (const dish of chef.dishes) {
+          if (!dish.isPopular && (dish.imageUrls?.[0] || dish.imageUrl) && !result.some((r) => r.dish.id === dish.id)) {
+            result.push({ dish, chef });
+          }
+          if (result.length >= 8) break;
+        }
+        if (result.length >= 8) break;
+      }
+    }
+    return result.slice(0, 8);
+  }, [chefs]);
+
+  const topDishes = useMemo(() => {
+    const result: { dish: Dish; chef: Chef }[] = [];
+    for (const chef of filteredChefs.slice(0, 10)) {
+      const candidates = chef.dishes.filter((d) => !!(d.imageUrls?.[0] || d.imageUrl));
+      const pick = candidates.find((d) => d.isPopular) ?? candidates[0];
+      if (pick) result.push({ dish: pick, chef });
+    }
+    return result.slice(0, 10);
+  }, [filteredChefs]);
+
+  useEffect(() => {
+    void prefetchRemoteImages(
+      filteredChefs.slice(0, 10).flatMap((chef) => [
+        getChefHeroImage(chef),
+        chef.avatarUrl,
+      ])
+    );
+  }, [filteredChefs]);
+
   return (
     <View style={[styles.container, { paddingTop: topInset }]}> 
       <ScrollView
@@ -372,17 +688,13 @@ export default function SearchScreen() {
           <View style={styles.headerTopRow}>
             <View>
               <Text style={styles.pageEyebrow}>Explore</Text>
-              <Text style={styles.pageTitle}>Le marché des cuisines qui donnent faim.</Text>
+              <Text style={styles.pageTitle}>Cuisines autour de vous</Text>
             </View>
             <View style={styles.headerCounterBubble}>
               <Text style={styles.headerCounterValue}>{formatCompact(chefs.length)}</Text>
               <Text style={styles.headerCounterLabel}>cuisines</Text>
             </View>
           </View>
-
-          <Text style={styles.pageSubtitle}>
-            Une découverte plus éditoriale: sélections du jour, cuisines en ligne, plats signatures et profils à suivre.
-          </Text>
 
           <View style={styles.searchBox}>
             <Feather name="search" size={16} color={Colors.light.textTertiary} />
@@ -400,75 +712,6 @@ export default function SearchScreen() {
               </Pressable>
             ) : null}
           </View>
-
-          <View style={styles.universeSection}>
-            <View style={styles.sectionHeaderInlineCompact}>
-              <Text style={styles.sectionTitle}>4 univers</Text>
-              <Text style={styles.sectionCaptionCompact}>Le meme menu que l'accueil, accessible ici aussi.</Text>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.universeRow}>
-              <UniverseShortcutCard
-                label="Cuisinieres"
-                sub={`${chefs.length} profils et menus visibles`}
-                icon="restaurant"
-                accentColor={Colors.light.tint}
-                tone="#FBE7DB"
-                active
-                onPress={() => {
-                  setQuery("");
-                  setSelectedFilter(null);
-                }}
-              />
-              <UniverseShortcutCard
-                label="Courses"
-                sub={`${coursePreviewCount} essentiels en express`}
-                icon="cart"
-                accentColor={Colors.light.terracotta}
-                tone="#FDEBDE"
-                onPress={() => router.push("/client/courses")}
-              />
-              <UniverseShortcutCard
-                label="Supermarches"
-                sub={`${supermarketStoreCount} enseignes et rayons`}
-                icon="storefront"
-                accentColor="#0F766E"
-                tone="#E6F6F3"
-                onPress={() => router.push("/client/supermarkets")}
-              />
-              <UniverseShortcutCard
-                label="Boutiques"
-                sub={`${boutiquePreviewCount} selections speciales`}
-                icon="gift"
-                accentColor="#8B5E3C"
-                tone="#F7ECE1"
-                onPress={() => router.push("/client/boutiques")}
-              />
-            </ScrollView>
-          </View>
-        </View>
-
-        <View style={styles.heroBanner}>
-          <View style={styles.heroGlowA} />
-          <View style={styles.heroGlowB} />
-          <Text style={styles.heroEyebrow}>Sélection premium</Text>
-          <Text style={styles.heroTitle}>Des cuisines maison, une lecture plus visuelle, un choix plus rapide.</Text>
-          <Text style={styles.heroSubtitle}>
-            {onlineCount} cuisinières en ligne maintenant · {verifiedCount} profils vérifiés · stories et menus visibles avant d’ouvrir une fiche.
-          </Text>
-          <View style={styles.heroStatsRow}>
-            <View style={styles.heroStatCard}>
-              <Text style={styles.heroStatValue}>{onlineCount}</Text>
-              <Text style={styles.heroStatLabel}>Actives</Text>
-            </View>
-            <View style={styles.heroStatCard}>
-              <Text style={styles.heroStatValue}>{verifiedCount}</Text>
-              <Text style={styles.heroStatLabel}>Vérifiées</Text>
-            </View>
-            <View style={styles.heroStatCard}>
-              <Text style={styles.heroStatValue}>{filteredChefs.length}</Text>
-              <Text style={styles.heroStatLabel}>À découvrir</Text>
-            </View>
-          </View>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.discoveryChipsRow}>
@@ -482,6 +725,74 @@ export default function SearchScreen() {
               onPress={() => setSelectedFilter(item.filter)}
             />
           ))}
+        </ScrollView>
+
+        {!isFiltering && trendingChefs.length ? (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeaderInline}>
+              <Text style={styles.sectionTitle}>{"Cuisini\u00e8res"}</Text>
+              <View style={styles.nearbyLivePill}>
+                <View style={styles.nearbyLiveDot} />
+                <Text style={styles.nearbyLivePillText}>{onlineCount} en ligne</Text>
+              </View>
+            </View>
+            <View style={styles.rowCardList}>
+              {trendingChefs.map((chef) => (
+                <ChefRowCard
+                  key={chef.id}
+                  chef={chef}
+                  isFavorite={favorites.includes(chef.id)}
+                  onFavoriteToggle={() => toggleFavorite(chef.id)}
+                  defaultChefProfileUri={defaultChefProfileUri}
+                  variant="trending"
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.universeRow}
+          style={{ marginTop: 4, marginBottom: 8 }}
+        >
+          <UniverseShortcutCard
+            label="Cuisinieres"
+            sub={`${chefs.length} profils et menus visibles`}
+            icon="restaurant"
+            accentColor={Colors.light.tint}
+            tone="#FBE7DB"
+            active
+            onPress={() => {
+              setQuery("");
+              setSelectedFilter(null);
+            }}
+          />
+          <UniverseShortcutCard
+            label="Courses"
+            sub={`${coursePreviewCount} essentiels en express`}
+            icon="cart"
+            accentColor={Colors.light.terracotta}
+            tone="#FDEBDE"
+            onPress={() => router.push("/client/courses")}
+          />
+          <UniverseShortcutCard
+            label="Supermarches"
+            sub={`${supermarketStoreCount} enseignes et rayons`}
+            icon="storefront"
+            accentColor="#0F766E"
+            tone="#E6F6F3"
+            onPress={() => router.push("/client/supermarkets")}
+          />
+          <UniverseShortcutCard
+            label="Boutiques"
+            sub={`${boutiquePreviewCount} selections speciales`}
+            icon="gift"
+            accentColor="#8B5E3C"
+            tone="#F7ECE1"
+            onPress={() => router.push("/client/boutiques")}
+          />
         </ScrollView>
 
         <View style={styles.sectionBlock}>
@@ -521,6 +832,58 @@ export default function SearchScreen() {
           </ScrollView>
         </View>
 
+        {!isFiltering && nearbyChefs.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeaderInline}>
+              <Text style={styles.sectionTitle}>Proches de vous</Text>
+              <View style={styles.nearbyLivePill}>
+                <View style={styles.nearbyLiveDot} />
+                <Text style={styles.nearbyLivePillText}>GPS actif</Text>
+              </View>
+            </View>
+            <View style={styles.nearbyList}>
+              {nearbyChefs.map(({ chef, distanceKm }) => (
+                <NearbyChefCard
+                  key={chef.id}
+                  chef={chef}
+                  distanceKm={distanceKm}
+                  isFavorite={favorites.includes(chef.id)}
+                  onFavoriteToggle={() => toggleFavorite(chef.id)}
+                  defaultChefProfileUri={defaultChefProfileUri}
+                />
+              ))}
+            </View>
+          </View>
+        ) : null}
+
+        {!isFiltering && mostOrderedDishes.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Plats les plus commandés</Text>
+              <Text style={styles.sectionCaption}>Choix validés par la communauté.</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.popDishRow}>
+              {mostOrderedDishes.map(({ dish, chef }, index) => (
+                <PopularDishCard key={`${chef.id}-${dish.id}`} dish={dish} chef={chef} rank={index + 1} />
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {!isFiltering && topDishes.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Plats du moment</Text>
+              <Text style={styles.sectionCaption}>Signatures à commander maintenant.</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dishVertRow}>
+              {topDishes.map(({ dish, chef }) => (
+                <DishVerticalCard key={`${chef.id}-${dish.id}`} dish={dish} chefName={chef.name} chefId={chef.id} />
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
         {isLoadingChefs ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={Colors.light.tint} size="large" />
@@ -557,26 +920,6 @@ export default function SearchScreen() {
               </View>
             ) : null}
 
-            {!isFiltering && trendingChefs.length ? (
-              <View style={styles.sectionBlock}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Tendances du moment</Text>
-                  <Text style={styles.sectionCaption}>Celles qui mélangent dispo, confiance et envie immédiate.</Text>
-                </View>
-                <View style={styles.rowCardList}>
-                  {trendingChefs.map((chef) => (
-                    <ChefRowCard
-                      key={chef.id}
-                      chef={chef}
-                      isFavorite={favorites.includes(chef.id)}
-                      onFavoriteToggle={() => toggleFavorite(chef.id)}
-                      defaultChefProfileUri={defaultChefProfileUri}
-                    />
-                  ))}
-                </View>
-              </View>
-            ) : null}
-
             {!isFiltering && onlineChefs.length ? (
               <View style={styles.sectionBlock}>
                 <View style={styles.sectionHeaderInline}>
@@ -591,6 +934,7 @@ export default function SearchScreen() {
                       isFavorite={favorites.includes(chef.id)}
                       onFavoriteToggle={() => toggleFavorite(chef.id)}
                       defaultChefProfileUri={defaultChefProfileUri}
+                      variant="online"
                     />
                   ))}
                 </View>
@@ -1100,69 +1444,91 @@ const styles = StyleSheet.create({
   },
   rowCardList: {
     paddingHorizontal: 16,
-    gap: 14,
+    gap: 16,
   },
   chefRowCard: {
-    flexDirection: "row",
-    gap: 12,
-    borderRadius: 24,
-    padding: 12,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderRadius: 28,
+    overflow: "hidden",
+    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "rgba(120,104,96,0.12)",
+    borderColor: "rgba(120,104,96,0.10)",
   },
-  chefRowMedia: {
-    width: 104,
-    height: 124,
-    borderRadius: 18,
-    overflow: "hidden",
+  chefRowCoverBg: {
+    height: 118,
   },
-  chefRowMediaRadius: {
-    borderRadius: 18,
+  chefRowCoverRadius: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
   },
-  chefRowMediaOverlay: {
+  chefRowCoverScrim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(26,18,10,0.12)",
+    backgroundColor: "rgba(26,18,10,0.22)",
   },
-  chefRowMediaFallback: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  chefRowFallbackAvatarImage: {
-    width: "100%",
-    height: "100%",
-  },
-  chefRowFallbackAvatarArt: {
-    width: "100%",
-    height: "100%",
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  chefRowFallbackInitials: {
-    fontSize: 18,
-    lineHeight: 22,
-    fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.92)",
-    letterSpacing: 0.9,
-  },
-  chefRowContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-  chefRowHeader: {
+  chefRowVariantBadge: {
+    position: "absolute",
+    top: 12,
+    left: 12,
     flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 8,
+    alignItems: "center",
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  chefRowHeaderText: {
-    flex: 1,
-    minWidth: 0,
+  chefRowTrendBadge: {
+    backgroundColor: "rgba(20,12,8,0.65)",
+    borderWidth: 1,
+    borderColor: "rgba(252,186,3,0.5)",
+  },
+  chefRowOnlineBadge: {
+    backgroundColor: "rgba(20,12,8,0.65)",
+    borderWidth: 1,
+    borderColor: "rgba(52,199,89,0.5)",
+  },
+  chefRowVariantBadgeText: {
+    color: "#FFF7EF",
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+  },
+  chefRowOnlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#34C759",
+    shadowColor: "#34C759",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 4,
+  },
+  chefRowFavBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.30)",
+  },
+  chefRowInfoPanel: {
+    backgroundColor: "#fff",
+    marginTop: -16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 30,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  chefRowNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
   chefRowName: {
-    fontSize: 16,
-    lineHeight: 20,
+    flex: 1,
+    fontSize: 17,
+    lineHeight: 22,
     fontFamily: "Poppins_700Bold",
     color: "#201612",
   },
@@ -1172,14 +1538,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontFamily: "Poppins_400Regular",
     color: "#74635A",
-  },
-  chefRowFavoriteButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.84)",
   },
   chefRowMetrics: {
     flexDirection: "row",
@@ -1201,29 +1559,395 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
     color: "#4B372D",
   },
-  chefRowBottom: {
+  chefRowFooter: {
     marginTop: 12,
     flexDirection: "row",
-    gap: 12,
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
   },
-  chefRowMetaBlock: {
+  chefRowFooterLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
     flex: 1,
     minWidth: 0,
   },
-  chefRowMetaLabel: {
-    fontSize: 10,
-    lineHeight: 12,
-    fontFamily: "Poppins_700Bold",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#A18069",
-  },
-  chefRowMetaValue: {
-    marginTop: 4,
+  chefRowFooterText: {
+    flex: 1,
     fontSize: 12,
     lineHeight: 17,
     fontFamily: "Poppins_500Medium",
-    color: "#33241D",
+    color: "#74635A",
+  },
+  chefRowStartingPrice: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tintDark,
+  },
+  chefRowCta: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 16,
+    backgroundColor: "#FEF0E2",
+    borderWidth: 1,
+    borderColor: "rgba(216,101,43,0.18)",
+  },
+  chefRowCtaText: {
+    fontSize: 13,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.tint,
+  },
+  chefRowAvatarFloat: {
+    position: "absolute",
+    top: 72,
+    left: 12,
+  },
+  chefRowAvatarRing: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 3,
+    borderColor: "#fff",
+    overflow: "hidden",
+  },
+  chefRowAvatar: {
+    width: "100%",
+    height: "100%",
+  },
+  chefRowAvatarFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chefRowAvatarInitials: {
+    fontSize: 16,
+    fontFamily: "Poppins_700Bold",
+    color: "rgba(255,255,255,0.92)",
+  },
+  chefRowOnlineIndicator: {
+    position: "absolute",
+    bottom: 0,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#34C759",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  chefRowDelivery: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 8,
+  },
+  chefRowDeliveryText: {
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+    color: Colors.light.success,
+  },
+  // ── Nearby cards ────────────────────────────────────────────────
+  nearbyList: {
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  nearbyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(120,104,96,0.09)",
+  },
+  nearbyAvatarWrap: {
+    position: "relative",
+  },
+  nearbyAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: Colors.light.backgroundSecondary,
+  },
+  nearbyAvatarFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nearbyAvatarInitials: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 16,
+    color: "rgba(255,255,255,0.92)",
+  },
+  nearbyOnlineDot: {
+    position: "absolute",
+    bottom: 1,
+    right: 1,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: "#34C759",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  nearbyInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nearbyNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  nearbyName: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#201612",
+  },
+  nearbySpecialty: {
+    marginTop: 2,
+    fontSize: 11,
+    fontFamily: "Poppins_400Regular",
+    color: "#74635A",
+  },
+  nearbyMetaRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 7,
+    flexWrap: "wrap",
+  },
+  nearbyDistancePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    backgroundColor: "#FEF4EB",
+    borderWidth: 1,
+    borderColor: "rgba(216,101,43,0.18)",
+  },
+  nearbyDistanceText: {
+    fontSize: 11,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tint,
+  },
+  nearbyTimePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    backgroundColor: "#F6EADB",
+  },
+  nearbyTimeText: {
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+    color: "#74635A",
+  },
+  nearbyFav: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.light.backgroundSecondary,
+  },
+  nearbyLivePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#E8F9EE",
+    borderWidth: 1,
+    borderColor: "rgba(52,199,89,0.28)",
+  },
+  nearbyLiveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#34C759",
+  },
+  nearbyLivePillText: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#22A24C",
+  },
+  // ── Popular dishes ────────────────────────────────────────────
+  popDishRow: {
+    paddingHorizontal: 16,
+    gap: 14,
+    paddingBottom: 4,
+  },
+  popDishCard: {
+    width: 230,
+    borderRadius: 24,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "rgba(120,104,96,0.08)",
+    shadowColor: "rgba(42,28,18,0.12)",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  popDishMedia: {
+    height: 170,
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    padding: 10,
+  },
+  popDishMediaRadius: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  popDishScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(20,12,8,0.18)",
+  },
+  popDishRankBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  popDishRankText: {
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+  },
+  popDishOrderBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: "rgba(20,12,8,0.60)",
+    alignSelf: "flex-end",
+  },
+  popDishOrderText: {
+    color: "#FFF7EF",
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+  },
+  popDishInfo: {
+    padding: 14,
+    gap: 5,
+  },
+  popDishName: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontFamily: "Poppins_700Bold",
+    color: "#201612",
+  },
+  popDishChef: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Poppins_400Regular",
+    color: "#74635A",
+  },
+  popDishChefRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  popDishBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  popDishRatingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: "#F6EADB",
+  },
+  popDishRatingText: {
+    fontSize: 10,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#4B372D",
+  },
+  popDishPrice: {
+    fontSize: 13,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tintDark,
+  },
+  dishVertRow: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  dishVertCard: {
+    width: 142,
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "rgba(120,104,96,0.08)",
+    shadowColor: "rgba(42,28,18,0.10)",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 1,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+  dishVertMedia: {
+    height: 142,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dishVertMediaRadius: {
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+  },
+  dishVertScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(20,12,8,0.14)",
+  },
+  dishVertPopular: {
+    position: "absolute",
+    bottom: 8,
+    left: 8,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    backgroundColor: "rgba(20,12,8,0.62)",
+  },
+  dishVertPopularText: {
+    color: "#FFF7EF",
+    fontSize: 10,
+    fontFamily: "Poppins_600SemiBold",
+  },
+  dishVertInfo: {
+    padding: 11,
+    gap: 3,
+  },
+  dishVertName: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#201612",
+  },
+  dishVertChef: {
+    fontSize: 11,
+    fontFamily: "Poppins_400Regular",
+    color: "#74635A",
+  },
+  dishVertPrice: {
+    marginTop: 4,
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tintDark,
   },
   inlineStatusPill: {
     borderRadius: 999,
