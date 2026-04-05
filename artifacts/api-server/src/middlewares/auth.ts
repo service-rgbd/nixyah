@@ -104,6 +104,33 @@ export async function requireChef(req: AuthRequest, res: Response, next: NextFun
   next();
 }
 
+export async function requireOperationalChef(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  const isAuthenticated = await authenticateRequest(req, res);
+  if (!isAuthenticated) {
+    return;
+  }
+  if (req.userType !== "chef" || !req.chefProfileId) {
+    res.status(403).json({ error: "Forbidden", message: "Réservé aux cuisinières" });
+    return;
+  }
+
+  const [chefProfile] = await db
+    .select()
+    .from(chefProfilesTable)
+    .where(eq(chefProfilesTable.id, req.chefProfileId))
+    .limit(1);
+
+  if (!chefProfile?.isVerified || !chefProfile.isOnline) {
+    res.status(403).json({
+      error: "ChefInactive",
+      message: "Votre espace cuisinière doit être vérifié et actif pour effectuer cette action",
+    });
+    return;
+  }
+
+  next();
+}
+
 export async function requireClient(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const isAuthenticated = await authenticateRequest(req, res);
   if (!isAuthenticated) {
@@ -125,6 +152,33 @@ export async function requireCourier(req: AuthRequest, res: Response, next: Next
     res.status(403).json({ error: "Forbidden", message: "Réservé aux livreurs" });
     return;
   }
+  next();
+}
+
+export async function requireVerifiedCourier(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  const isAuthenticated = await authenticateRequest(req, res);
+  if (!isAuthenticated) {
+    return;
+  }
+  if (req.userType !== "courier" || !req.courierProfileId) {
+    res.status(403).json({ error: "Forbidden", message: "Réservé aux livreurs" });
+    return;
+  }
+
+  const [courierProfile] = await db
+    .select()
+    .from(courierProfilesTable)
+    .where(eq(courierProfilesTable.id, req.courierProfileId))
+    .limit(1);
+
+  if (!courierProfile?.isVerified) {
+    res.status(403).json({
+      error: "CourierUnverified",
+      message: "Votre compte livreur doit être vérifié pour effectuer cette action",
+    });
+    return;
+  }
+
   next();
 }
 
