@@ -13,7 +13,15 @@ import {
 import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { geocodeAddress } from "../lib/geocoding.js";
 import { notifyUsers } from "../lib/notifications.js";
-import { requireAuth, requireChef, requireClient, requireCourier, type AuthRequest } from "../middlewares/auth.js";
+import { requireAuth, requireOperationalChef, requireClient, requireCourier, requireVerifiedCourier, type AuthRequest } from "../middlewares/auth.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import {
+  clientDeliveryLocationBodySchema,
+  courierLocationBodySchema,
+  deliveryAvailabilityBodySchema,
+  deliveryJobLocationBodySchema,
+} from "../lib/request-schemas.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const router = express.Router();
 
@@ -797,7 +805,7 @@ router.post("/delivery/jobs/:jobId/cancel-search", requireChef, async (req: Auth
   }
 });
 
-router.get("/delivery/jobs/available", requireCourier, async (req: AuthRequest, res) => {
+router.get("/delivery/jobs/available", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
     await syncOpenDeliveryBroadcasts();
 
