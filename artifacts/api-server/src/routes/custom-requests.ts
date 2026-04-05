@@ -2,8 +2,10 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { chefProfilesTable, customRequestsTable, dishesTable, usersTable } from "@workspace/db/schema";
 import { desc, eq } from "drizzle-orm";
-import { requireChef, requireClient, type AuthRequest } from "../middlewares/auth.js";
+import { requireChef, requireClient, requireOperationalChef, type AuthRequest } from "../middlewares/auth.js";
 import { notifyUsers } from "../lib/notifications.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import { customRequestCreateBodySchema, customRequestStatusSchema } from "../lib/request-schemas.js";
 
 const router: IRouter = Router();
 
@@ -92,20 +94,24 @@ router.get("/custom-requests", requireClient, async (req: AuthRequest, res) => {
 
 router.post("/custom-requests", requireClient, async (req: AuthRequest, res) => {
   try {
-    const chefProfileId = Number(req.body?.chefId);
-    const packageDishId = Number(req.body?.packageDishId);
-    const estimatedPersons = Math.max(1, Number(req.body?.estimatedPersons ?? 1));
-    const preferences = Array.isArray(req.body?.preferences)
-      ? req.body.preferences.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0)
-      : [];
-
-    if (!Number.isInteger(chefProfileId) || chefProfileId <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Cuisinière invalide" });
+    const parsedBody = parseWithSchema(customRequestCreateBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
     }
 
-    if (!Number.isInteger(packageDishId) || packageDishId <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Formule invalide" });
-    }
+    const {
+      chefId: chefProfileId,
+      packageDishId,
+      estimatedPersons: rawEstimatedPersons,
+      preferences,
+      estimatedTotal: requestedEstimatedTotal,
+      occasion,
+      budget,
+      storyReference,
+      deliveryAddress,
+      notes,
+    } = parsedBody.data;
+    const estimatedPersons = rawEstimatedPersons ?? 1;
 
     const [chefProfile] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, chefProfileId)).limit(1);
     if (!chefProfile) {
@@ -121,7 +127,7 @@ router.post("/custom-requests", requireClient, async (req: AuthRequest, res) => 
     const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
 
     const unitPrice = Number(packageDish.price ?? 0);
-    const estimatedTotal = Number(req.body?.estimatedTotal ?? unitPrice * estimatedPersons);
+    const estimatedTotal = requestedEstimatedTotal ?? unitPrice * estimatedPersons;
     const [request] = await db.insert(customRequestsTable).values({
       clientId: req.userId!,
       chefProfileId: chefProfile.id,
@@ -131,12 +137,12 @@ router.post("/custom-requests", requireClient, async (req: AuthRequest, res) => 
       unitPrice,
       estimatedPersons,
       estimatedTotal,
-      occasion: typeof req.body?.occasion === "string" ? req.body.occasion : null,
-      budget: typeof req.body?.budget === "string" ? req.body.budget : null,
+      occasion: occasion ?? null,
+      budget: budget ?? null,
       preferences,
-      storyReference: typeof req.body?.storyReference === "string" ? req.body.storyReference : null,
-      deliveryAddress: typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress : clientUser?.location ?? null,
-      notes: typeof req.body?.notes === "string" ? req.body.notes : null,
+      storyReference: storyReference ?? null,
+      deliveryAddress: deliveryAddress ?? clientUser?.location ?? null,
+      notes: notes ?? null,
     }).returning();
 
     await notifyUsers({
@@ -177,19 +183,19 @@ router.get("/chef/custom-requests", requireChef, async (req: AuthRequest, res) =
   }
 });
 
-router.patch("/chef/custom-requests/:requestId/status", requireChef, async (req: AuthRequest, res) => {
+router.patch("/chef/custom-requests/:requestId/status", requireOperationalChef, async (req: AuthRequest, res) => {
   try {
-    const requestId = Number(req.params.requestId);
-    const status = typeof req.body?.status === "string" ? req.body.status : "";
-    const chefResponse = typeof req.body?.chefResponse === "string" ? req.body.chefResponse.trim() : "";
-
-    if (!Number.isInteger(requestId) || requestId <= 0) {
+    const parsedRequestId = parseWithSchema(idParamSchema, req.params.requestId);
+    const parsedBody = parseWithSchema(customRequestStatusSchema, req.body);
+    if (!parsedRequestId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Demande invalide" });
     }
-
-    if (!ALLOWED_CHEF_STATUSES.has(status)) {
-      return res.status(400).json({ error: "BadRequest", message: "Statut invalide" });
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
     }
+
+    const requestId = parsedRequestId.data;
+    const { status, chefResponse } = parsedBody.data;
 
     const [request] = await db.select().from(customRequestsTable).where(eq(customRequestsTable.id, requestId)).limit(1);
     if (!request || request.chefProfileId !== req.chefProfileId) {

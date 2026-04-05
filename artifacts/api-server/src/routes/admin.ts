@@ -14,6 +14,8 @@ import {
   usersTable,
 } from "@workspace/db/schema";
 import { requireAdmin, type AuthRequest } from "../middlewares/auth.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import { adminChefStatusSchema, adminChefVerifySchema, adminCommerceStoreStatusSchema } from "../lib/request-schemas.js";
 
 const router = express.Router();
 
@@ -460,15 +462,17 @@ router.get("/admin/commerce/stores", requireAdmin, async (req: AuthRequest, res)
 
 router.post("/admin/commerce/stores/:storeId/status", requireAdmin, async (req: AuthRequest, res) => {
   try {
-    const storeId = Number(req.params.storeId);
-    const status = req.body?.status;
-    const isActive = req.body?.isActive;
-    if (!Number.isInteger(storeId) || storeId <= 0) {
+    const parsedStoreId = parseWithSchema(idParamSchema, req.params.storeId);
+    const parsedBody = parseWithSchema(adminCommerceStoreStatusSchema, req.body);
+    if (!parsedStoreId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Enseigne invalide" });
     }
-    if (!["draft", "pending_review", "approved", "suspended", "rejected"].includes(status)) {
-      return res.status(400).json({ error: "BadRequest", message: "Statut invalide" });
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
     }
+
+    const storeId = parsedStoreId.data;
+    const { status, isActive } = parsedBody.data;
 
     const [store] = await db.update(commerceStoresTable)
       .set({ status, isActive: typeof isActive === "boolean" ? isActive : status === "approved" })
@@ -540,10 +544,13 @@ router.get("/admin/chefs", requireAdmin, async (req: AuthRequest, res) => {
 
 router.post("/admin/chefs/:id/status", requireAdmin, async (req: AuthRequest, res) => {
   try {
-    const chefId = Number(req.params.id);
-    if (!chefId) return res.status(400).json({ error: "BadRequest", message: "ID invalide" });
+    const parsedChefId = parseWithSchema(idParamSchema, req.params.id);
+    const parsedBody = parseWithSchema(adminChefStatusSchema, req.body);
+    if (!parsedChefId.success) return res.status(400).json({ error: "BadRequest", message: "ID invalide" });
+    if (!parsedBody.success) return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
 
-    const { status } = req.body as { status: string };
+    const chefId = parsedChefId.data;
+    const { status } = parsedBody.data;
 
     let updateFields: Partial<{ isVerified: boolean; isOnline: boolean }> = {};
     if (status === "active") updateFields = { isVerified: true, isOnline: true };
@@ -591,10 +598,13 @@ router.post("/admin/chefs/:id/status", requireAdmin, async (req: AuthRequest, re
 
 router.post("/admin/chefs/:id/verify", requireAdmin, async (req: AuthRequest, res) => {
   try {
-    const chefId = Number(req.params.id);
-    if (!chefId) return res.status(400).json({ error: "BadRequest", message: "ID invalide" });
+    const parsedChefId = parseWithSchema(idParamSchema, req.params.id);
+    const parsedBody = parseWithSchema(adminChefVerifySchema, req.body);
+    if (!parsedChefId.success) return res.status(400).json({ error: "BadRequest", message: "ID invalide" });
+    if (!parsedBody.success) return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
 
-    const { isVerified } = req.body as { isVerified: boolean };
+    const chefId = parsedChefId.data;
+    const { isVerified } = parsedBody.data;
 
     const [updated] = await db.update(chefProfilesTable).set({ isVerified }).where(eq(chefProfilesTable.id, chefId)).returning();
     if (!updated) return res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });

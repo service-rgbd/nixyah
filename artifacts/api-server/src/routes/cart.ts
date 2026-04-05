@@ -5,7 +5,14 @@ import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
-import { maybeGrantReferralReward, quoteDeliveryOrderPricing } from "../lib/fulfillment.js";
+import { quoteDeliveryOrderPricing } from "../lib/fulfillment.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import {
+  cartAddItemBodySchema,
+  cartUpdateItemBodySchema,
+  checkoutBodySchema,
+  deliveryQuoteBodySchema,
+} from "../lib/request-schemas.js";
 
 const router = express.Router();
 
@@ -49,15 +56,13 @@ router.get("/cart", requireClient, async (req: AuthRequest, res) => {
 router.post("/cart/items", requireClient, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId!;
-    const dishId = Number(req.body.dishId);
-    const quantity = Number(req.body.quantity ?? 1);
+    const parsedBody = parseWithSchema(cartAddItemBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
 
-    if (!Number.isInteger(dishId) || dishId <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "dishId invalide" });
-    }
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Quantité invalide" });
-    }
+    const dishId = parsedBody.data.dishId;
+    const quantity = parsedBody.data.quantity ?? 1;
 
     const [dish] = await db.select().from(dishesTable).where(eq(dishesTable.id, dishId)).limit(1);
     if (!dish) {
@@ -125,12 +130,17 @@ router.post("/cart/items", requireClient, async (req: AuthRequest, res) => {
 // PUT /api/cart/items/:id - update quantity
 router.put("/cart/items/:id", requireClient, async (req: AuthRequest, res) => {
   try {
-    const itemId = Number(req.params.id);
-    const { quantity } = req.body;
-    const parsedQuantity = Number(quantity);
-    if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(parsedQuantity) || parsedQuantity <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Quantité invalide" });
+    const parsedItemId = parseWithSchema(idParamSchema, req.params.id);
+    const parsedBody = parseWithSchema(cartUpdateItemBodySchema, req.body);
+    if (!parsedItemId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Article invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const itemId = parsedItemId.data;
+    const parsedQuantity = parsedBody.data.quantity;
 
     const { item } = await getOwnedCartItem(req.userId!, itemId);
     if (!item) {
@@ -148,10 +158,12 @@ router.put("/cart/items/:id", requireClient, async (req: AuthRequest, res) => {
 // DELETE /api/cart/items/:id
 router.delete("/cart/items/:id", requireClient, async (req: AuthRequest, res) => {
   try {
-    const itemId = Number(req.params.id);
-    if (!Number.isInteger(itemId) || itemId <= 0) {
+    const parsedItemId = parseWithSchema(idParamSchema, req.params.id);
+    if (!parsedItemId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Article invalide" });
     }
+
+    const itemId = parsedItemId.data;
 
     const { item } = await getOwnedCartItem(req.userId!, itemId);
     if (!item) {
@@ -169,6 +181,11 @@ router.delete("/cart/items/:id", requireClient, async (req: AuthRequest, res) =>
 // POST /api/cart/checkout - convert cart to order
 router.post("/cart/quote", requireClient, async (req: AuthRequest, res) => {
   try {
+    const parsedBody = parseWithSchema(deliveryQuoteBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
     const cart = await getOrCreateCart(req.userId!);
     const items = await db.select().from(cartItemsTable).where(eq(cartItemsTable.cartId, cart.id));
     if (!items.length) {
@@ -191,12 +208,15 @@ router.post("/cart/quote", requireClient, async (req: AuthRequest, res) => {
     const [chefProfile] = dishes[0]?.chefProfileId
       ? await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, dishes[0].chefProfileId)).limit(1)
       : [];
+    const deliveryAddress = parsedBody.data.deliveryAddress;
+    const deliveryLatitude = parsedBody.data.deliveryLatitude ?? null;
+    const deliveryLongitude = parsedBody.data.deliveryLongitude ?? null;
     const quote = await quoteDeliveryOrderPricing({
       subtotal,
       restaurantAddress: chefProfile?.location ?? null,
-      deliveryAddress: typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : clientUser?.location ?? null,
-      deliveryLatitude: Number.isFinite(Number(req.body?.deliveryLatitude)) ? Number(req.body.deliveryLatitude) : null,
-      deliveryLongitude: Number.isFinite(Number(req.body?.deliveryLongitude)) ? Number(req.body.deliveryLongitude) : null,
+      deliveryAddress: deliveryAddress ?? clientUser?.location ?? null,
+      deliveryLatitude: deliveryLatitude ?? null,
+      deliveryLongitude: deliveryLongitude ?? null,
       hasReferralCredit: (clientUser?.freeDeliveryCredits ?? 0) > 0,
     });
 
@@ -209,11 +229,17 @@ router.post("/cart/quote", requireClient, async (req: AuthRequest, res) => {
 
 router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
   try {
+    const parsedBody = parseWithSchema(checkoutBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
     const userId = req.userId!;
-    const deliveryAddress = typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : "";
-    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
-    const deliveryLatitude = Number(req.body?.deliveryLatitude ?? NaN);
-    const deliveryLongitude = Number(req.body?.deliveryLongitude ?? NaN);
+    const requestedDeliveryAddress = parsedBody.data.deliveryAddress;
+    const notes = parsedBody.data.notes;
+    const deliveryLatitude = parsedBody.data.deliveryLatitude ?? null;
+    const deliveryLongitude = parsedBody.data.deliveryLongitude ?? null;
+    const deliveryAddress = requestedDeliveryAddress ?? "";
     const cart = await getOrCreateCart(userId);
     if (!cart) return res.status(400).json({ error: "CartEmpty" });
 
@@ -343,9 +369,6 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
         totalWithDelivery: String(pricing.totalWithDelivery),
       },
     });
-
-    await maybeGrantReferralReward(userId);
-
     return res.status(201).json({
       orderId: order.id,
       total,

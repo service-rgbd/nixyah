@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
 import { buildReferralCode } from "../lib/commerce.js";
 import { resolveReferralCode } from "../lib/fulfillment.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM ?? "no-reply@example.com";
@@ -41,6 +42,10 @@ const API_BASE_URL =
   normalizeApiBaseUrl(process.env.API_PUBLIC_URL) ??
   normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_URL) ??
   "https://api.nixyah.com/api";
+
+function hashRateLimitSegment(value: string) {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
 
 function joinUrl(base: string, path: string) {
   const normalizedPath = path.replace(/^\/+/, "");
@@ -182,6 +187,77 @@ function normalizePhone(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function hashConfirmationToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function normalizePassword(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return value.length > 0 ? value : null;
+}
+
+function buildIdentityKey(baseKey: string, value: string | null, prefix: string) {
+  if (!value) {
+    return `${prefix}:${baseKey}`;
+  }
+
+  return `${prefix}:${hashRateLimitSegment(value)}:${baseKey}`;
+}
+
+const authLoginLimiter = buildApiRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 8,
+  message: "Trop de tentatives de connexion. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const rawIdentifier = typeof req.body?.emailOrPhone === "string" ? req.body.emailOrPhone.trim() : "";
+    const normalizedIdentifier = normalizeEmail(rawIdentifier) ?? normalizePhone(rawIdentifier) ?? null;
+    return buildIdentityKey(baseKey, normalizedIdentifier, "auth-login");
+  },
+});
+
+const resendConfirmationLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 4,
+  message: "Trop de demandes de renvoi. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    return buildIdentityKey(baseKey, normalizeEmail(req.body?.email), "auth-resend-confirmation");
+  },
+});
+
+const changeEmailLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 4,
+  message: "Trop de tentatives de changement d'email. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    return buildIdentityKey(baseKey, normalizeEmail(req.body?.newEmail), "auth-change-email");
+  },
+});
+
+const confirmEmailLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  message: "Trop de tentatives de confirmation. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const token = typeof req.query?.token === "string" ? req.query.token.trim() : "";
+    return buildIdentityKey(baseKey, token || null, "auth-confirm");
+  },
+});
+
+function getPasswordPolicyError(password: string): string | null {
+  if (password.length < 10) {
+    return "Le mot de passe doit contenir au moins 10 caracteres";
+  }
+
+  if (password.length > 72) {
+    return "Le mot de passe depasse la longueur maximale autorisee";
+  }
+
+  return null;
+}
+
 function buildChefProfile(user: any, profile: any) {
   return {
     id: String(profile.id),
@@ -273,17 +349,19 @@ async function assignReferralCode(userId: number, name: string) {
 
 async function createEmailConfirmation(userId: number, email: string, name: string) {
   const confirmToken = crypto.randomBytes(32).toString("hex");
+  const confirmTokenHash = hashConfirmationToken(confirmToken);
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
   await db
     .update(usersTable)
-    .set({ emailConfirmToken: confirmToken, emailConfirmExpires: expires, emailConfirmed: false, email })
+    .set({ emailConfirmToken: confirmTokenHash, emailConfirmExpires: expires, emailConfirmed: false, email })
     .where(eq(usersTable.id, userId));
   await sendConfirmationEmail(email, name, confirmToken).catch(console.warn);
 }
 
 router.post("/auth/register/client", async (req, res) => {
   try {
-    const { name, password, location, preferences } = req.body;
+    const { name, location, preferences } = req.body;
+    const password = normalizePassword(req.body.password);
     const referredByUserId = await resolveReferrerUserId(req.body.referralCode);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
@@ -294,6 +372,11 @@ router.post("/auth/register/client", async (req, res) => {
     }
     if (!email && !phone) {
       res.status(400).json({ error: "BadRequest", message: "Email ou téléphone requis" });
+      return;
+    }
+    const passwordPolicyError = password ? getPasswordPolicyError(password) : null;
+    if (passwordPolicyError) {
+      res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
 
@@ -356,13 +439,19 @@ router.post("/auth/register/client", async (req, res) => {
 
 router.post("/auth/register/chef", async (req, res) => {
   try {
-    const { name, password, specialty, location, zone, bio, priceRange, coverColor, specialties } = req.body;
+    const { name, specialty, location, zone, bio, priceRange, coverColor, specialties } = req.body;
+    const password = normalizePassword(req.body.password);
     const referredByUserId = await resolveReferrerUserId(req.body.referralCode);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
 
     if (!name || !password || !specialty || !location || !zone || !bio || !priceRange) {
       res.status(400).json({ error: "BadRequest", message: "Champs requis manquants" });
+      return;
+    }
+    const passwordPolicyError = getPasswordPolicyError(password);
+    if (passwordPolicyError) {
+      res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
     if (!email && !phone) {
@@ -443,13 +532,19 @@ router.post("/auth/register/chef", async (req, res) => {
 
 router.post("/auth/register/courier", async (req, res) => {
   try {
-    const { name, password, location, zone, vehicleType } = req.body;
+    const { name, location, zone, vehicleType } = req.body;
+    const password = normalizePassword(req.body.password);
     const referredByUserId = await resolveReferrerUserId(req.body.referralCode);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
 
     if (!name || !password || !location) {
       res.status(400).json({ error: "BadRequest", message: "Nom, mot de passe et localisation requis" });
+      return;
+    }
+    const passwordPolicyError = getPasswordPolicyError(password);
+    if (passwordPolicyError) {
+      res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
     if (!email && !phone) {
@@ -522,12 +617,18 @@ router.post("/auth/register/courier", async (req, res) => {
 
 router.post("/auth/register/merchant", async (req, res) => {
   try {
-    const { name, password, location, businessName, bio } = req.body;
+    const { name, location, businessName, bio } = req.body;
+    const password = normalizePassword(req.body.password);
     const email = normalizeEmail(req.body.email);
     const phone = normalizePhone(req.body.phone);
 
     if (!name || !password || !businessName) {
       res.status(400).json({ error: "BadRequest", message: "Nom, mot de passe et nom commercial requis" });
+      return;
+    }
+    const passwordPolicyError = getPasswordPolicyError(password);
+    if (passwordPolicyError) {
+      res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
     if (!email && !phone) {
@@ -594,10 +695,10 @@ router.post("/auth/register/merchant", async (req, res) => {
   }
 });
 
-router.post("/auth/login", async (req, res) => {
+router.post("/auth/login", authLoginLimiter, async (req, res) => {
   try {
     const emailOrPhone = typeof req.body.emailOrPhone === "string" ? req.body.emailOrPhone.trim() : "";
-    const password = req.body.password;
+    const password = normalizePassword(req.body.password);
     if (!emailOrPhone || !password) {
       res.status(400).json({ error: "BadRequest", message: "Identifiants requis" });
       return;
@@ -661,7 +762,7 @@ router.post("/auth/login", async (req, res) => {
 });
 
 // POST /auth/resend-confirmation { email }
-router.post("/auth/resend-confirmation", async (req, res) => {
+router.post("/auth/resend-confirmation", resendConfirmationLimiter, async (req, res) => {
   try {
     const email = normalizeEmail(req.body.email);
     if (!email) {
@@ -698,28 +799,31 @@ router.get("/auth/confirmation-status", async (req, res) => {
   }
 });
 
-// POST /auth/change-email { email, password, newEmail }
-router.post("/auth/change-email", async (req, res) => {
+// POST /auth/change-email { password, newEmail }
+router.post("/auth/change-email", requireAuth, changeEmailLimiter, async (req: AuthRequest, res) => {
   try {
-    const email = normalizeEmail(req.body.email);
-    const password = req.body.password;
+    const password = normalizePassword(req.body.password);
     const newEmail = normalizeEmail(req.body.newEmail);
-    if (!email || !password || !newEmail) {
-      res.status(400).json({ error: "BadRequest", message: "Email, mot de passe et nouvel email requis" });
+    if (!password || !newEmail) {
+      res.status(400).json({ error: "BadRequest", message: "Mot de passe et nouvel email requis" });
       return;
     }
-    const [u] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+    const [u] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!));
     if (!u) {
-      res.status(404).json({ error: "NotFound", message: "Utilisateur introuvable" });
+      res.status(401).json({ error: "Unauthorized", message: "Utilisateur introuvable" });
       return;
     }
     if (!verifyPassword(password, u.passwordHash)) {
       res.status(401).json({ error: "Unauthorized", message: "Identifiants incorrects" });
       return;
     }
+    if (u.email === newEmail) {
+      res.status(409).json({ error: "Conflict", message: "Le nouvel email doit etre different de l email actuel" });
+      return;
+    }
     // ensure new email not used
     const exists = await db.select().from(usersTable).where(eq(usersTable.email, newEmail));
-    if (exists.length > 0) {
+    if (exists.some((existingUser) => existingUser.id !== u.id)) {
       res.status(409).json({ error: "Conflict", message: "Nouvel email déjà utilisé" });
       return;
     }
@@ -826,7 +930,7 @@ router.patch("/auth/me", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // GET /auth/confirm?token=...  or /auth/confirm/:token
-router.get("/auth/confirm", async (req, res) => {
+router.get("/auth/confirm", confirmEmailLimiter, async (req, res) => {
   const wantsHtml = req.accepts(["html", "json"]) === "html";
   const successOpenAppUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/confirm"), {
     status: "success",
@@ -855,7 +959,11 @@ router.get("/auth/confirm", async (req, res) => {
       res.status(400).json({ error: "BadRequest" });
       return;
     }
-    const [u] = await db.select().from(usersTable).where(eq(usersTable.emailConfirmToken, token));
+    const hashedToken = hashConfirmationToken(token);
+    const [u] = await db
+      .select()
+      .from(usersTable)
+      .where(or(eq(usersTable.emailConfirmToken, hashedToken), eq(usersTable.emailConfirmToken, token)));
     if (!u) {
       if (wantsHtml) {
         res.status(404).type("html").send(

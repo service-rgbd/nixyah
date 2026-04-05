@@ -9,6 +9,13 @@ import {
   merchantProfilesTable,
 } from "@workspace/db/schema";
 import { requireMerchant, type AuthRequest } from "../middlewares/auth.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import {
+  merchantCreateProductSchema,
+  merchantCreateStoreSchema,
+  merchantUpdateProductSchema,
+  merchantUpdateStoreSchema,
+} from "../lib/request-schemas.js";
 
 const router = express.Router();
 
@@ -19,6 +26,10 @@ async function requireOwnedStore(storeId: number, merchantProfileId: number) {
     .where(and(eq(commerceStoresTable.id, storeId), eq(commerceStoresTable.merchantProfileId, merchantProfileId)))
     .limit(1);
   return store ?? null;
+}
+
+function assertStoreCanMutateCatalog(status: typeof commerceStoresTable.$inferSelect.status) {
+  return status !== "suspended" && status !== "rejected";
 }
 
 router.get("/merchant/me", requireMerchant, async (req: AuthRequest, res) => {
@@ -47,27 +58,27 @@ router.get("/merchant/stores", requireMerchant, async (req: AuthRequest, res) =>
 
 router.post("/merchant/stores", requireMerchant, async (req: AuthRequest, res) => {
   try {
-    const universe = req.body?.universe;
-    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-    const location = typeof req.body?.location === "string" ? req.body.location.trim() : "";
-    if ((universe !== "courses" && universe !== "supermarkets" && universe !== "boutiques") || !name || !location) {
-      return res.status(400).json({ error: "BadRequest", message: "Univers, nom et localisation requis" });
+    const parsedBody = parseWithSchema(merchantCreateStoreSchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
     }
+
+    const { universe, name, location, tagline, description, zone, accentColor, visualKey, logoUrl, bannerUrl, etaMinMinutes, etaMaxMinutes } = parsedBody.data;
 
     const [store] = await db.insert(commerceStoresTable).values({
       merchantProfileId: req.merchantProfileId!,
       universe,
       name,
-      tagline: typeof req.body?.tagline === "string" ? req.body.tagline.trim() : "",
-      description: typeof req.body?.description === "string" ? req.body.description.trim() : "",
+      tagline: tagline ?? "",
+      description: description ?? "",
       location,
-      zone: typeof req.body?.zone === "string" ? req.body.zone.trim() : "",
-      accentColor: typeof req.body?.accentColor === "string" ? req.body.accentColor.trim() : "#C4522A",
-      visualKey: typeof req.body?.visualKey === "string" ? req.body.visualKey.trim() : "",
-      logoUrl: typeof req.body?.logoUrl === "string" ? req.body.logoUrl.trim() : null,
-      bannerUrl: typeof req.body?.bannerUrl === "string" ? req.body.bannerUrl.trim() : null,
-      etaMinMinutes: Number.isFinite(Number(req.body?.etaMinMinutes)) ? Number(req.body.etaMinMinutes) : 20,
-      etaMaxMinutes: Number.isFinite(Number(req.body?.etaMaxMinutes)) ? Number(req.body.etaMaxMinutes) : 40,
+      zone: zone ?? "",
+      accentColor: accentColor ?? "#C4522A",
+      visualKey: visualKey ?? "",
+      logoUrl: logoUrl ?? null,
+      bannerUrl: bannerUrl ?? null,
+      etaMinMinutes: etaMinMinutes ?? 20,
+      etaMaxMinutes: etaMaxMinutes ?? 40,
       status: "pending_review",
       isActive: false,
     }).returning();
@@ -81,10 +92,16 @@ router.post("/merchant/stores", requireMerchant, async (req: AuthRequest, res) =
 
 router.patch("/merchant/stores/:storeId", requireMerchant, async (req: AuthRequest, res) => {
   try {
-    const storeId = Number(req.params.storeId);
-    if (!Number.isInteger(storeId) || storeId <= 0) {
+    const parsedStoreId = parseWithSchema(idParamSchema, req.params.storeId);
+    const parsedBody = parseWithSchema(merchantUpdateStoreSchema, req.body);
+    if (!parsedStoreId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Enseigne invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const storeId = parsedStoreId.data;
 
     const ownedStore = await requireOwnedStore(storeId, req.merchantProfileId!);
     if (!ownedStore) {
@@ -92,18 +109,26 @@ router.patch("/merchant/stores/:storeId", requireMerchant, async (req: AuthReque
     }
 
     const updates: Record<string, unknown> = {};
-    for (const field of ["name", "tagline", "description", "location", "zone", "accentColor", "visualKey", "logoUrl", "bannerUrl"]) {
-      if (typeof req.body?.[field] === "string") {
-        updates[field] = req.body[field].trim();
-      }
-    }
-    if (Number.isFinite(Number(req.body?.etaMinMinutes))) updates.etaMinMinutes = Number(req.body.etaMinMinutes);
-    if (Number.isFinite(Number(req.body?.etaMaxMinutes))) updates.etaMaxMinutes = Number(req.body.etaMaxMinutes);
+    const { name, tagline, description, location, zone, accentColor, visualKey, logoUrl, bannerUrl, etaMinMinutes, etaMaxMinutes } = parsedBody.data;
+    if (name !== undefined) updates.name = name;
+    if (tagline !== undefined) updates.tagline = tagline ?? "";
+    if (description !== undefined) updates.description = description ?? "";
+    if (location !== undefined) updates.location = location ?? "";
+    if (zone !== undefined) updates.zone = zone ?? "";
+    if (accentColor !== undefined) updates.accentColor = accentColor;
+    if (visualKey !== undefined) updates.visualKey = visualKey ?? "";
+    if (logoUrl !== undefined) updates.logoUrl = logoUrl;
+    if (bannerUrl !== undefined) updates.bannerUrl = bannerUrl;
+    if (etaMinMinutes !== undefined) updates.etaMinMinutes = etaMinMinutes;
+    if (etaMaxMinutes !== undefined) updates.etaMaxMinutes = etaMaxMinutes;
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "BadRequest", message: "Aucun changement fourni" });
     }
 
     updates.status = ownedStore.status === "approved" ? "approved" : "pending_review";
+    if (updates.status !== "approved") {
+      updates.isActive = false;
+    }
     const [store] = await db.update(commerceStoresTable).set(updates).where(eq(commerceStoresTable.id, storeId)).returning();
     return res.json({ store });
   } catch (error) {
@@ -114,7 +139,11 @@ router.patch("/merchant/stores/:storeId", requireMerchant, async (req: AuthReque
 
 router.get("/merchant/stores/:storeId/products", requireMerchant, async (req: AuthRequest, res) => {
   try {
-    const storeId = Number(req.params.storeId);
+    const parsedStoreId = parseWithSchema(idParamSchema, req.params.storeId);
+    if (!parsedStoreId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Enseigne invalide" });
+    }
+    const storeId = parsedStoreId.data;
     const ownedStore = await requireOwnedStore(storeId, req.merchantProfileId!);
     if (!ownedStore) {
       return res.status(404).json({ error: "NotFound", message: "Enseigne introuvable" });
@@ -130,27 +159,35 @@ router.get("/merchant/stores/:storeId/products", requireMerchant, async (req: Au
 
 router.post("/merchant/stores/:storeId/products", requireMerchant, async (req: AuthRequest, res) => {
   try {
-    const storeId = Number(req.params.storeId);
+    const parsedStoreId = parseWithSchema(idParamSchema, req.params.storeId);
+    const parsedBody = parseWithSchema(merchantCreateProductSchema, req.body);
+    if (!parsedStoreId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Enseigne invalide" });
+    }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+    const storeId = parsedStoreId.data;
     const ownedStore = await requireOwnedStore(storeId, req.merchantProfileId!);
     if (!ownedStore) {
       return res.status(404).json({ error: "NotFound", message: "Enseigne introuvable" });
     }
-    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-    if (!name) {
-      return res.status(400).json({ error: "BadRequest", message: "Nom produit requis" });
+    if (!assertStoreCanMutateCatalog(ownedStore.status)) {
+      return res.status(409).json({ error: "Conflict", message: "Cette enseigne doit etre revalidee avant d'ajouter des produits" });
     }
+    const { name, description, category, price, originalPrice, badge, unitLabel, visualKey, inStock } = parsedBody.data;
 
     const [product] = await db.insert(commerceProductsTable).values({
       storeId,
       name,
-      description: typeof req.body?.description === "string" ? req.body.description.trim() : "",
-      category: typeof req.body?.category === "string" ? req.body.category.trim() : "General",
-      price: Number.isFinite(Number(req.body?.price)) ? Number(req.body.price) : 0,
-      originalPrice: Number.isFinite(Number(req.body?.originalPrice)) ? Number(req.body.originalPrice) : null,
-      badge: typeof req.body?.badge === "string" ? req.body.badge.trim() : null,
-      unitLabel: typeof req.body?.unitLabel === "string" ? req.body.unitLabel.trim() : "",
-      visualKey: typeof req.body?.visualKey === "string" ? req.body.visualKey.trim() : "",
-      inStock: req.body?.inStock !== false,
+      description: description ?? "",
+      category: category ?? "General",
+      price,
+      originalPrice: originalPrice ?? null,
+      badge: badge ?? null,
+      unitLabel: unitLabel ?? "",
+      visualKey: visualKey ?? "",
+      inStock: inStock ?? true,
     }).returning();
 
     return res.status(201).json({ product });
@@ -162,10 +199,16 @@ router.post("/merchant/stores/:storeId/products", requireMerchant, async (req: A
 
 router.patch("/merchant/products/:productId", requireMerchant, async (req: AuthRequest, res) => {
   try {
-    const productId = Number(req.params.productId);
-    if (!Number.isInteger(productId) || productId <= 0) {
+    const parsedProductId = parseWithSchema(idParamSchema, req.params.productId);
+    const parsedBody = parseWithSchema(merchantUpdateProductSchema, req.body);
+    if (!parsedProductId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Produit invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const productId = parsedProductId.data;
 
     const [product] = await db.select().from(commerceProductsTable).where(eq(commerceProductsTable.id, productId)).limit(1);
     if (!product) {
@@ -175,16 +218,21 @@ router.patch("/merchant/products/:productId", requireMerchant, async (req: AuthR
     if (!ownedStore) {
       return res.status(404).json({ error: "NotFound", message: "Produit introuvable" });
     }
+    if (!assertStoreCanMutateCatalog(ownedStore.status)) {
+      return res.status(409).json({ error: "Conflict", message: "Cette enseigne doit etre revalidee avant de modifier son catalogue" });
+    }
 
     const updates: Record<string, unknown> = {};
-    for (const field of ["name", "description", "category", "badge", "unitLabel", "visualKey"]) {
-      if (typeof req.body?.[field] === "string") {
-        updates[field] = req.body[field].trim();
-      }
-    }
-    if (Number.isFinite(Number(req.body?.price))) updates.price = Number(req.body.price);
-    if (Number.isFinite(Number(req.body?.originalPrice))) updates.originalPrice = Number(req.body.originalPrice);
-    if (typeof req.body?.inStock === "boolean") updates.inStock = req.body.inStock;
+    const { name, description, category, badge, unitLabel, visualKey, price, originalPrice, inStock } = parsedBody.data;
+    if (name !== undefined) updates.name = name ?? "";
+    if (description !== undefined) updates.description = description ?? "";
+    if (category !== undefined) updates.category = category ?? "General";
+    if (badge !== undefined) updates.badge = badge;
+    if (unitLabel !== undefined) updates.unitLabel = unitLabel ?? "";
+    if (visualKey !== undefined) updates.visualKey = visualKey ?? "";
+    if (price !== undefined) updates.price = price;
+    if (originalPrice !== undefined) updates.originalPrice = originalPrice;
+    if (inStock !== undefined) updates.inStock = inStock;
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: "BadRequest", message: "Aucun changement fourni" });
     }
@@ -199,7 +247,11 @@ router.patch("/merchant/products/:productId", requireMerchant, async (req: AuthR
 
 router.get("/merchant/stores/:storeId/orders", requireMerchant, async (req: AuthRequest, res) => {
   try {
-    const storeId = Number(req.params.storeId);
+    const parsedStoreId = parseWithSchema(idParamSchema, req.params.storeId);
+    if (!parsedStoreId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Enseigne invalide" });
+    }
+    const storeId = parsedStoreId.data;
     const ownedStore = await requireOwnedStore(storeId, req.merchantProfileId!);
     if (!ownedStore) {
       return res.status(404).json({ error: "NotFound", message: "Enseigne introuvable" });

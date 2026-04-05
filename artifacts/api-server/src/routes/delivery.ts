@@ -13,13 +13,31 @@ import {
 import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { geocodeAddress } from "../lib/geocoding.js";
 import { notifyUsers } from "../lib/notifications.js";
-import { requireAuth, requireChef, requireClient, requireCourier, type AuthRequest } from "../middlewares/auth.js";
+import { requireAuth, requireOperationalChef, requireClient, requireVerifiedCourier, type AuthRequest } from "../middlewares/auth.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import {
+  clientDeliveryLocationBodySchema,
+  courierLocationBodySchema,
+  deliveryAvailabilityBodySchema,
+  deliveryJobLocationBodySchema,
+} from "../lib/request-schemas.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const router = express.Router();
 
 const BROADCAST_ETA_STEPS_MINUTES = [10, 20] as const;
 const BROADCAST_STEP_DURATION_MS = 1 * 60 * 1000;
 const BROADCAST_WINDOW_MS = BROADCAST_ETA_STEPS_MINUTES.length * BROADCAST_STEP_DURATION_MS;
+const courierLocationLimiter = buildApiRateLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: "Trop de mises a jour de position. Reessayez dans une minute.",
+});
+const clientLocationLimiter = buildApiRateLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: "Trop de mises a jour de destination. Reessayez dans une minute.",
+});
 
 type MapPoint = {
   latitude: number;
@@ -537,7 +555,7 @@ async function assertJobParticipant(req: AuthRequest, jobId: number) {
   return { error: "Forbidden" as const };
 }
 
-router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: AuthRequest, res) => {
+router.post("/delivery/orders/:orderId/broadcast", requireOperationalChef, async (req: AuthRequest, res) => {
   try {
     const orderId = Number(req.params.orderId);
     if (!Number.isInteger(orderId) || orderId <= 0) {
@@ -683,7 +701,7 @@ router.post("/delivery/orders/:orderId/broadcast", requireChef, async (req: Auth
   }
 });
 
-router.post("/delivery/jobs/:jobId/cancel-search", requireChef, async (req: AuthRequest, res) => {
+router.post("/delivery/jobs/:jobId/cancel-search", requireOperationalChef, async (req: AuthRequest, res) => {
   try {
     const jobId = Number(req.params.jobId);
     if (!Number.isInteger(jobId) || jobId <= 0) {
@@ -739,7 +757,7 @@ router.post("/delivery/jobs/:jobId/cancel-search", requireChef, async (req: Auth
   }
 });
 
-router.get("/delivery/jobs/available", requireCourier, async (req: AuthRequest, res) => {
+router.get("/delivery/jobs/available", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
     await syncOpenDeliveryBroadcasts();
 
@@ -792,7 +810,7 @@ router.get("/delivery/jobs/available", requireCourier, async (req: AuthRequest, 
   }
 });
 
-router.get("/delivery/jobs/current", requireCourier, async (req: AuthRequest, res) => {
+router.get("/delivery/jobs/current", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
     const jobs = await db
       .select()
@@ -814,7 +832,7 @@ router.get("/delivery/jobs/current", requireCourier, async (req: AuthRequest, re
   }
 });
 
-router.get("/delivery/jobs/history", requireCourier, async (req: AuthRequest, res) => {
+router.get("/delivery/jobs/history", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
     const jobs = await db
       .select()
@@ -838,9 +856,14 @@ router.get("/delivery/jobs/history", requireCourier, async (req: AuthRequest, re
   }
 });
 
-router.patch("/delivery/courier/availability", requireCourier, async (req: AuthRequest, res) => {
+router.patch("/delivery/courier/availability", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
-    const isAvailable = Boolean(req.body.isAvailable);
+    const parsedBody = parseWithSchema(deliveryAvailabilityBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const { isAvailable } = parsedBody.data;
     const [profile] = await db
       .update(courierProfilesTable)
       .set({ isAvailable })
@@ -865,14 +888,14 @@ router.patch("/delivery/courier/availability", requireCourier, async (req: AuthR
   }
 });
 
-router.post("/delivery/courier/location", requireCourier, async (req: AuthRequest, res) => {
+router.post("/delivery/courier/location", requireVerifiedCourier, courierLocationLimiter as any, async (req: AuthRequest, res) => {
   try {
-    const latitude = Number(req.body.latitude);
-    const longitude = Number(req.body.longitude);
-
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      return res.status(400).json({ error: "BadRequest", message: "Coordonnees invalides" });
+    const parsedBody = parseWithSchema(courierLocationBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
     }
+
+    const { latitude, longitude } = parsedBody.data;
 
     const [profile] = await db
       .update(courierProfilesTable)
@@ -903,12 +926,14 @@ router.post("/delivery/courier/location", requireCourier, async (req: AuthReques
   }
 });
 
-router.post("/delivery/jobs/:jobId/accept", requireCourier, async (req: AuthRequest, res) => {
+router.post("/delivery/jobs/:jobId/accept", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
-    const jobId = Number(req.params.jobId);
-    if (!Number.isInteger(jobId) || jobId <= 0) {
+    const parsedJobId = parseWithSchema(idParamSchema, req.params.jobId);
+    if (!parsedJobId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Mission invalide" });
     }
+
+    const jobId = parsedJobId.data;
 
     const [offer] = await db
       .select()
@@ -991,12 +1016,14 @@ router.post("/delivery/jobs/:jobId/accept", requireCourier, async (req: AuthRequ
   }
 });
 
-router.post("/delivery/jobs/:jobId/pickup", requireCourier, async (req: AuthRequest, res) => {
+router.post("/delivery/jobs/:jobId/pickup", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
-    const jobId = Number(req.params.jobId);
-    if (!Number.isInteger(jobId) || jobId <= 0) {
+    const parsedJobId = parseWithSchema(idParamSchema, req.params.jobId);
+    if (!parsedJobId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Mission invalide" });
     }
+
+    const jobId = parsedJobId.data;
 
     const [job] = await db
       .update(deliveryJobsTable)
@@ -1039,18 +1066,19 @@ router.post("/delivery/jobs/:jobId/pickup", requireCourier, async (req: AuthRequ
   }
 });
 
-router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRequest, res) => {
+router.post("/delivery/jobs/:jobId/location", requireVerifiedCourier, courierLocationLimiter as any, async (req: AuthRequest, res) => {
   try {
-    const jobId = Number(req.params.jobId);
-    const latitude = Number(req.body.latitude);
-    const longitude = Number(req.body.longitude);
-    const accuracy = typeof req.body.accuracy === "number" ? req.body.accuracy : Number(req.body.accuracy ?? NaN);
-    const heading = typeof req.body.heading === "number" ? req.body.heading : Number(req.body.heading ?? NaN);
-    const speed = typeof req.body.speed === "number" ? req.body.speed : Number(req.body.speed ?? NaN);
-
-    if (!Number.isInteger(jobId) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      return res.status(400).json({ error: "BadRequest", message: "Coordonnees invalides" });
+    const parsedJobId = parseWithSchema(idParamSchema, req.params.jobId);
+    const parsedBody = parseWithSchema(deliveryJobLocationBodySchema, req.body);
+    if (!parsedJobId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Mission invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const jobId = parsedJobId.data;
+    const { latitude, longitude, accuracy, heading, speed } = parsedBody.data;
 
     const [job] = await db
       .select()
@@ -1138,16 +1166,19 @@ router.post("/delivery/jobs/:jobId/location", requireCourier, async (req: AuthRe
   }
 });
 
-router.post("/delivery/jobs/:jobId/client-location", requireClient, async (req: AuthRequest, res) => {
+router.post("/delivery/jobs/:jobId/client-location", requireClient, clientLocationLimiter as any, async (req: AuthRequest, res) => {
   try {
-    const jobId = Number(req.params.jobId);
-    const latitude = Number(req.body.latitude);
-    const longitude = Number(req.body.longitude);
-    const deliveryAddress = typeof req.body.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : "";
-
-    if (!Number.isInteger(jobId) || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      return res.status(400).json({ error: "BadRequest", message: "Coordonnees invalides" });
+    const parsedJobId = parseWithSchema(idParamSchema, req.params.jobId);
+    const parsedBody = parseWithSchema(clientDeliveryLocationBodySchema, req.body);
+    if (!parsedJobId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Mission invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const jobId = parsedJobId.data;
+    const { latitude, longitude, deliveryAddress } = parsedBody.data;
 
     const [job] = await db
       .select()
@@ -1191,7 +1222,7 @@ router.post("/delivery/jobs/:jobId/client-location", requireClient, async (req: 
   }
 });
 
-router.post("/delivery/jobs/:jobId/complete", requireCourier, async (req: AuthRequest, res) => {
+router.post("/delivery/jobs/:jobId/complete", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
     const jobId = Number(req.params.jobId);
     if (!Number.isInteger(jobId) || jobId <= 0) {

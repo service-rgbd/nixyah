@@ -13,6 +13,13 @@ import {
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { quoteDeliveryOrderPricing } from "../lib/fulfillment.js";
 import { notifyUsers } from "../lib/notifications.js";
+import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import {
+  checkoutBodySchema,
+  commerceAddItemBodySchema,
+  commerceUpdateItemBodySchema,
+  deliveryQuoteBodySchema,
+} from "../lib/request-schemas.js";
 
 const router = express.Router();
 
@@ -118,14 +125,13 @@ router.get("/commerce/cart", requireClient, async (req: AuthRequest, res) => {
 
 router.post("/commerce/cart/items", requireClient, async (req: AuthRequest, res) => {
   try {
-    const productId = Number(req.body?.productId);
-    const quantity = Number(req.body?.quantity ?? 1);
-    if (!Number.isInteger(productId) || productId <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Produit invalide" });
+    const parsedBody = parseWithSchema(commerceAddItemBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
     }
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Quantite invalide" });
-    }
+
+    const productId = parsedBody.data.productId;
+    const quantity = parsedBody.data.quantity ?? 1;
 
     const [product] = await db.select().from(commerceProductsTable).where(eq(commerceProductsTable.id, productId)).limit(1);
     if (!product || !product.inStock) {
@@ -192,11 +198,17 @@ router.post("/commerce/cart/items", requireClient, async (req: AuthRequest, res)
 
 router.put("/commerce/cart/items/:itemId", requireClient, async (req: AuthRequest, res) => {
   try {
-    const itemId = Number(req.params.itemId);
-    const quantity = Number(req.body?.quantity);
-    if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(quantity) || quantity <= 0) {
-      return res.status(400).json({ error: "BadRequest", message: "Quantite invalide" });
+    const parsedItemId = parseWithSchema(idParamSchema, req.params.itemId);
+    const parsedBody = parseWithSchema(commerceUpdateItemBodySchema, req.body);
+    if (!parsedItemId.success) {
+      return res.status(400).json({ error: "BadRequest", message: "Article invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const itemId = parsedItemId.data;
+    const quantity = parsedBody.data.quantity;
 
     const cart = await getOrCreateCommerceCart(req.userId!);
     const [item] = await db.select().from(commerceCartItemsTable).where(and(eq(commerceCartItemsTable.id, itemId), eq(commerceCartItemsTable.cartId, cart.id))).limit(1);
@@ -215,10 +227,12 @@ router.put("/commerce/cart/items/:itemId", requireClient, async (req: AuthReques
 
 router.delete("/commerce/cart/items/:itemId", requireClient, async (req: AuthRequest, res) => {
   try {
-    const itemId = Number(req.params.itemId);
-    if (!Number.isInteger(itemId) || itemId <= 0) {
+    const parsedItemId = parseWithSchema(idParamSchema, req.params.itemId);
+    if (!parsedItemId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Article invalide" });
     }
+
+    const itemId = parsedItemId.data;
 
     const cart = await getOrCreateCommerceCart(req.userId!);
     const [item] = await db.select().from(commerceCartItemsTable).where(and(eq(commerceCartItemsTable.id, itemId), eq(commerceCartItemsTable.cartId, cart.id))).limit(1);
@@ -237,6 +251,11 @@ router.delete("/commerce/cart/items/:itemId", requireClient, async (req: AuthReq
 
 router.post("/commerce/cart/quote", requireClient, async (req: AuthRequest, res) => {
   try {
+    const parsedBody = parseWithSchema(deliveryQuoteBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
     const cart = await getOrCreateCommerceCart(req.userId!);
     const items = await db.select().from(commerceCartItemsTable).where(eq(commerceCartItemsTable.cartId, cart.id));
     if (!items.length) {
@@ -246,12 +265,13 @@ router.post("/commerce/cart/quote", requireClient, async (req: AuthRequest, res)
     const [store] = await db.select().from(commerceStoresTable).where(eq(commerceStoresTable.id, items[0].storeId)).limit(1);
     const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
     const subtotal = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
+    const { deliveryAddress, deliveryLatitude, deliveryLongitude } = parsedBody.data;
     const quote = await quoteDeliveryOrderPricing({
       subtotal,
       restaurantAddress: store?.location ?? null,
-      deliveryAddress: typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : clientUser?.location ?? null,
-      deliveryLatitude: Number.isFinite(Number(req.body?.deliveryLatitude)) ? Number(req.body.deliveryLatitude) : null,
-      deliveryLongitude: Number.isFinite(Number(req.body?.deliveryLongitude)) ? Number(req.body.deliveryLongitude) : null,
+      deliveryAddress: deliveryAddress ?? clientUser?.location ?? null,
+      deliveryLatitude: deliveryLatitude ?? null,
+      deliveryLongitude: deliveryLongitude ?? null,
       hasReferralCredit: false,
     });
 
@@ -264,6 +284,11 @@ router.post("/commerce/cart/quote", requireClient, async (req: AuthRequest, res)
 
 router.post("/commerce/cart/checkout", requireClient, async (req: AuthRequest, res) => {
   try {
+    const parsedBody = parseWithSchema(checkoutBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
     const userId = req.userId!;
     const cart = await getOrCreateCommerceCart(userId);
     const items = await db.select().from(commerceCartItemsTable).where(eq(commerceCartItemsTable.cartId, cart.id));
@@ -283,17 +308,20 @@ router.post("/commerce/cart/checkout", requireClient, async (req: AuthRequest, r
     }
 
     const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-    const deliveryAddress = typeof req.body?.deliveryAddress === "string" ? req.body.deliveryAddress.trim() : clientUser?.location ?? "";
-    const notes = typeof req.body?.notes === "string" ? req.body.notes.trim() : "";
+    const {
+      deliveryAddress: requestedDeliveryAddress,
+      notes,
+      deliveryLatitude,
+      deliveryLongitude,
+    } = parsedBody.data;
+    const deliveryAddress = requestedDeliveryAddress ?? clientUser?.location ?? "";
     const subtotal = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
-    const deliveryLatitude = Number(req.body?.deliveryLatitude ?? NaN);
-    const deliveryLongitude = Number(req.body?.deliveryLongitude ?? NaN);
     const pricing = await quoteDeliveryOrderPricing({
       subtotal,
       restaurantAddress: store.location,
       deliveryAddress: deliveryAddress || null,
-      deliveryLatitude: Number.isFinite(deliveryLatitude) ? deliveryLatitude : null,
-      deliveryLongitude: Number.isFinite(deliveryLongitude) ? deliveryLongitude : null,
+      deliveryLatitude: deliveryLatitude ?? null,
+      deliveryLongitude: deliveryLongitude ?? null,
       hasReferralCredit: false,
     });
 
@@ -307,8 +335,8 @@ router.post("/commerce/cart/checkout", requireClient, async (req: AuthRequest, r
       totalWithDelivery: pricing.totalWithDelivery,
       deliveryDistanceKm: pricing.distanceKm,
       deliveryAddress: deliveryAddress || null,
-      deliveryLatitude: Number.isFinite(deliveryLatitude) ? deliveryLatitude : null,
-      deliveryLongitude: Number.isFinite(deliveryLongitude) ? deliveryLongitude : null,
+      deliveryLatitude: deliveryLatitude ?? null,
+      deliveryLongitude: deliveryLongitude ?? null,
       notes: notes || null,
     }).returning();
 

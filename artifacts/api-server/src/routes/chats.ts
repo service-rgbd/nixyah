@@ -3,8 +3,20 @@ import { db } from "@workspace/db";
 import { chatsTable, messagesTable, chefProfilesTable, usersTable } from "@workspace/db/schema";
 import { and, eq, desc } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
+import { z } from "zod";
+import { idParamSchema, nonEmptyTrimmedString, parseWithSchema } from "../lib/validation.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const router: IRouter = Router();
+const chatMessageBodySchema = z.object({
+  text: nonEmptyTrimmedString(1000),
+  chefId: z.coerce.number().int().positive().optional(),
+});
+const chatMessageLimiter = buildApiRateLimiter({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: "Trop de messages envoyes. Reessayez dans une minute.",
+});
 
 async function getChatForUser(chatId: number, req: AuthRequest) {
   if (!Number.isInteger(chatId) || chatId <= 0 || !req.userId || !req.userType) {
@@ -92,7 +104,13 @@ router.get("/chats", requireAuth, async (req: AuthRequest, res) => {
 
 router.get("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const chatId = parseInt(String(req.params.chatId));
+    const parsedChatId = parseWithSchema(idParamSchema, req.params.chatId);
+    if (!parsedChatId.success) {
+      res.status(400).json({ error: "BadRequest", message: "Conversation invalide" });
+      return;
+    }
+
+    const chatId = parsedChatId.data;
     const authorizedChat = await getChatForUser(chatId, req);
     if (!authorizedChat) {
       res.status(403).json({ error: "Forbidden", message: "Accès refusé à cette conversation" });
@@ -121,13 +139,15 @@ router.get("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res)
   }
 });
 
-router.post("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res) => {
+router.post("/chats/:chatId/messages", requireAuth, chatMessageLimiter as any, async (req: AuthRequest, res) => {
   try {
-    const { text, chefId } = req.body;
-    if (!text) {
-      res.status(400).json({ error: "BadRequest", message: "Message vide" });
+    const parsedBody = parseWithSchema(chatMessageBodySchema, req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "BadRequest", message: parsedBody.message });
       return;
     }
+
+    const { text, chefId } = parsedBody.data;
 
     let chatId: number;
     const rawChatId = String(req.params.chatId ?? "");
@@ -141,7 +161,7 @@ router.post("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res
         res.status(400).json({ error: "BadRequest", message: "chefId requis pour nouveau chat" });
         return;
       }
-      const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, parseInt(String(chefId))));
+      const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, chefId));
       if (!cp) {
         res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
         return;
@@ -164,7 +184,13 @@ router.post("/chats/:chatId/messages", requireAuth, async (req: AuthRequest, res
         chatId = newChat.id;
       }
     } else {
-      chatId = parseInt(rawChatId);
+      const parsedChatId = parseWithSchema(idParamSchema, rawChatId);
+      if (!parsedChatId.success) {
+        res.status(400).json({ error: "BadRequest", message: "Conversation invalide" });
+        return;
+      }
+
+      chatId = parsedChatId.data;
       const authorizedChat = await getChatForUser(chatId, req);
       if (!authorizedChat) {
         res.status(403).json({ error: "Forbidden", message: "Accès refusé à cette conversation" });

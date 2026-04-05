@@ -4,16 +4,38 @@ import { pushSubscriptionsTable } from "@workspace/db/schema";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 import { and, eq } from "drizzle-orm";
 import { notifyUsers } from "../lib/notifications.js";
+import { parseWithSchema } from "../lib/validation.js";
+import {
+  sendPushBodySchema,
+  subscribeBodySchema,
+  unsubscribeBodySchema,
+} from "../lib/push-validation.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const router = express.Router();
+const pushSubscriptionLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Trop de changements de souscription push. Reessayez plus tard.",
+});
+const pushSendLimiter = buildApiRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 8,
+  message: "Trop de tests push envoyes. Reessayez plus tard.",
+});
 
 // POST /api/push/subscribe
-router.post("/subscribe", requireAuth, async (req: AuthRequest, res) => {
+router.post("/subscribe", requireAuth, pushSubscriptionLimiter as any, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { endpoint, keys, platform, token } = req.body;
+    const parsedBody = parseWithSchema(subscribeBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const { endpoint, keys, platform, token } = parsedBody.data;
     const normalizedPlatform = String(platform ?? "web");
     const subscriptionEndpoint = normalizedPlatform === "expo" ? String(token ?? endpoint ?? "") : String(endpoint ?? "");
     const p256dh = normalizedPlatform === "expo" ? "expo" : String(keys?.p256dh ?? "");
@@ -41,16 +63,20 @@ router.post("/subscribe", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // POST /api/push/unsubscribe
-router.post("/unsubscribe", requireAuth, async (req: AuthRequest, res) => {
+router.post("/unsubscribe", requireAuth, pushSubscriptionLimiter as any, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const { endpoint } = req.body;
-    if (!endpoint) return res.status(400).json({ error: "Missing endpoint" });
+    const parsedBody = parseWithSchema(unsubscribeBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const { endpoint } = parsedBody.data;
     await db
       .delete(pushSubscriptionsTable)
-      .where(and(eq(pushSubscriptionsTable.endpoint, String(endpoint)), eq(pushSubscriptionsTable.userId, userId)));
+      .where(and(eq(pushSubscriptionsTable.endpoint, endpoint), eq(pushSubscriptionsTable.userId, userId)));
     return res.json({ ok: true });
   } catch (err) {
     console.error("unsubscribe error", err);
@@ -60,14 +86,19 @@ router.post("/unsubscribe", requireAuth, async (req: AuthRequest, res) => {
 
 // POST /api/push/send - send a push to a specific user or list
 // Body: { userId?, title, message, data?, targets?: [userId] }
-router.post("/send", requireAuth, async (req: AuthRequest, res) => {
+router.post("/send", requireAuth, pushSendLimiter as any, async (req: AuthRequest, res) => {
   try {
     const currentUserId = req.userId;
     if (!currentUserId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const { userId: targetUserId, title, message, data, targets } = req.body;
+    const parsedBody = parseWithSchema(sendPushBodySchema, req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const { userId: targetUserId, title, message, data, targets } = parsedBody.data;
 
     const targetIds: number[] = Array.isArray(targets) ? targets.map(Number) : (targetUserId ? [Number(targetUserId)] : [currentUserId]);
     if (targetIds.length === 0) return res.status(400).json({ error: "No targets provided" });
@@ -80,8 +111,8 @@ router.post("/send", requireAuth, async (req: AuthRequest, res) => {
     const results = await notifyUsers({
       userIds: [currentUserId],
       type: "system",
-      title: String(title ?? ""),
-      message: String(message ?? ""),
+      title,
+      message,
       data,
     });
 

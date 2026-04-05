@@ -13,7 +13,7 @@ import {
 } from "@workspace/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import express, { Response } from "express";
-import { requireAuth, requireChef, type AuthRequest } from "../middlewares/auth.js";
+import { requireAuth, requireChef, requireOperationalChef, type AuthRequest } from "../middlewares/auth.js";
 import {
   getDishEffectivePrice,
   getDishSavingsAmount,
@@ -23,6 +23,7 @@ import {
 } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
+import { maybeGrantReferralReward } from "../lib/fulfillment.js";
 
 const router = express.Router();
 
@@ -362,7 +363,7 @@ router.get("/orders", requireChef, async (req: AuthRequest, res) => {
 });
 
 // PATCH /api/chef/orders/:orderId/status - Update a received order status
-router.patch("/orders/:orderId/status", requireChef, async (req: AuthRequest, res) => {
+router.patch("/orders/:orderId/status", requireOperationalChef, async (req: AuthRequest, res) => {
   try {
     const orderId = Number(req.params.orderId);
     const nextStatus = String(req.body?.status ?? "").trim();
@@ -393,6 +394,10 @@ router.patch("/orders/:orderId/status", requireChef, async (req: AuthRequest, re
     const [updatedOrder] = await db.select().from(ordersTable).where(eq(ordersTable.id, order.id)).limit(1);
     const [clientUser] = await db.select().from(usersTable).where(eq(usersTable.id, order.clientId)).limit(1);
 
+    if (order.status === "pending" && nextStatus === "accepted") {
+      await maybeGrantReferralReward(order.clientId);
+    }
+
     const notification = CHEF_ORDER_NOTIFICATIONS[nextStatus];
     if (notification) {
       await notifyUsers({
@@ -419,7 +424,7 @@ router.patch("/orders/:orderId/status", requireChef, async (req: AuthRequest, re
 });
 
 // POST /api/chef/:id/dishes - Create a new dish (chef only)
-router.post("/:id/dishes", requireChef, async (req: AuthRequest, res: Response) => {
+router.post("/:id/dishes", requireOperationalChef, async (req: AuthRequest, res: Response) => {
   try {
     const idParam = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const chefId = parseInt(String(idParam), 10);
@@ -468,7 +473,7 @@ router.post("/:id/dishes", requireChef, async (req: AuthRequest, res: Response) 
 });
 
 // PATCH /api/chef/:id/dishes/:dishId - Update a dish except its price
-router.patch("/:id/dishes/:dishId", requireChef, async (req: AuthRequest, res: Response) => {
+router.patch("/:id/dishes/:dishId", requireOperationalChef, async (req: AuthRequest, res: Response) => {
   try {
     const chefId = Number(req.params.id);
     const dishId = Number(req.params.dishId);
@@ -518,7 +523,7 @@ router.patch("/:id/dishes/:dishId", requireChef, async (req: AuthRequest, res: R
 });
 
 // DELETE /api/chef/:id/dishes/:dishId - Delete a dish owned by the current chef
-router.delete("/:id/dishes/:dishId", requireChef, async (req: AuthRequest, res: Response) => {
+router.delete("/:id/dishes/:dishId", requireOperationalChef, async (req: AuthRequest, res: Response) => {
   try {
     const chefId = Number(req.params.id);
     const dishId = Number(req.params.dishId);

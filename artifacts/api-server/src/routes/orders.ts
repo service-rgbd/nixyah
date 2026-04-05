@@ -1,16 +1,47 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { ordersTable, orderItemsTable, chefProfilesTable, complaintsTable, usersTable, dishesTable, deliveryJobsTable, deliveryLocationUpdatesTable, reviewsTable, commerceOrdersTable, commerceOrderItemsTable, commerceStoresTable } from "@workspace/db/schema";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 import { geocodeAddress } from "../lib/geocoding.js";
 import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
 import { shouldInvestigateComplaint } from "../lib/commerce.js";
-import { maybeGrantReferralReward, quoteDeliveryOrderPricing, refreshChefReviewAggregates, refreshComplaintAggregates, refreshCourierReviewAggregates } from "../lib/fulfillment.js";
+import { quoteDeliveryOrderPricing, refreshChefReviewAggregates, refreshComplaintAggregates, refreshCourierReviewAggregates } from "../lib/fulfillment.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const router: IRouter = Router();
 const ORDER_CLIENT_CANCEL_WINDOW_MS = 10_000;
+
+const orderIssueLimiter = buildApiRateLimiter({
+  windowMs: 30 * 60 * 1000,
+  max: 4,
+  message: "Trop de signalements sur cette commande. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const orderId = typeof req.params?.orderId === "string" ? req.params.orderId.trim() : "unknown";
+    return `order-issue:${orderId}:${baseKey}`;
+  },
+});
+
+const orderCancelLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 6,
+  message: "Trop de tentatives d'annulation. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const orderId = typeof req.params?.orderId === "string" ? req.params.orderId.trim() : "unknown";
+    return `order-cancel:${orderId}:${baseKey}`;
+  },
+});
+
+const orderReviewLimiter = buildApiRateLimiter({
+  windowMs: 30 * 60 * 1000,
+  max: 6,
+  message: "Trop de tentatives de notation. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const orderId = typeof req.params?.orderId === "string" ? req.params.orderId.trim() : "unknown";
+    return `order-review:${orderId}:${baseKey}`;
+  },
+});
 
 const COMPLAINT_CATEGORIES: Record<"chef" | "courier" | "platform", Set<string>> = {
   chef: new Set(["hygiene", "taste_quality", "missing_items", "wrong_order", "poor_packaging", "rude_behavior", "unsafe_food"]),
@@ -221,7 +252,7 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
   }
 });
 
-router.post("/orders/:orderId/cancel", requireClient, async (req: AuthRequest, res) => {
+router.post("/orders/:orderId/cancel", requireClient, orderCancelLimiter, async (req: AuthRequest, res) => {
   try {
     const rawOrderId = String(req.params.orderId ?? "");
     const isCommerceOrder = rawOrderId.startsWith("commerce:");
@@ -309,6 +340,10 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
     const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.id, parsedChefId));
     if (!cp) {
       res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
+      return;
+    }
+    if (!cp.isVerified || !cp.isOnline) {
+      res.status(409).json({ error: "Conflict", message: "Cette cuisinière n'accepte pas de nouvelles commandes actuellement" });
       return;
     }
 
@@ -437,9 +472,6 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
         totalWithDelivery: String(pricing.totalWithDelivery),
       },
     });
-
-    await maybeGrantReferralReward(req.userId!);
-
     res.status(201).json({
       id: String(order.id),
       clientId: String(order.clientId),
@@ -466,7 +498,7 @@ router.post("/orders", requireClient, async (req: AuthRequest, res) => {
   }
 });
 
-router.post("/orders/:orderId/review", requireClient, async (req: AuthRequest, res) => {
+router.post("/orders/:orderId/review", requireClient, orderReviewLimiter, async (req: AuthRequest, res) => {
   try {
     const parsedOrderId = Number(req.params.orderId);
     const restaurantRating = normalizeRatingValue(req.body?.restaurantRating);
@@ -476,11 +508,6 @@ router.post("/orders/:orderId/review", requireClient, async (req: AuthRequest, r
 
     if (!Number.isInteger(parsedOrderId) || parsedOrderId <= 0) {
       res.status(400).json({ error: "BadRequest", message: "Commande invalide" });
-      return;
-    }
-
-    if (restaurantRating == null) {
-      res.status(400).json({ error: "BadRequest", message: "La note du restaurant doit être comprise entre 1 et 5" });
       return;
     }
 
@@ -497,25 +524,61 @@ router.post("/orders/:orderId/review", requireClient, async (req: AuthRequest, r
       return;
     }
 
-    if (deliveryJob && deliveryRating == null) {
+    const [existingReview] = await db.select().from(reviewsTable).where(eq(reviewsTable.orderId, order.id)).limit(1);
+    const restaurantReviewAlreadySubmitted = existingReview?.rating != null;
+    const deliveryReviewAlreadySubmitted = existingReview?.deliveryRating != null;
+
+    if (!restaurantReviewAlreadySubmitted && restaurantRating == null) {
+      res.status(400).json({ error: "BadRequest", message: "La note du restaurant doit être comprise entre 1 et 5" });
+      return;
+    }
+
+    if (deliveryJob && !deliveryReviewAlreadySubmitted && deliveryRating == null) {
       res.status(400).json({ error: "BadRequest", message: "La note de livraison doit être comprise entre 1 et 5" });
       return;
     }
 
-    const [existingReview] = await db.select().from(reviewsTable).where(eq(reviewsTable.orderId, order.id)).limit(1);
-    if (existingReview && existingReview.rating != null && (!deliveryJob || existingReview.deliveryRating != null)) {
+    if (existingReview && restaurantReviewAlreadySubmitted && (!deliveryJob || deliveryReviewAlreadySubmitted)) {
       res.status(409).json({ error: "Conflict", message: "Cette commande a déjà été évaluée" });
       return;
     }
+
+    if (restaurantReviewAlreadySubmitted) {
+      if (restaurantRating !== Number(existingReview.rating)) {
+        res.status(409).json({ error: "Conflict", message: "La note du restaurant ne peut plus etre modifiee" });
+        return;
+      }
+      if (restaurantComment !== (existingReview.comment ?? "")) {
+        res.status(409).json({ error: "Conflict", message: "Le commentaire restaurant ne peut plus etre modifie" });
+        return;
+      }
+    }
+
+    const resolvedRestaurantRating = restaurantReviewAlreadySubmitted
+      ? Number(existingReview.rating)
+      : restaurantRating!;
+    const resolvedRestaurantComment = restaurantReviewAlreadySubmitted
+      ? (existingReview.comment ?? "")
+      : restaurantComment;
+    const resolvedDeliveryRating = deliveryJob
+      ? deliveryReviewAlreadySubmitted
+        ? Number(existingReview?.deliveryRating)
+        : deliveryRating!
+      : null;
+    const resolvedDeliveryComment = deliveryJob
+      ? deliveryReviewAlreadySubmitted
+        ? (existingReview?.deliveryComment ?? "")
+        : deliveryComment
+      : "";
 
     const reviewPayload = {
       clientId: req.userId!,
       chefProfileId: order.chefProfileId,
       courierUserId: deliveryJob?.courierUserId ?? null,
-      rating: restaurantRating,
-      comment: restaurantComment,
-      deliveryRating: deliveryJob ? deliveryRating : null,
-      deliveryComment: deliveryJob ? deliveryComment : "",
+      rating: resolvedRestaurantRating,
+      comment: resolvedRestaurantComment,
+      deliveryRating: resolvedDeliveryRating,
+      deliveryComment: resolvedDeliveryComment,
     };
 
     if (existingReview) {
@@ -572,7 +635,7 @@ router.post("/orders/:orderId/review", requireClient, async (req: AuthRequest, r
   }
 });
 
-router.post("/orders/:orderId/report-issue", requireClient, async (req: AuthRequest, res) => {
+router.post("/orders/:orderId/report-issue", requireClient, orderIssueLimiter, async (req: AuthRequest, res) => {
   try {
     const parsedOrderId = Number(req.params.orderId);
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
@@ -613,6 +676,33 @@ router.post("/orders/:orderId/report-issue", requireClient, async (req: AuthRequ
     const complaintStatus = shouldInvestigateComplaint(normalizedComplaint.target, normalizedComplaint.category)
       ? "investigating"
       : "open";
+
+    const [existingComplaint] = await db
+      .select()
+      .from(complaintsTable)
+      .where(
+        and(
+          eq(complaintsTable.orderId, order.id),
+          eq(complaintsTable.reporterUserId, req.userId!),
+          eq(complaintsTable.target, normalizedComplaint.target),
+          eq(complaintsTable.category, normalizedComplaint.category),
+          or(
+            eq(complaintsTable.status, "open"),
+            eq(complaintsTable.status, "investigating"),
+          ),
+        ),
+      )
+      .limit(1);
+
+    if (existingComplaint) {
+      res.status(409).json({
+        error: "Conflict",
+        message: "Un signalement similaire est deja en cours pour cette commande",
+        complaintId: String(existingComplaint.id),
+        status: existingComplaint.status,
+      });
+      return;
+    }
 
     const [complaint] = await db.insert(complaintsTable).values({
       orderId: order.id,
