@@ -382,6 +382,7 @@ interface AppContextValue {
   refreshStories: () => Promise<void>;
   likeStory: (storyId: string) => Promise<void>;
   addStoryComment: (storyId: string, body: string) => Promise<void>;
+  deleteStoryComment: (storyId: string, commentId: string) => Promise<void>;
   postStory: (data: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null; videoUrl?: string | null; videoDurationSeconds?: number | null }) => Promise<void>;
   fetchChefStats: (chefId: string) => Promise<void>;
   fetchChefDishes: (chefId: string) => Promise<void>;
@@ -890,6 +891,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
     } catch (e) {
       console.warn("Failed to comment story:", e);
+    }
+  }, [token]);
+
+  const deleteStoryComment = useCallback(async (storyId: string, commentId: string) => {
+    try {
+      let response = await apiFetch<{ deletedCommentId: string; commentCount: number }>(`/stories/${storyId}/comments/${commentId}`, {
+        method: "DELETE",
+        token: token ?? undefined,
+      });
+
+      if (!response) {
+        response = await apiFetch<{ deletedCommentId: string; commentCount: number }>(`/stories/${storyId}/comments/${commentId}/delete`, {
+          method: "POST",
+          token: token ?? undefined,
+        });
+      }
+
+      setStories((current) =>
+        current.map((story) =>
+          story.id === storyId
+            ? {
+                ...story,
+                commentCount: response.commentCount,
+                comments: story.comments.filter((comment) => comment.id !== response.deletedCommentId),
+              }
+            : story
+        )
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+
+      if (message.includes("Cannot DELETE")) {
+        try {
+          const response = await apiFetch<{ deletedCommentId: string; commentCount: number }>(`/stories/${storyId}/comments/${commentId}/delete`, {
+            method: "POST",
+            token: token ?? undefined,
+          });
+
+          setStories((current) =>
+            current.map((story) =>
+              story.id === storyId
+                ? {
+                    ...story,
+                    commentCount: response.commentCount,
+                    comments: story.comments.filter((comment) => comment.id !== response.deletedCommentId),
+                  }
+                : story
+            )
+          );
+          return;
+        } catch (fallbackError) {
+          console.warn("Failed to delete story comment with fallback:", fallbackError);
+          throw fallbackError;
+        }
+      }
+
+      console.warn("Failed to delete story comment:", e);
+      throw e;
     }
   }, [token]);
 
@@ -1417,6 +1476,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshStories,
       likeStory,
       addStoryComment,
+      deleteStoryComment,
       fetchChefStats,
       fetchChefDishes,
       updateChefDish,
@@ -1431,7 +1491,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

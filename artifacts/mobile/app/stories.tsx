@@ -21,12 +21,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 
-import { CachedRemoteBackground, prefetchRemoteImages } from "@/components/CachedRemoteImage";
+import { CachedRemoteBackground, CachedRemoteImage, prefetchRemoteImages } from "@/components/CachedRemoteImage";
+import { apiFetch } from "@/constants/api";
 import Colors from "@/constants/colors";
 import { Story, useApp, type StoryComment } from "@/contexts/AppContext";
 
+type FeedStory = Story & {
+  isIntroStory?: boolean;
+  localVideoSource?: number;
+};
+
+const NIXYAH_INTRO_STORY_ID = "nixyah-intro-story";
+const NIXYAH_INTRO_VIDEO = require("../assets/nixyah.mp4");
+
 type StoryItemProps = {
-  story: Story;
+  story: FeedStory;
   isActive: boolean;
   isScreenFocused: boolean;
   screenHeight: number;
@@ -38,13 +47,10 @@ type StoryItemProps = {
 };
 
 const PREDEFINED_COMMENTS = [
-  "Très bon goût",
-  "Magnifique présentation",
-  "Ça donne vraiment faim",
-  "Belle idée de plat",
-  "Pas trop mon goût",
-  "Visuel un peu chargé",
-  "Le dressage pourrait être mieux",
+  "Appétissant",
+  "Très beau",
+  "J'aime bien",
+  "À revoir",
 ];
 
 function toFiniteNumber(value: unknown, fallback = 0) {
@@ -103,6 +109,32 @@ function getSafeVideoUrl(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function buildIntroStory(): FeedStory {
+  const now = new Date();
+  return {
+    id: NIXYAH_INTRO_STORY_ID,
+    chefId: NIXYAH_INTRO_STORY_ID,
+    chefName: "Nixyah",
+    chefCoverColor: Colors.light.tint,
+    caption: "Nixyah",
+    dishName: null,
+    price: null,
+    emoji: null,
+    bgColor: Colors.light.tintDark,
+    imageUrl: null,
+    videoUrl: null,
+    videoDurationSeconds: null,
+    likeCount: 0,
+    commentCount: 0,
+    likedByMe: false,
+    comments: [],
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+    isIntroStory: true,
+    localVideoSource: NIXYAH_INTRO_VIDEO,
+  };
+}
+
 function getPlayerPlayingState(player: ReturnType<typeof useVideoPlayer>) {
   try {
     return player.playing;
@@ -134,15 +166,6 @@ function playPlayerSafely(player: ReturnType<typeof useVideoPlayer>) {
   }
 }
 
-function getStoryStats(story: Story) {
-  const seed = toSafeString(story.id, "story").split("").reduce((total, char) => total + char.charCodeAt(0), 0);
-
-  return {
-    shares: 8 + (seed % 120),
-    views: 4_500 + (seed % 38_000),
-  };
-}
-
 function StoryItem({
   story,
   isActive,
@@ -154,31 +177,48 @@ function StoryItem({
   isChef,
   onOpenComments,
 }: StoryItemProps) {
-  const stats = useMemo(() => getStoryStats(story), [story]);
-  const { likeStory } = useApp();
+  const { getChef, likeStory, token, user } = useApp();
   const [isPausedByUser, setIsPausedByUser] = useState(false);
+  const [isOrderingDish, setIsOrderingDish] = useState(false);
   const lastTapRef = useRef(0);
   const singleTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
+  const isIntroStory = Boolean(story.isIntroStory);
   const safeVideoUrl = getSafeVideoUrl(story.videoUrl);
+  const videoSource = story.localVideoSource ?? safeVideoUrl;
   const safeLikeCount = toFiniteNumber(story.likeCount, 0);
   const safeCommentCount = toFiniteNumber(story.commentCount, 0);
   const safeChefName = toSafeString(story.chefName, "Chef");
   const safeCaption = toSafeString(story.caption, "");
   const safeDishName = toSafeString(story.dishName, "");
   const safePrice = toFiniteNumber(story.price, 0);
-  const safeDurationSeconds = toFiniteNumber(story.videoDurationSeconds, 0);
   const safeChefInitials = getChefInitials(story.chefName);
   const safeChefHandle = getChefHandle(story.chefName);
+  const isCompactViewport = screenWidth < 390 || screenHeight < 760;
+  const storyChefAvatarUrl = getChef(story.chefId)?.avatarUrl ?? null;
+  const promotedDish = useMemo(() => {
+    if (!safeDishName) {
+      return null;
+    }
 
-  const player = useVideoPlayer(safeVideoUrl, (videoPlayer) => {
+    const chef = getChef(story.chefId);
+    return (
+      chef?.dishes.find((dish) => {
+        const sameName = dish.name.trim().toLowerCase() === safeDishName.trim().toLowerCase();
+        const samePrice = safePrice <= 0 || Math.abs(dish.price - safePrice) < 1;
+        return sameName && samePrice;
+      }) ?? null
+    );
+  }, [getChef, safeDishName, safePrice, story.chefId]);
+
+  const player = useVideoPlayer(videoSource as any, (videoPlayer) => {
     videoPlayer.loop = true;
     videoPlayer.muted = false;
   });
 
   useEffect(() => {
-    if (!safeVideoUrl) {
+    if (!videoSource) {
       return;
     }
 
@@ -188,7 +228,7 @@ function StoryItem({
     }
 
     pausePlayerSafely(player);
-  }, [isActive, isPausedByUser, isScreenFocused, player, safeVideoUrl]);
+  }, [isActive, isPausedByUser, isScreenFocused, player, videoSource]);
 
   useEffect(() => {
     if (!isActive) {
@@ -248,6 +288,10 @@ function StoryItem({
   };
 
   const handleDoubleTap = () => {
+    if (isIntroStory) {
+      return;
+    }
+
     if (!story.likedByMe) {
       void likeStory(story.id);
     }
@@ -256,15 +300,50 @@ function StoryItem({
   };
 
   const handleLikePress = () => {
+    if (isIntroStory) {
+      return;
+    }
+
     void likeStory(story.id);
   };
 
   const handleSingleTap = () => {
-    if (!safeVideoUrl) {
+    if (!videoSource) {
       return;
     }
 
     setIsPausedByUser((current) => !current);
+  };
+
+  const handleOrderPress = async () => {
+    if (!promotedDish) {
+      router.push({ pathname: "/chef/[id]", params: { id: story.chefId, dishId: safeDishName } });
+      return;
+    }
+
+    if (!user) {
+      router.push("/auth/login");
+      return;
+    }
+
+    if (user.type !== "client" || !token) {
+      Alert.alert("Commande indisponible", "Seuls les clients peuvent commander directement depuis les stories.");
+      return;
+    }
+
+    try {
+      setIsOrderingDish(true);
+      await apiFetch("/cart/items", {
+        method: "POST",
+        token,
+        body: JSON.stringify({ dishId: Number(promotedDish.id), quantity: 1 }),
+      });
+      router.push("/(tabs)/cart");
+    } catch (error: any) {
+      Alert.alert("Erreur", error?.message ?? "Impossible d'ajouter ce plat au panier");
+    } finally {
+      setIsOrderingDish(false);
+    }
   };
 
   const handleMediaTap = () => {
@@ -288,7 +367,7 @@ function StoryItem({
     }, 260);
   };
 
-  const media = safeVideoUrl ? (
+  const media = videoSource ? (
     <View style={styles.mediaLayer}>
       <VideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} />
     </View>
@@ -309,7 +388,7 @@ function StoryItem({
     <View style={[styles.storyPage, { width: screenWidth, height: screenHeight }]}> 
       <Pressable style={StyleSheet.absoluteFill} onPress={handleMediaTap}>
         {media}
-        <View style={styles.darkOverlay} />
+        {!isIntroStory ? <View style={styles.bottomScrim} /> : null}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -326,7 +405,7 @@ function StoryItem({
 
       <View style={[styles.topOverlay, { paddingTop: topInset + 10 }]}> 
         <View style={styles.feedBadge}>
-          <Text style={styles.feedBadgeText}>Stories</Text>
+          <Text style={styles.feedBadgeText}>{isIntroStory ? "Presentation" : "Stories"}</Text>
         </View>
         <View style={styles.topRightActions}>
           {isChef ? (
@@ -338,90 +417,122 @@ function StoryItem({
         </View>
       </View>
 
-      <View style={[styles.bottomOverlay, { paddingBottom: bottomInset + 24 }]}> 
-        <View style={styles.metaColumn}>
-          <View style={styles.authorRow}>
-            <Pressable
-              onPress={() => router.push({ pathname: "/chef/[id]", params: { id: story.chefId } })}
-              style={[styles.avatarRing, { borderColor: story.chefCoverColor }]}
-            >
-              <View style={[styles.avatarInner, { backgroundColor: story.chefCoverColor }]}> 
-                <Text style={styles.avatarText}>{safeChefInitials}</Text>
+      <View
+        style={[
+          styles.bottomOverlay,
+          isCompactViewport && styles.bottomOverlayCompact,
+          { paddingBottom: bottomInset + 10 },
+        ]}
+      > 
+        <View style={[styles.metaColumn, !isIntroStory && styles.metaColumnCard, isCompactViewport && styles.metaColumnCompact]}>
+          {!isIntroStory ? (
+            <View style={styles.authorRow}>
+              <Pressable
+                disabled={isIntroStory}
+                onPress={() => {
+                  if (!isIntroStory) {
+                    router.push({ pathname: "/chef/[id]", params: { id: story.chefId } });
+                  }
+                }}
+                style={[styles.avatarRing, { borderColor: story.chefCoverColor }]}
+              >
+                <View style={[styles.avatarInner, { backgroundColor: story.chefCoverColor }]}> 
+                  {storyChefAvatarUrl ? (
+                    <CachedRemoteImage uri={storyChefAvatarUrl} style={styles.avatarImage} />
+                  ) : (
+                    <Text style={styles.avatarText}>{safeChefInitials}</Text>
+                  )}
+                </View>
+              </Pressable>
+              <View style={styles.authorTextWrap}>
+                <Text style={styles.username}>@{safeChefHandle}</Text>
+                <Text style={styles.authorName}>{safeChefName}</Text>
               </View>
-            </Pressable>
-            <View style={styles.authorTextWrap}>
-              <Text style={styles.username}>@{safeChefHandle}</Text>
-              <Text style={styles.authorName}>{safeChefName}</Text>
             </View>
-          </View>
-
-          <Text style={styles.storyTitle}>{safeCaption}</Text>
-
-          {!!safeDishName ? (
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: "/order/[chefId]",
-                  params: {
-                    chefId: story.chefId,
-                    dishName: safeDishName,
-                    price: safePrice > 0 ? `${safePrice}` : undefined,
-                    storyCaption: safeCaption,
-                  },
-                })
-              }
-              style={styles.dishPill}
-            >
-              <Feather name="shopping-bag" size={14} color="#fff" />
-              <Text style={styles.dishPillText}>
-                {safeDishName}
-                {safePrice > 0 ? ` · ${safePrice.toLocaleString("fr-FR")} FCFA` : ""}
-              </Text>
-            </Pressable>
           ) : null}
 
-          <View style={styles.statsRow}>
-            <Text style={styles.statsText}>{formatCompact(stats.views)} vues</Text>
-            <Text style={styles.statsDot}>•</Text>
-            <Text style={styles.statsText}>{safeDurationSeconds > 0 ? `${Math.round(safeDurationSeconds)} sec` : "Story"}</Text>
-            <Text style={styles.statsDot}>•</Text>
-            <Text style={styles.statsText}>{safeVideoUrl ? (isPausedByUser ? "En pause" : isActive ? "Lecture" : getPlayerPlayingState(player) ? "Lecture" : "Prête") : "Image"}</Text>
-          </View>
+          <Text
+            numberOfLines={isIntroStory ? 1 : 3}
+            style={[
+              styles.storyTitle,
+              isIntroStory && styles.introStoryTitle,
+              isIntroStory && isCompactViewport && styles.introStoryTitleCompact,
+            ]}
+          >
+            {safeCaption}
+          </Text>
+
+          {!!safeDishName && !isIntroStory ? (
+            <View style={styles.storyCommerceCard}>
+              <View style={styles.storyCommerceMeta}>
+                <Text style={styles.storyCommerceLabel}>Commande rapide</Text>
+                <Text style={styles.storyCommerceTitle} numberOfLines={1}>{safeDishName}</Text>
+                {safePrice > 0 ? (
+                  <Text style={styles.storyCommercePrice}>{safePrice.toLocaleString("fr-FR")} FCFA</Text>
+                ) : null}
+              </View>
+              <Pressable
+                onPress={() => void handleOrderPress()}
+                disabled={isOrderingDish}
+                style={styles.storyCommerceButton}
+              >
+                {isOrderingDish ? (
+                  <Text style={styles.storyCommerceButtonText}>Ajout...</Text>
+                ) : (
+                  <>
+                    <Feather name="shopping-bag" size={14} color={Colors.light.text} />
+                    <Text style={styles.storyCommerceButtonText}>Commander</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          ) : null}
+
         </View>
 
-        <View style={styles.sideActions}>
-          <Pressable style={styles.sideAction} onPress={handleDoubleTap}>
-            <View style={[styles.iconCircle, story.likedByMe && styles.iconCircleLiked]}>
-              <Feather name="heart" size={22} color="#fff" />
+        <View
+          style={[
+            styles.sideActions,
+            isCompactViewport && styles.sideActionsCompact,
+            isIntroStory && styles.introSideActions,
+          ]}
+        >
+          {isIntroStory ? (
+            <View style={[styles.introPanel, isCompactViewport && styles.introPanelCompact]}>
+              <Text style={styles.introPanelEyebrow}>Nixyah</Text>
+              <Text style={styles.introPanelTitle}>Video officielle</Text>
             </View>
-            <Text style={styles.sideActionLabel}>{formatCompact(safeLikeCount)}</Text>
-          </Pressable>
+          ) : null}
 
-          <Pressable style={styles.sideAction} onPress={() => onOpenComments(story.id)}>
-            <View style={styles.iconCircle}>
-              <Feather name="message-circle" size={22} color="#fff" />
-            </View>
-            <Text style={styles.sideActionLabel}>{formatCompact(safeCommentCount)}</Text>
-          </Pressable>
+          {!isIntroStory ? (
+            <>
+              <Pressable style={styles.sideAction} onPress={handleDoubleTap}>
+                <View style={[styles.iconCircle, story.likedByMe && styles.iconCircleLiked]}>
+                  <Feather name="heart" size={22} color="#fff" />
+                </View>
+                <Text style={styles.sideActionLabel}>{formatCompact(safeLikeCount)}</Text>
+              </Pressable>
 
-          <Pressable style={styles.sideAction}>
-            <View style={styles.iconCircle}>
-              <Feather name="send" size={20} color="#fff" />
-            </View>
-            <Text style={styles.sideActionLabel}>{formatCompact(stats.shares)}</Text>
-          </Pressable>
+              <Pressable style={styles.sideAction} onPress={() => onOpenComments(story.id)}>
+                <View style={styles.iconCircle}>
+                  <Feather name="message-circle" size={22} color="#fff" />
+                </View>
+                <Text style={styles.sideActionLabel}>{formatCompact(safeCommentCount)}</Text>
+              </Pressable>
 
-          <Pressable
-            style={styles.sideAction}
-            onPress={() => router.push({ pathname: "/chef/[id]", params: { id: story.chefId } })}
-          >
-            <View style={[styles.profileCircle, { borderColor: story.chefCoverColor }]}> 
-              <View style={[styles.profileInner, { backgroundColor: story.chefCoverColor }]}> 
-                <Text style={styles.profileText}>{safeChefInitials}</Text>
-              </View>
-            </View>
-            <Text style={styles.sideActionLabel}>Profil</Text>
-          </Pressable>
+              <Pressable
+                style={styles.sideAction}
+                onPress={() => router.push({ pathname: "/chef/[id]", params: { id: story.chefId } })}
+              >
+                <View style={[styles.profileCircle, { borderColor: story.chefCoverColor }]}> 
+                  <View style={[styles.profileInner, { backgroundColor: story.chefCoverColor }]}> 
+                    <Text style={styles.profileText}>{safeChefInitials}</Text>
+                  </View>
+                </View>
+                <Text style={styles.sideActionLabel}>Profil</Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
       </View>
     </View>
@@ -431,22 +542,28 @@ function StoryItem({
 export default function StoriesFeed() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const { stories, user, addStoryComment } = useApp();
+  const tabBarBottomInset = Platform.OS === "ios" ? Math.max(insets.bottom - 6, 10) : Math.max(insets.bottom, 8);
+  const tabBarHeight = Platform.OS === "web" ? 66 : 50 + tabBarBottomInset;
+  const { stories, user, addStoryComment, deleteStoryComment } = useApp();
   const [isScreenFocused, setIsScreenFocused] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeCommentsStoryId, setActiveCommentsStoryId] = useState<string | null>(null);
   const [customComment, setCustomComment] = useState("");
 
-  const orderedStories = useMemo(
-    () =>
-      [...stories].sort((left, right) => {
+  const orderedStories = useMemo<FeedStory[]>(
+    () => {
+      const introStory = buildIntroStory();
+      const sortedStories = [...stories].sort((left, right) => {
         const videoDiff = Number(Boolean(right.videoUrl)) - Number(Boolean(left.videoUrl));
         if (videoDiff !== 0) {
           return videoDiff;
         }
 
         return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-      }),
+      });
+
+      return [introStory, ...sortedStories];
+    },
     [stories]
   );
 
@@ -485,7 +602,7 @@ export default function StoriesFeed() {
   }, [currentIndex, orderedStories]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 });
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<ViewToken<Story>> }) => {
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<ViewToken<FeedStory>> }) => {
     const visibleItem = viewableItems.find((item) => item.isViewable && item.index != null);
     if (visibleItem?.index != null) {
       setCurrentIndex(visibleItem.index);
@@ -507,23 +624,28 @@ export default function StoriesFeed() {
       return;
     }
 
+    if (storyId === NIXYAH_INTRO_STORY_ID) {
+      return;
+    }
+
     await addStoryComment(storyId, trimmed);
     setCustomComment("");
   };
 
-  if (!orderedStories.length) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyTitle}>Aucune story pour l’instant</Text>
-        <Text style={styles.emptyDesc}>Dès qu’une cuisinière publie une vidéo, elle apparaîtra ici en plein écran.</Text>
-        {user?.type === "chef" ? (
-          <Pressable style={styles.emptyPublishBtn} onPress={() => router.push("/chef/post-story")}>
-            <Text style={styles.emptyPublishBtnText}>Publier une story</Text>
-          </Pressable>
-        ) : null}
-      </View>
-    );
-  }
+  const handleDeleteComment = (storyId: string, commentId: string) => {
+    Alert.alert("Supprimer ce commentaire", "Ce commentaire sera retire de la story.", [
+      { text: "Annuler", style: "cancel" },
+      {
+        text: "Supprimer",
+        style: "destructive",
+        onPress: () => {
+          void deleteStoryComment(storyId, commentId).catch(() => {
+            Alert.alert("Suppression impossible", "Le commentaire n'a pas pu etre supprime.");
+          });
+        },
+      },
+    ]);
+  };
 
   return (
     <View style={styles.container}>
@@ -535,22 +657,25 @@ export default function StoriesFeed() {
             story={item}
             isActive={index === currentIndex}
             isScreenFocused={isScreenFocused}
-            screenHeight={height}
+            screenHeight={Math.max(height - tabBarHeight, 1)}
             screenWidth={width}
             topInset={insets.top}
-            bottomInset={insets.bottom}
+            bottomInset={Math.max(insets.bottom, tabBarHeight)}
             isChef={user?.type === "chef"}
             onOpenComments={setActiveCommentsStoryId}
           />
         )}
         pagingEnabled
-        snapToInterval={height}
+        snapToInterval={Math.max(height - tabBarHeight, 1)}
         snapToAlignment="start"
         decelerationRate="fast"
         showsVerticalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged.current}
         viewabilityConfig={viewabilityConfig.current}
-        getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
+        getItemLayout={(_, index) => {
+          const itemHeight = Math.max(height - tabBarHeight, 1);
+          return { length: itemHeight, offset: itemHeight * index, index };
+        }}
         windowSize={3}
         maxToRenderPerBatch={2}
         initialNumToRender={2}
@@ -578,7 +703,50 @@ export default function StoriesFeed() {
               </Pressable>
             </View>
 
-            <Text style={styles.suggestionsLabel}>Commentaires prédéfinis</Text>
+            <ScrollView style={styles.commentsList} contentContainerStyle={styles.commentsListContent}>
+              {selectedStory?.comments.length ? (
+                selectedStory.comments.map((comment: StoryComment) => (
+                  <View key={comment.id} style={styles.commentCard}>
+                    <View style={styles.commentAvatarWrap}>
+                      {comment.userAvatarUrl ? (
+                        <CachedRemoteImage uri={comment.userAvatarUrl} style={styles.commentAvatarImage} />
+                      ) : (
+                        <View
+                          style={[
+                            styles.commentAvatar,
+                            { backgroundColor: comment.userCoverColor ?? Colors.light.tint },
+                          ]}
+                        >
+                          <Text style={styles.commentAvatarText}>{getChefInitials(comment.userName)}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.commentBodyWrap}>
+                      <View style={styles.commentMetaRow}>
+                        <View style={styles.commentMetaMain}>
+                          <Text style={styles.commentAuthor}>{toSafeString(comment.userName, "Utilisateur")}</Text>
+                          <Text style={styles.commentDate}>{toSafeString(comment.createdAt) ? new Date(toSafeString(comment.createdAt)).toLocaleDateString() : ""}</Text>
+                        </View>
+                        {user?.id === comment.userId ? (
+                          <Pressable
+                            onPress={() => handleDeleteComment(selectedStory.id, comment.id)}
+                            style={styles.commentDeleteBtn}
+                            hitSlop={10}
+                          >
+                            <Feather name="trash-2" size={14} color={Colors.light.textTertiary} />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                      <Text style={styles.commentBody}>{toSafeString(comment.body, "")}</Text>
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.noCommentsText}>Aucun commentaire pour le moment. Sois la première personne à réagir.</Text>
+              )}
+            </ScrollView>
+
+            <Text style={styles.suggestionsLabel}>Reponses rapides</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsRow}>
               {PREDEFINED_COMMENTS.map((comment) => (
                 <Pressable
@@ -586,6 +754,7 @@ export default function StoriesFeed() {
                   style={styles.suggestionChip}
                   onPress={() => selectedStory && void submitComment(selectedStory.id, comment)}
                 >
+                  <View style={styles.suggestionChipAccent} />
                   <Text style={styles.suggestionChipText}>{comment}</Text>
                 </Pressable>
               ))}
@@ -606,34 +775,6 @@ export default function StoriesFeed() {
                 <Feather name="send" size={16} color="#fff" />
               </Pressable>
             </View>
-
-            <ScrollView style={styles.commentsList} contentContainerStyle={styles.commentsListContent}>
-              {selectedStory?.comments.length ? (
-                selectedStory.comments.map((comment: StoryComment) => (
-                  <View key={comment.id} style={styles.commentCard}>
-                    <View style={styles.commentAvatarWrap}>
-                      <View
-                        style={[
-                          styles.commentAvatar,
-                          { backgroundColor: comment.userCoverColor ?? Colors.light.tint },
-                        ]}
-                      >
-                        <Text style={styles.commentAvatarText}>{getChefInitials(comment.userName)}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.commentBodyWrap}>
-                      <View style={styles.commentMetaRow}>
-                        <Text style={styles.commentAuthor}>{toSafeString(comment.userName, "Utilisateur")}</Text>
-                        <Text style={styles.commentDate}>{toSafeString(comment.createdAt) ? new Date(toSafeString(comment.createdAt)).toLocaleDateString() : ""}</Text>
-                      </View>
-                      <Text style={styles.commentBody}>{toSafeString(comment.body, "")}</Text>
-                    </View>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.noCommentsText}>Aucun commentaire pour le moment. Sois la première personne à réagir.</Text>
-              )}
-            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -675,6 +816,14 @@ const styles = StyleSheet.create({
     left: "50%",
     marginLeft: -46,
     marginTop: -46,
+  },
+  bottomScrim: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 220,
+    backgroundColor: "rgba(0,0,0,0.22)",
   },
   topOverlay: {
     position: "absolute",
@@ -726,17 +875,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 16,
+    gap: 14,
+  },
+  bottomOverlayCompact: {
+    paddingHorizontal: 14,
+    gap: 10,
   },
   metaColumn: {
     flex: 1,
     justifyContent: "flex-end",
+    maxWidth: "76%",
+  },
+  metaColumnCard: {
+    alignSelf: "flex-end",
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderRadius: 22,
+    backgroundColor: "rgba(10,10,10,0.28)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+  },
+  metaColumnCompact: {
+    maxWidth: "72%",
+    paddingHorizontal: 12,
+    paddingTop: 9,
+    paddingBottom: 8,
   },
   authorRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 8,
   },
   avatarRing: {
     width: 50,
@@ -753,6 +923,11 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   avatarText: {
     color: "#fff",
@@ -775,33 +950,84 @@ const styles = StyleSheet.create({
   },
   storyTitle: {
     color: "#fff",
-    fontSize: 26,
-    lineHeight: 34,
+    fontSize: 24,
+    lineHeight: 31,
     fontFamily: "Poppins_700Bold",
-    marginBottom: 14,
+    marginBottom: 6,
     maxWidth: "92%",
+    textShadowColor: "rgba(0,0,0,0.25)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
   },
-  dishPill: {
-    alignSelf: "flex-start",
+  introStoryTitle: {
+    fontSize: 34,
+    lineHeight: 40,
+    maxWidth: "70%",
+    marginBottom: 0,
+  },
+  introStoryTitleCompact: {
+    fontSize: 28,
+    lineHeight: 34,
+    maxWidth: "76%",
+  },
+  storyCommerceCard: {
+    alignSelf: "stretch",
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
+    gap: 12,
     paddingHorizontal: 12,
     paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    marginBottom: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    marginBottom: 8,
   },
-  dishPillText: {
+  storyCommerceMeta: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  storyCommerceLabel: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 10,
+    fontFamily: "Poppins_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  storyCommerceTitle: {
     color: "#fff",
     fontSize: 13,
+    fontFamily: "Poppins_700Bold",
+  },
+  storyCommercePrice: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+  },
+  storyCommerceButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    backgroundColor: "#FFF4E5",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexShrink: 0,
+    minWidth: 108,
+    justifyContent: "center",
+  },
+  storyCommerceButtonText: {
+    color: Colors.light.text,
+    fontSize: 12,
     fontFamily: "Poppins_600SemiBold",
+    textAlign: "center",
   },
   statsRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 6,
+    opacity: 0.92,
   },
   statsText: {
     color: "rgba(255,255,255,0.88)",
@@ -812,13 +1038,47 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.5)",
   },
   sideActions: {
-    width: 78,
+    width: 72,
     alignItems: "center",
-    gap: 18,
+    gap: 12,
+  },
+  sideActionsCompact: {
+    width: 58,
+    gap: 10,
+  },
+  introSideActions: {
+    width: "auto",
+    alignItems: "flex-end",
+  },
+  introPanel: {
+    width: 132,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.34)",
+    gap: 2,
+  },
+  introPanelCompact: {
+    width: 116,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 18,
+  },
+  introPanelEyebrow: {
+    color: Colors.light.accent,
+    fontSize: 11,
+    fontFamily: "Poppins_700Bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  introPanelTitle: {
+    color: "#fff",
+    fontSize: 16,
+    fontFamily: "Poppins_700Bold",
   },
   sideAction: {
     alignItems: "center",
-    gap: 7,
+    gap: 5,
   },
   iconCircle: {
     width: 52,
@@ -826,7 +1086,9 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.28)",
+    backgroundColor: "rgba(0,0,0,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
   },
   iconCircleLiked: {
     backgroundColor: "rgba(212,97,26,0.92)",
@@ -893,12 +1155,12 @@ const styles = StyleSheet.create({
   },
   commentsModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: "rgba(0,0,0,0.62)",
     justifyContent: "flex-end",
   },
   commentsSheet: {
-    minHeight: "58%",
-    maxHeight: "78%",
+    minHeight: "62%",
+    maxHeight: "82%",
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     backgroundColor: Colors.light.background,
@@ -932,36 +1194,49 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.backgroundSecondary,
   },
   suggestionsLabel: {
-    fontSize: 12,
+    fontSize: 10,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.textSecondary,
-    marginBottom: 10,
+    marginBottom: 4,
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    letterSpacing: 0.3,
+    marginTop: 6,
   },
   suggestionsRow: {
-    gap: 10,
+    gap: 4,
     paddingRight: 20,
-    marginBottom: 14,
+    paddingBottom: 0,
+    marginBottom: 8,
   },
   suggestionChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: Colors.light.backgroundSecondary,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: "#FFF8F2",
     borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderColor: "rgba(212,97,26,0.14)",
+    minHeight: 28,
+  },
+  suggestionChipAccent: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: Colors.light.tint,
   },
   suggestionChipText: {
-    fontSize: 12,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.text,
+    fontSize: 10,
+    lineHeight: 12,
+    fontFamily: "Poppins_500Medium",
+    color: Colors.light.textSecondary,
   },
   commentComposer: {
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 10,
   },
   commentInput: {
     flex: 1,
@@ -988,14 +1263,23 @@ const styles = StyleSheet.create({
   },
   commentsListContent: {
     gap: 12,
-    paddingBottom: 8,
+    paddingBottom: 10,
   },
   commentCard: {
     flexDirection: "row",
+    alignItems: "flex-start",
     gap: 12,
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     borderRadius: 18,
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.06)",
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
   commentAvatarWrap: {
     paddingTop: 2,
@@ -1006,6 +1290,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
+  },
+  commentAvatarImage: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.light.backgroundSecondary,
   },
   commentAvatarText: {
     color: "#fff",
@@ -1015,12 +1306,20 @@ const styles = StyleSheet.create({
   commentBodyWrap: {
     flex: 1,
     gap: 4,
+    minWidth: 0,
   },
   commentMetaRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 10,
+  },
+  commentMetaMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
   },
   commentAuthor: {
     fontSize: 13,
@@ -1031,10 +1330,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: "Poppins_400Regular",
     color: Colors.light.textTertiary,
+    flexShrink: 0,
+  },
+  commentDeleteBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.03)",
   },
   commentBody: {
     fontSize: 13,
-    lineHeight: 20,
+    lineHeight: 18,
     fontFamily: "Poppins_400Regular",
     color: Colors.light.textSecondary,
   },

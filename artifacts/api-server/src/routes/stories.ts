@@ -1,12 +1,15 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { db } from "@workspace/db";
 import * as dbSchema from "../../../../lib/db/src/schema/index.js";
 import { eq, gt, desc, and, ne, inArray } from "drizzle-orm";
-import { requireAuth, requireChef, type AuthRequest } from "../middlewares/auth.js";
+import { requireAuth, requireOperationalChef, type AuthRequest } from "../middlewares/auth.js";
 import { getDishEffectivePrice } from "../lib/menu.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
 import { notifyUsers } from "../lib/notifications.js";
 import { verifyToken } from "../lib/auth.js";
+import { z } from "zod";
+import { hexColorString, idParamSchema, nonEmptyTrimmedString, nullableTrimmedString, parseWithSchema, safeUrlString } from "../lib/validation.js";
+import { buildApiRateLimiter } from "../lib/rate-limit.js";
 
 const {
   storiesTable,
@@ -18,6 +21,36 @@ const {
 } = dbSchema;
 
 const router: IRouter = Router();
+const STORY_VIDEO_MAX_DURATION_SECONDS = 30;
+const createStoryBodySchema = z.object({
+  caption: nonEmptyTrimmedString(280),
+  dishName: nullableTrimmedString(120),
+  price: z.coerce.number().finite().min(0).max(1000000).nullable().optional(),
+  emoji: nullableTrimmedString(16),
+  bgColor: hexColorString.nullable().optional(),
+  imageUrl: safeUrlString.nullable().optional(),
+  videoUrl: safeUrlString.nullable().optional(),
+  videoDurationSeconds: z.coerce.number().finite().min(0).max(STORY_VIDEO_MAX_DURATION_SECONDS).nullable().optional(),
+  dishId: z.coerce.number().int().positive().nullable().optional(),
+});
+
+const storyCommentBodySchema = z.object({
+  body: nonEmptyTrimmedString(180),
+});
+const storyCommentParamsSchema = z.object({
+  id: idParamSchema,
+  commentId: idParamSchema,
+});
+const storyLikeLimiter = buildApiRateLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: "Trop d interactions sur les stories. Reessayez dans une minute.",
+});
+const storyCommentLimiter = buildApiRateLimiter({
+  windowMs: 60 * 1000,
+  max: 12,
+  message: "Trop de commentaires envoyes. Reessayez dans une minute.",
+});
 
 router.get("/stories", async (req, res) => {
   try {
@@ -124,17 +157,25 @@ router.get("/stories", async (req, res) => {
   }
 });
 
-router.post("/stories", requireChef, async (req: AuthRequest, res) => {
+router.post("/stories", requireOperationalChef, async (req: AuthRequest, res) => {
   try {
-    const { caption, dishName, price, emoji, bgColor, imageUrl, videoUrl } = req.body;
-    const videoDurationSeconds = typeof req.body.videoDurationSeconds === "number"
-      ? req.body.videoDurationSeconds
-      : Number(req.body.videoDurationSeconds ?? NaN);
-    const dishId = typeof req.body.dishId !== "undefined" ? Number(req.body.dishId) : null;
-    if (!caption) {
-      res.status(400).json({ error: "BadRequest", message: "La description est requise" });
+    const parsedBody = parseWithSchema(createStoryBodySchema, req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "BadRequest", message: parsedBody.message });
       return;
     }
+
+    const {
+      caption,
+      dishName,
+      price,
+      emoji,
+      bgColor,
+      imageUrl,
+      videoUrl,
+      videoDurationSeconds,
+      dishId,
+    } = parsedBody.data;
 
     const [cp] = await db
       .select()
@@ -147,21 +188,17 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
     }
 
     const [u] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!));
-    if (imageUrl && !isOwnedUploadUrl(String(imageUrl), "story", req.userId!)) {
+    if (imageUrl && !isOwnedUploadUrl(imageUrl, "story", req.userId!)) {
       res.status(400).json({ error: "BadRequest", message: "Image de story invalide ou non autorisée" });
       return;
     }
-    if (videoUrl && !isOwnedUploadUrl(String(videoUrl), "story", req.userId!)) {
+    if (videoUrl && !isOwnedUploadUrl(videoUrl, "story", req.userId!)) {
       res.status(400).json({ error: "BadRequest", message: "Video de story invalide ou non autorisée" });
-      return;
-    }
-    if (videoUrl && Number.isFinite(videoDurationSeconds) && videoDurationSeconds > 10) {
-      res.status(400).json({ error: "BadRequest", message: "La video doit durer au maximum 10 secondes" });
       return;
     }
 
     let linkedDish = null;
-    if (dishId !== null) {
+    if (typeof dishId === "number") {
       const [dish] = await db.select().from(dishesTable).where(eq(dishesTable.id, dishId)).limit(1);
       if (!dish || dish.chefProfileId !== cp.id) {
         res.status(400).json({ error: "BadRequest", message: "Plat invalide pour cette story" });
@@ -177,7 +214,7 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
       caption,
       imageUrl: imageUrl || null,
       videoUrl: videoUrl || null,
-      videoDurationSeconds: Number.isFinite(videoDurationSeconds) ? videoDurationSeconds : null,
+      videoDurationSeconds: videoDurationSeconds ?? null,
       dishId: linkedDish?.id ?? null,
       dishName: linkedDish?.name ?? dishName ?? null,
       price: linkedDish ? getDishEffectivePrice(linkedDish) : price ?? null,
@@ -232,9 +269,15 @@ router.post("/stories", requireChef, async (req: AuthRequest, res) => {
   }
 });
 
-router.delete("/stories/:id", requireChef, async (req: AuthRequest, res) => {
+router.delete("/stories/:id", requireOperationalChef, async (req: AuthRequest, res) => {
   try {
-    const storyId = parseInt(String(req.params.id));
+    const parsedStoryId = parseWithSchema(idParamSchema, req.params.id);
+    if (!parsedStoryId.success) {
+      res.status(400).json({ error: "BadRequest", message: "Story invalide" });
+      return;
+    }
+
+    const storyId = parsedStoryId.data;
     const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, req.userId!));
 
     if (!cp) {
@@ -257,9 +300,15 @@ router.delete("/stories/:id", requireChef, async (req: AuthRequest, res) => {
 });
 
 // POST /api/stories/:id/like - toggle like on a story
-router.post("/stories/:id/like", requireAuth, async (req: AuthRequest, res) => {
+router.post("/stories/:id/like", requireAuth, storyLikeLimiter as any, async (req: AuthRequest, res) => {
   try {
-    const storyId = Number(req.params.id);
+    const parsedStoryId = parseWithSchema(idParamSchema, req.params.id);
+    if (!parsedStoryId.success) {
+      res.status(400).json({ error: "BadRequest", message: "Story invalide" });
+      return;
+    }
+
+    const storyId = parsedStoryId.data;
     const userId = req.userId;
     if (!userId) {
       res.status(401).json({ error: "Unauthorized" });
@@ -284,26 +333,29 @@ router.post("/stories/:id/like", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-router.post("/stories/:id/comments", requireAuth, async (req: AuthRequest, res) => {
+router.post("/stories/:id/comments", requireAuth, storyCommentLimiter as any, async (req: AuthRequest, res) => {
   try {
-    const storyId = Number(req.params.id);
+    const parsedStoryId = parseWithSchema(idParamSchema, req.params.id);
+    if (!parsedStoryId.success) {
+      res.status(400).json({ error: "BadRequest", message: "Story invalide" });
+      return;
+    }
+
+    const storyId = parsedStoryId.data;
     const userId = req.userId;
-    const body = String(req.body?.body ?? "").trim();
+    const parsedBody = parseWithSchema(storyCommentBodySchema, req.body);
 
     if (!userId) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
 
-    if (!body) {
-      res.status(400).json({ error: "BadRequest", message: "Le commentaire est requis" });
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "BadRequest", message: parsedBody.message });
       return;
     }
 
-    if (body.length > 180) {
-      res.status(400).json({ error: "BadRequest", message: "Le commentaire est trop long" });
-      return;
-    }
+    const { body } = parsedBody.data;
 
     const [story] = await db.select().from(storiesTable).where(eq(storiesTable.id, storyId)).limit(1);
     if (!story) {
@@ -337,6 +389,62 @@ router.post("/stories/:id/comments", requireAuth, async (req: AuthRequest, res) 
     console.error("comment story error", err);
     res.status(500).json({ error: "InternalError" });
   }
+});
+
+async function handleDeleteStoryComment(req: AuthRequest, res: Response) {
+  try {
+    const parsedParams = parseWithSchema(storyCommentParamsSchema, req.params);
+    if (!parsedParams.success) {
+      res.status(400).json({ error: "BadRequest", message: "Commentaire invalide" });
+      return;
+    }
+
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const { id: storyId, commentId } = parsedParams.data;
+    const [comment] = await db
+      .select()
+      .from(storyCommentsTable)
+      .where(and(eq(storyCommentsTable.id, commentId), eq(storyCommentsTable.storyId, storyId)))
+      .limit(1);
+
+    if (!comment) {
+      res.status(404).json({ error: "NotFound", message: "Commentaire introuvable" });
+      return;
+    }
+
+    if (comment.userId !== userId) {
+      res.status(403).json({ error: "Forbidden", message: "Vous ne pouvez supprimer que vos commentaires" });
+      return;
+    }
+
+    await db.delete(storyCommentsTable).where(eq(storyCommentsTable.id, commentId));
+
+    const remainingComments = await db
+      .select({ id: storyCommentsTable.id })
+      .from(storyCommentsTable)
+      .where(eq(storyCommentsTable.storyId, storyId));
+
+    res.json({
+      deletedCommentId: String(commentId),
+      commentCount: remainingComments.length,
+    });
+  } catch (err) {
+    console.error("delete story comment error", err);
+    res.status(500).json({ error: "InternalError" });
+  }
+}
+
+router.delete("/stories/:id/comments/:commentId", requireAuth, async (req: AuthRequest, res) => {
+  await handleDeleteStoryComment(req, res);
+});
+
+router.post("/stories/:id/comments/:commentId/delete", requireAuth, async (req: AuthRequest, res) => {
+  await handleDeleteStoryComment(req, res);
 });
 
 export default router;
