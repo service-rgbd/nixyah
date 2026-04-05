@@ -639,8 +639,9 @@ export default function StoriesFeed() {
         text: "Supprimer",
         style: "destructive",
         onPress: () => {
-          void deleteStoryComment(storyId, commentId).catch(() => {
-            Alert.alert("Suppression impossible", "Le commentaire n'a pas pu etre supprime.");
+          void deleteStoryComment(storyId, commentId).catch((error) => {
+            const message = error instanceof Error && error.message ? error.message : "Le commentaire n'a pas pu etre supprime.";
+            Alert.alert("Suppression impossible", message);
           });
         },
       },

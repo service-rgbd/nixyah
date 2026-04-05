@@ -895,16 +895,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   const deleteStoryComment = useCallback(async (storyId: string, commentId: string) => {
+    const resolvedToken = token ?? (await AsyncStorage.getItem("nixyah_token")) ?? undefined;
+
+    if (!resolvedToken) {
+      throw new Error("Connexion requise");
+    }
+
     try {
       let response = await apiFetch<{ deletedCommentId: string; commentCount: number }>(`/stories/${storyId}/comments/${commentId}`, {
         method: "DELETE",
-        token: token ?? undefined,
+        token: resolvedToken,
       });
 
       if (!response) {
         response = await apiFetch<{ deletedCommentId: string; commentCount: number }>(`/stories/${storyId}/comments/${commentId}/delete`, {
           method: "POST",
-          token: token ?? undefined,
+          token: resolvedToken,
         });
       }
 
@@ -926,7 +932,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         try {
           const response = await apiFetch<{ deletedCommentId: string; commentCount: number }>(`/stories/${storyId}/comments/${commentId}/delete`, {
             method: "POST",
-            token: token ?? undefined,
+            token: resolvedToken,
           });
 
           setStories((current) =>
