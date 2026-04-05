@@ -5,6 +5,11 @@ import rateLimit from "express-rate-limit";
 import router from "./routes";
 
 const app: Express = express();
+const isProduction = process.env.NODE_ENV === "production";
+
+// Render sits behind a reverse proxy and forwards client IP headers.
+// Trust the first proxy hop in production so express-rate-limit can derive client IPs safely.
+app.set("trust proxy", isProduction ? 1 : false);
 
 function getAllowedOrigins(): string[] {
   const configuredOrigins = [
@@ -16,14 +21,24 @@ function getAllowedOrigins(): string[] {
     .map((origin) => origin?.trim())
     .filter((origin): origin is string => Boolean(origin));
 
-  const defaults = [
-    "http://localhost:19006",
-    "http://localhost:8081",
-    "http://127.0.0.1:19006",
-    "http://127.0.0.1:8081",
-  ];
+  const defaults = isProduction
+    ? []
+    : [
+        "http://localhost:19006",
+        "http://localhost:8081",
+        "http://127.0.0.1:19006",
+        "http://127.0.0.1:8081",
+      ];
 
   return Array.from(new Set([...defaults, ...configuredOrigins]));
+}
+
+function isDevelopmentOrigin(origin: string): boolean {
+  return (
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin) ||
+    /^https?:\/\/192\.168\.\d+\.\d+(?::\d+)?$/i.test(origin) ||
+    /^https?:\/\/10\.\d+\.\d+\.\d+(?::\d+)?$/i.test(origin)
+  );
 }
 
 const allowedOrigins = getAllowedOrigins();
@@ -40,12 +55,7 @@ app.use(
         return;
       }
 
-      if (
-        allowedOrigins.includes(origin) ||
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin) ||
-        /^https?:\/\/192\.168\.\d+\.\d+(?::\d+)?$/i.test(origin) ||
-        /^https?:\/\/10\.\d+\.\d+\.\d+(?::\d+)?$/i.test(origin)
-      ) {
+      if (allowedOrigins.includes(origin) || (!isProduction && isDevelopmentOrigin(origin))) {
         callback(null, true);
         return;
       }
