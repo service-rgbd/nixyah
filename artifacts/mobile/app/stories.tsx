@@ -747,19 +747,21 @@ export default function StoriesFeed() {
               )}
             </ScrollView>
 
-            <Text style={styles.suggestionsLabel}>Reponses rapides</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsRow}>
-              {PREDEFINED_COMMENTS.map((comment) => (
-                <Pressable
-                  key={comment}
-                  style={styles.suggestionChip}
-                  onPress={() => selectedStory && void submitComment(selectedStory.id, comment)}
-                >
-                  <View style={styles.suggestionChipAccent} />
-                  <Text style={styles.suggestionChipText}>{comment}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
+            <View style={styles.suggestionsSection}>
+              <Text style={styles.suggestionsLabel}>Reponses rapides</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionsRow}>
+                {PREDEFINED_COMMENTS.map((comment) => (
+                  <Pressable
+                    key={comment}
+                    style={styles.suggestionChip}
+                    onPress={() => selectedStory && void submitComment(selectedStory.id, comment)}
+                  >
+                    <View style={styles.suggestionChipAccent} />
+                    <Text style={styles.suggestionChipText}>{comment}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
 
             <View style={styles.commentComposer}>
               <TextInput
@@ -1194,42 +1196,45 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: Colors.light.backgroundSecondary,
   },
+  suggestionsSection: {
+    marginBottom: 6,
+  },
   suggestionsLabel: {
-    fontSize: 10,
-    fontFamily: "Poppins_700Bold",
-    color: Colors.light.textSecondary,
-    marginBottom: 4,
+    fontSize: 9,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.textTertiary,
+    marginBottom: 3,
     textTransform: "uppercase",
-    letterSpacing: 0.3,
-    marginTop: 6,
+    letterSpacing: 0.2,
+    marginTop: 2,
   },
   suggestionsRow: {
-    gap: 4,
-    paddingRight: 20,
+    gap: 3,
+    paddingRight: 12,
     paddingBottom: 0,
-    marginBottom: 8,
+    marginBottom: 0,
   },
   suggestionChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: "#FFF8F2",
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: "rgba(196,82,42,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(212,97,26,0.14)",
-    minHeight: 28,
+    borderColor: "rgba(196,82,42,0.1)",
+    minHeight: 24,
   },
   suggestionChipAccent: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: Colors.light.tint,
   },
   suggestionChipText: {
-    fontSize: 10,
-    lineHeight: 12,
+    fontSize: 9,
+    lineHeight: 11,
     fontFamily: "Poppins_500Medium",
     color: Colors.light.textSecondary,
   },
