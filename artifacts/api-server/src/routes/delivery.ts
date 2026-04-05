@@ -13,7 +13,7 @@ import {
 import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { geocodeAddress } from "../lib/geocoding.js";
 import { notifyUsers } from "../lib/notifications.js";
-import { requireAuth, requireOperationalChef, requireClient, requireVerifiedCourier, type AuthRequest } from "../middlewares/auth.js";
+import { requireAuth, requireOperationalChef, requireClient, requireCourier, requireVerifiedCourier, type AuthRequest } from "../middlewares/auth.js";
 import { parseWithSchema, idParamSchema } from "../lib/validation.js";
 import {
   clientDeliveryLocationBodySchema,
@@ -810,7 +810,7 @@ router.get("/delivery/jobs/available", requireVerifiedCourier, async (req: AuthR
   }
 });
 
-router.get("/delivery/jobs/current", requireVerifiedCourier, async (req: AuthRequest, res) => {
+router.get("/delivery/jobs/current", requireCourier, async (req: AuthRequest, res) => {
   try {
     const jobs = await db
       .select()
@@ -832,7 +832,7 @@ router.get("/delivery/jobs/current", requireVerifiedCourier, async (req: AuthReq
   }
 });
 
-router.get("/delivery/jobs/history", requireVerifiedCourier, async (req: AuthRequest, res) => {
+router.get("/delivery/jobs/history", requireCourier, async (req: AuthRequest, res) => {
   try {
     const jobs = await db
       .select()

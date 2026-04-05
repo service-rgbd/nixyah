@@ -968,6 +968,7 @@ export default function OrdersScreen() {
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const isCourier = user?.type === "courier";
   const isChef = user?.type === "chef";
+  const isVerifiedCourier = isCourier && Boolean(user?.courierProfile?.isVerified);
   const isDeliveryMode = params.mode === "delivery";
   const [availableJobs, setAvailableJobs] = useState<DeliveryJob[]>([]);
   const [currentJobs, setCurrentJobs] = useState<DeliveryJob[]>([]);
@@ -984,7 +985,7 @@ export default function OrdersScreen() {
   const alertedMissionIdsRef = useRef<Set<string>>(new Set());
 
   const syncCourierAvailabilityLocation = useCallback(async () => {
-    if (!token || !isCourier) {
+    if (!token || !isCourier || !isVerifiedCourier) {
       return;
     }
 
@@ -1011,18 +1012,25 @@ export default function OrdersScreen() {
 
       courierLocationSyncedAtRef.current = Date.now();
     } catch (error) {
+      if (error instanceof ApiError && error.code === "CourierUnverified") {
+        return;
+      }
       console.warn("Failed to sync courier location:", error);
     }
-  }, [isCourier, token]);
+  }, [isCourier, isVerifiedCourier, token]);
 
   const loadCourierJobs = useCallback(async () => {
     if (!token) return;
     setLoadingCourier(true);
     try {
-      await syncCourierAvailabilityLocation();
+      if (isVerifiedCourier) {
+        await syncCourierAvailabilityLocation();
+      }
 
       const [availableResult, currentResult, historyResult] = await Promise.allSettled([
-        apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/available", { token }),
+        isVerifiedCourier
+          ? apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/available", { token })
+          : Promise.resolve({ jobs: [] as DeliveryJob[] }),
         apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/current", { token }),
         apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/history", { token }),
       ]);
@@ -1031,7 +1039,9 @@ export default function OrdersScreen() {
       setCurrentJobs(currentResult.status === "fulfilled" ? (currentResult.value.jobs ?? []) : []);
       setHistoryJobs(historyResult.status === "fulfilled" ? (historyResult.value.jobs ?? []) : []);
 
-      if (historyResult.status === "rejected") {
+      if (!isVerifiedCourier) {
+        setCourierLoadNotice("Votre compte livreur est en cours de vérification. Les nouvelles missions resteront masquées jusqu'à validation, mais votre historique et vos missions déjà assignées restent visibles.");
+      } else if (historyResult.status === "rejected") {
         setCourierLoadNotice("L'historique des missions n'est pas encore disponible sur ce backend déployé. Les missions en cours et disponibles restent visibles.");
       } else if (availableResult.status === "rejected" || currentResult.status === "rejected") {
         setCourierLoadNotice("Certaines missions n'ont pas pu être chargées. Réessayez dans quelques secondes.");
@@ -1044,7 +1054,7 @@ export default function OrdersScreen() {
     } finally {
       setLoadingCourier(false);
     }
-  }, [syncCourierAvailabilityLocation, token]);
+  }, [isVerifiedCourier, syncCourierAvailabilityLocation, token]);
 
   useEffect(() => {
     if (!isCourier || loadingCourier || availableJobs.length === 0) {
