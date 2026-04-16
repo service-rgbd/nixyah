@@ -15,7 +15,13 @@ import {
 } from "@workspace/db/schema";
 import { requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import { parseWithSchema, idParamSchema } from "../lib/validation.js";
-import { adminChefStatusSchema, adminChefVerifySchema, adminCommerceStoreStatusSchema } from "../lib/request-schemas.js";
+import {
+  adminChefStatusSchema,
+  adminChefVerifySchema,
+  adminCommerceStoreStatusSchema,
+  adminCourierStatusSchema,
+  adminCourierVerifySchema,
+} from "../lib/request-schemas.js";
 
 const router = express.Router();
 
@@ -112,6 +118,30 @@ function formatOrderStatus(status: string, deliveryStatus?: string | null) {
     return "Livree";
   }
   return status;
+}
+
+function resolveChefStatus(profile: typeof chefProfilesTable.$inferSelect): "active" | "suspended" | "pending_verification" | "rejected" {
+  if (profile.isVerified && profile.isOnline) return "active";
+  if (profile.isVerified && !profile.isOnline) return "suspended";
+  if (!profile.isVerified && profile.isOnline) return "pending_verification";
+  return "rejected";
+}
+
+function resolveCourierStatus(profile: typeof courierProfilesTable.$inferSelect): "active" | "suspended" | "pending_verification" | "rejected" {
+  if (profile.isVerified && profile.isAvailable) return "active";
+  if (profile.isVerified && !profile.isAvailable) return "suspended";
+  if (!profile.isVerified && profile.isAvailable) return "pending_verification";
+  return "rejected";
+}
+
+function isCourierDossierComplete(profile: typeof courierProfilesTable.$inferSelect) {
+  return Boolean(
+    profile.identityDocumentUrl &&
+    profile.driverLicenseUrl &&
+    profile.vehicleRegistrationUrl &&
+    profile.vehiclePhotoUrl &&
+    profile.selfiePhotoUrl
+  );
 }
 
 router.get("/admin/dashboard/overview", requireAdmin, async (req: AuthRequest, res) => {
@@ -503,12 +533,6 @@ router.get("/admin/chefs", requireAdmin, async (req: AuthRequest, res) => {
 
     const chefs = profiles
       .map(({ chef_profiles: cp, users: u }) => {
-        let status: "active" | "suspended" | "pending_verification" | "rejected";
-        if (cp.isVerified && cp.isOnline) status = "active";
-        else if (cp.isVerified && !cp.isOnline) status = "suspended";
-        else if (!cp.isVerified && cp.isOnline) status = "pending_verification";
-        else status = "rejected";
-
         return {
           id: String(cp.id),
           name: u.name,
@@ -525,7 +549,7 @@ router.get("/admin/chefs", requireAdmin, async (req: AuthRequest, res) => {
           rating: cp.rating,
           reviewCount: cp.reviewCount,
           stars: cp.stars ?? null,
-          status,
+          status: resolveChefStatus(cp),
           createdAt: cp.createdAt?.toISOString() ?? null,
         };
       })
@@ -563,12 +587,6 @@ router.post("/admin/chefs/:id/status", requireAdmin, async (req: AuthRequest, re
     if (!updated) return res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
-    let resolvedStatus: "active" | "suspended" | "pending_verification" | "rejected";
-    if (updated.isVerified && updated.isOnline) resolvedStatus = "active";
-    else if (updated.isVerified && !updated.isOnline) resolvedStatus = "suspended";
-    else if (!updated.isVerified && updated.isOnline) resolvedStatus = "pending_verification";
-    else resolvedStatus = "rejected";
-
     return res.json({
       chef: {
         id: String(updated.id),
@@ -586,7 +604,7 @@ router.post("/admin/chefs/:id/status", requireAdmin, async (req: AuthRequest, re
         rating: updated.rating,
         reviewCount: updated.reviewCount,
         stars: updated.stars ?? null,
-        status: resolvedStatus,
+        status: resolveChefStatus(updated),
         createdAt: updated.createdAt?.toISOString() ?? null,
       },
     });
@@ -610,12 +628,6 @@ router.post("/admin/chefs/:id/verify", requireAdmin, async (req: AuthRequest, re
     if (!updated) return res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
-    let resolvedStatus: "active" | "suspended" | "pending_verification" | "rejected";
-    if (updated.isVerified && updated.isOnline) resolvedStatus = "active";
-    else if (updated.isVerified && !updated.isOnline) resolvedStatus = "suspended";
-    else if (!updated.isVerified && updated.isOnline) resolvedStatus = "pending_verification";
-    else resolvedStatus = "rejected";
-
     return res.json({
       chef: {
         id: String(updated.id),
@@ -633,12 +645,166 @@ router.post("/admin/chefs/:id/verify", requireAdmin, async (req: AuthRequest, re
         rating: updated.rating,
         reviewCount: updated.reviewCount,
         stars: updated.stars ?? null,
-        status: resolvedStatus,
+        status: resolveChefStatus(updated),
         createdAt: updated.createdAt?.toISOString() ?? null,
       },
     });
   } catch (error) {
     console.error("admin verify chef error", error);
+    return res.status(500).json({ error: "InternalError" });
+  }
+});
+
+router.get("/admin/couriers", requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const statusFilter = typeof req.query.status === "string" ? req.query.status.trim() : "";
+    const zoneFilter = typeof req.query.zone === "string" ? req.query.zone.trim() : "";
+
+    const profiles = await db
+      .select()
+      .from(courierProfilesTable)
+      .innerJoin(usersTable, eq(courierProfilesTable.userId, usersTable.id))
+      .orderBy(desc(courierProfilesTable.createdAt));
+
+    const couriers = profiles
+      .map(({ courier_profiles: cp, users: u }) => ({
+        id: cp.id,
+        name: u.name,
+        email: u.email ?? null,
+        phone: u.phone ?? null,
+        location: u.location ?? null,
+        zone: cp.zone || null,
+        vehicleType: cp.vehicleType,
+        isVerified: cp.isVerified,
+        isAvailable: cp.isAvailable,
+        rating: cp.rating,
+        reviewCount: cp.reviewCount,
+        stars: cp.stars ?? null,
+        complaintCount: cp.complaintCount,
+        activeInvestigationCount: cp.activeInvestigationCount,
+        bonusEarnedAmount: cp.bonusEarnedAmount,
+        isDossierComplete: isCourierDossierComplete(cp),
+        dossierSubmittedAt: cp.dossierSubmittedAt?.toISOString() ?? null,
+        lastLocationAt: cp.lastLocationAt?.toISOString() ?? null,
+        status: resolveCourierStatus(cp),
+        createdAt: cp.createdAt?.toISOString() ?? null,
+      }))
+      .filter((courier) => {
+        if (statusFilter && statusFilter !== "all" && courier.status !== statusFilter) return false;
+        if (zoneFilter && zoneFilter !== "all" && courier.zone !== zoneFilter) return false;
+        return true;
+      });
+
+    return res.json({ couriers });
+  } catch (error) {
+    console.error("admin list couriers error", error);
+    return res.status(500).json({ error: "InternalError" });
+  }
+});
+
+router.post("/admin/couriers/:id/status", requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const parsedCourierId = parseWithSchema(idParamSchema, req.params.id);
+    const parsedBody = parseWithSchema(adminCourierStatusSchema, req.body);
+    if (!parsedCourierId.success) return res.status(400).json({ error: "BadRequest", message: "ID invalide" });
+    if (!parsedBody.success) return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+
+    const courierId = parsedCourierId.data;
+    const { status } = parsedBody.data;
+
+    const [currentProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.id, courierId)).limit(1);
+    if (!currentProfile) return res.status(404).json({ error: "NotFound", message: "Livreur introuvable" });
+    if ((status === "active" || status === "suspended") && !isCourierDossierComplete(currentProfile)) {
+      return res.status(400).json({ error: "BadRequest", message: "Le dossier du livreur doit être complet avant validation." });
+    }
+
+    let updateFields: Partial<{ isVerified: boolean; isAvailable: boolean }> = {};
+    if (status === "active") updateFields = { isVerified: true, isAvailable: true };
+    else if (status === "suspended") updateFields = { isVerified: true, isAvailable: false };
+    else if (status === "rejected") updateFields = { isVerified: false, isAvailable: false };
+    else if (status === "pending_verification") updateFields = { isVerified: false, isAvailable: true };
+    else return res.status(400).json({ error: "BadRequest", message: "Statut inconnu" });
+
+    const [updated] = await db.update(courierProfilesTable).set(updateFields).where(eq(courierProfilesTable.id, courierId)).returning();
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+
+    return res.json({
+      courier: {
+        id: updated.id,
+        name: user?.name ?? `Livreur ${updated.id}`,
+        email: user?.email ?? null,
+        phone: user?.phone ?? null,
+        location: user?.location ?? null,
+        zone: updated.zone || null,
+        vehicleType: updated.vehicleType,
+        isVerified: updated.isVerified,
+        isAvailable: updated.isAvailable,
+        rating: updated.rating,
+        reviewCount: updated.reviewCount,
+        stars: updated.stars ?? null,
+        complaintCount: updated.complaintCount,
+        activeInvestigationCount: updated.activeInvestigationCount,
+        bonusEarnedAmount: updated.bonusEarnedAmount,
+        isDossierComplete: isCourierDossierComplete(updated),
+        dossierSubmittedAt: updated.dossierSubmittedAt?.toISOString() ?? null,
+        lastLocationAt: updated.lastLocationAt?.toISOString() ?? null,
+        status: resolveCourierStatus(updated),
+        createdAt: updated.createdAt?.toISOString() ?? null,
+      },
+    });
+  } catch (error) {
+    console.error("admin update courier status error", error);
+    return res.status(500).json({ error: "InternalError" });
+  }
+});
+
+router.post("/admin/couriers/:id/verify", requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const parsedCourierId = parseWithSchema(idParamSchema, req.params.id);
+    const parsedBody = parseWithSchema(adminCourierVerifySchema, req.body);
+    if (!parsedCourierId.success) return res.status(400).json({ error: "BadRequest", message: "ID invalide" });
+    if (!parsedBody.success) return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+
+    const courierId = parsedCourierId.data;
+    const { isVerified } = parsedBody.data;
+
+    const [currentProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.id, courierId)).limit(1);
+    if (!currentProfile) return res.status(404).json({ error: "NotFound", message: "Livreur introuvable" });
+    if (isVerified && !isCourierDossierComplete(currentProfile)) {
+      return res.status(400).json({ error: "BadRequest", message: "Le dossier du livreur doit être complet avant validation." });
+    }
+
+    const [updated] = await db.update(courierProfilesTable).set({ isVerified }).where(eq(courierProfilesTable.id, courierId)).returning();
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+
+    return res.json({
+      courier: {
+        id: updated.id,
+        name: user?.name ?? `Livreur ${updated.id}`,
+        email: user?.email ?? null,
+        phone: user?.phone ?? null,
+        location: user?.location ?? null,
+        zone: updated.zone || null,
+        vehicleType: updated.vehicleType,
+        isVerified: updated.isVerified,
+        isAvailable: updated.isAvailable,
+        rating: updated.rating,
+        reviewCount: updated.reviewCount,
+        stars: updated.stars ?? null,
+        complaintCount: updated.complaintCount,
+        activeInvestigationCount: updated.activeInvestigationCount,
+        bonusEarnedAmount: updated.bonusEarnedAmount,
+        isDossierComplete: isCourierDossierComplete(updated),
+        dossierSubmittedAt: updated.dossierSubmittedAt?.toISOString() ?? null,
+        lastLocationAt: updated.lastLocationAt?.toISOString() ?? null,
+        status: resolveCourierStatus(updated),
+        createdAt: updated.createdAt?.toISOString() ?? null,
+      },
+    });
+  } catch (error) {
+    console.error("admin verify courier error", error);
     return res.status(500).json({ error: "InternalError" });
   }
 });

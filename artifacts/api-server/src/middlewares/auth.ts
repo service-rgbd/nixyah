@@ -179,6 +179,21 @@ export async function requireVerifiedCourier(req: AuthRequest, res: Response, ne
     return;
   }
 
+  const isDossierComplete = Boolean(
+    courierProfile.identityDocumentUrl &&
+    courierProfile.driverLicenseUrl &&
+    courierProfile.vehicleRegistrationUrl &&
+    courierProfile.vehiclePhotoUrl &&
+    courierProfile.selfiePhotoUrl
+  );
+  if (!isDossierComplete) {
+    res.status(403).json({
+      error: "CourierDossierIncomplete",
+      message: "Votre dossier livreur doit être complet avant de participer à de nouvelles missions",
+    });
+    return;
+  }
+
   next();
 }
 

@@ -30,6 +30,12 @@ export const clientDeliveryLocationBodySchema = z.object({
   deliveryAddress: optionalAddressSchema.optional(),
 });
 
+export const deliveryCompletionBodySchema = z.object({
+  latitude: latitudeSchema,
+  longitude: longitudeSchema,
+  accuracy: z.coerce.number().finite().min(0).max(10000).nullable().optional(),
+});
+
 export const cartAddItemBodySchema = z.object({
   dishId: idParamSchema,
   quantity: positiveQuantitySchema.default(1),
@@ -90,6 +96,22 @@ export const adminChefStatusSchema = z.object({
 
 export const adminChefVerifySchema = z.object({
   isVerified: z.boolean(),
+});
+
+export const adminCourierStatusSchema = z.object({
+  status: z.enum(["active", "suspended", "pending_verification", "rejected"]),
+});
+
+export const adminCourierVerifySchema = z.object({
+  isVerified: z.boolean(),
+});
+
+export const courierVerificationDossierSchema = z.object({
+  identityDocumentUrl: safeUrlString.nullable().optional(),
+  driverLicenseUrl: safeUrlString.nullable().optional(),
+  vehicleRegistrationUrl: safeUrlString.nullable().optional(),
+  vehiclePhotoUrl: safeUrlString.nullable().optional(),
+  selfiePhotoUrl: safeUrlString.nullable().optional(),
 });
 
 const merchantUniverseSchema = z.enum(["courses", "supermarkets", "boutiques"]);
@@ -190,6 +212,9 @@ export type CustomRequestStatusBody = z.infer<typeof customRequestStatusSchema>;
 export type AdminCommerceStoreStatusBody = z.infer<typeof adminCommerceStoreStatusSchema>;
 export type AdminChefStatusBody = z.infer<typeof adminChefStatusSchema>;
 export type AdminChefVerifyBody = z.infer<typeof adminChefVerifySchema>;
+export type AdminCourierStatusBody = z.infer<typeof adminCourierStatusSchema>;
+export type AdminCourierVerifyBody = z.infer<typeof adminCourierVerifySchema>;
+export type CourierVerificationDossierBody = z.infer<typeof courierVerificationDossierSchema>;
 export type MerchantCreateStoreBody = z.infer<typeof merchantCreateStoreSchema>;
 export type MerchantUpdateStoreBody = z.infer<typeof merchantUpdateStoreSchema>;
 export type MerchantCreateProductBody = z.infer<typeof merchantCreateProductSchema>;

@@ -172,6 +172,8 @@ async function sendConfirmationEmail(to: string, name: string, token: string) {
   }).catch((e) => console.warn("Resend error", e));
 }
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
+import { parseWithSchema } from "../lib/validation.js";
+import { courierVerificationDossierSchema } from "../lib/request-schemas.js";
 
 const router: IRouter = Router();
 
@@ -282,11 +284,26 @@ function buildChefProfile(user: any, profile: any) {
 }
 
 function buildCourierProfile(profile: any) {
+  const verificationDocuments = {
+    identityDocumentUrl: profile.identityDocumentUrl ?? null,
+    driverLicenseUrl: profile.driverLicenseUrl ?? null,
+    vehicleRegistrationUrl: profile.vehicleRegistrationUrl ?? null,
+    vehiclePhotoUrl: profile.vehiclePhotoUrl ?? null,
+    selfiePhotoUrl: profile.selfiePhotoUrl ?? null,
+  };
+  const missingDocuments = Object.entries(verificationDocuments)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+
   return {
     id: String(profile.id),
     userId: String(profile.userId),
     zone: profile.zone,
     vehicleType: profile.vehicleType,
+    verificationDocuments,
+    isDossierComplete: missingDocuments.length === 0,
+    missingDocuments,
+    dossierSubmittedAt: profile.dossierSubmittedAt ? profile.dossierSubmittedAt.toISOString() : null,
     isAvailable: profile.isAvailable,
     isVerified: profile.isVerified,
     rating: profile.rating,
@@ -925,6 +942,76 @@ router.patch("/auth/me", requireAuth, async (req: AuthRequest, res) => {
     });
   } catch (err) {
     console.error("update me error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.patch("/auth/me/courier-dossier", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+    if (!user || user.type !== "courier") {
+      res.status(403).json({ error: "Forbidden", message: "Réservé aux livreurs" });
+      return;
+    }
+
+    const parsedBody = parseWithSchema(courierVerificationDossierSchema, req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+      return;
+    }
+
+    const payload = parsedBody.data;
+    const updates: Record<string, string | Date | null> = {};
+    const documentFields = [
+      "identityDocumentUrl",
+      "driverLicenseUrl",
+      "vehicleRegistrationUrl",
+      "vehiclePhotoUrl",
+      "selfiePhotoUrl",
+    ] as const;
+
+    for (const field of documentFields) {
+      if (typeof payload[field] === "undefined") {
+        continue;
+      }
+      const value = payload[field];
+      if (value !== null && !isOwnedUploadUrl(value, "courier-document", userId)) {
+        res.status(400).json({ error: "BadRequest", message: "Document invalide ou non autorisé" });
+        return;
+      }
+      updates[field] = value ?? null;
+    }
+
+    const [currentProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, userId)).limit(1);
+    if (!currentProfile) {
+      res.status(404).json({ error: "NotFound", message: "Profil livreur introuvable" });
+      return;
+    }
+
+    const nextProfileShape = {
+      identityDocumentUrl: Object.prototype.hasOwnProperty.call(updates, "identityDocumentUrl") ? updates.identityDocumentUrl : currentProfile.identityDocumentUrl,
+      driverLicenseUrl: Object.prototype.hasOwnProperty.call(updates, "driverLicenseUrl") ? updates.driverLicenseUrl : currentProfile.driverLicenseUrl,
+      vehicleRegistrationUrl: Object.prototype.hasOwnProperty.call(updates, "vehicleRegistrationUrl") ? updates.vehicleRegistrationUrl : currentProfile.vehicleRegistrationUrl,
+      vehiclePhotoUrl: Object.prototype.hasOwnProperty.call(updates, "vehiclePhotoUrl") ? updates.vehiclePhotoUrl : currentProfile.vehiclePhotoUrl,
+      selfiePhotoUrl: Object.prototype.hasOwnProperty.call(updates, "selfiePhotoUrl") ? updates.selfiePhotoUrl : currentProfile.selfiePhotoUrl,
+    };
+    const isDossierComplete = Object.values(nextProfileShape).every((value) => Boolean(value));
+    if (Object.keys(updates).length === 0 && !isDossierComplete) {
+      res.status(400).json({ error: "BadRequest", message: "Aucun document à mettre à jour" });
+      return;
+    }
+    updates.dossierSubmittedAt = isDossierComplete ? new Date() : null;
+
+    const [updatedProfile] = await db
+      .update(courierProfilesTable)
+      .set(updates)
+      .where(eq(courierProfilesTable.userId, userId))
+      .returning();
+
+    res.json({ courierProfile: buildCourierProfile(updatedProfile) });
+  } catch (err) {
+    console.error("update courier dossier error:", err);
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });

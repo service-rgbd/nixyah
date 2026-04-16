@@ -26,7 +26,17 @@ const R2_PUBLIC_BASE_URL = normalizePublicBaseUrl(
   process.env.R2_PUBLIC_BASE_URL ?? process.env.R2_PUBLIC_URL,
 );
 
-export type UploadPurpose = "avatar" | "story" | "dish";
+export type UploadPurpose = "avatar" | "story" | "dish" | "courier-document";
+
+const UPLOAD_PURPOSE_ALIASES: Record<string, UploadPurpose> = {
+  avatar: "avatar",
+  story: "story",
+  dish: "dish",
+  "courier-document": "courier-document",
+  courier_document: "courier-document",
+  courierdocument: "courier-document",
+  document: "courier-document",
+};
 
 const IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
@@ -44,6 +54,7 @@ const PURPOSE_CONFIG: Record<UploadPurpose, { prefix: string; maxBytes: number }
   avatar: { prefix: "avatars", maxBytes: 5 * 1024 * 1024 },
   story: { prefix: "stories", maxBytes: 100 * 1024 * 1024 },
   dish: { prefix: "dishes", maxBytes: 10 * 1024 * 1024 },
+  "courier-document": { prefix: "courier-documents", maxBytes: 10 * 1024 * 1024 },
 };
 
 export function getR2Config() {
@@ -80,6 +91,14 @@ function getExtension(filename: string): string | null {
   return parts.at(-1) ?? null;
 }
 
+function normalizeUploadPurpose(value: unknown): UploadPurpose | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return UPLOAD_PURPOSE_ALIASES[value.trim().toLowerCase()] ?? null;
+}
+
 export function validateUploadInput(input: {
   filename: unknown;
   contentType: unknown;
@@ -88,7 +107,7 @@ export function validateUploadInput(input: {
 }): { filename: string; contentType: string; purpose: UploadPurpose; fileSize: number } {
   const filename = typeof input.filename === "string" ? input.filename.trim() : "";
   const contentType = typeof input.contentType === "string" ? input.contentType.trim().toLowerCase() : "";
-  const purpose = typeof input.purpose === "string" ? input.purpose.trim().toLowerCase() : "";
+  const purpose = normalizeUploadPurpose(input.purpose);
   const fileSize = Number(input.fileSize);
 
   if (!filename) {
@@ -97,8 +116,8 @@ export function validateUploadInput(input: {
   if (!contentType || (!IMAGE_MIME_TYPES.has(contentType) && !VIDEO_MIME_TYPES.has(contentType))) {
     throw new Error("Type de fichier non autorisé.");
   }
-  if (purpose !== "avatar" && purpose !== "story" && purpose !== "dish") {
-    throw new Error("Usage d'upload invalide.");
+  if (!purpose) {
+    throw new Error("Usage d'upload invalide. Valeurs attendues: avatar, story, dish, courier-document.");
   }
   const extension = getExtension(filename);
   if (!extension || (!IMAGE_EXTENSIONS.has(extension) && !VIDEO_EXTENSIONS.has(extension))) {
