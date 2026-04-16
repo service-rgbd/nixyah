@@ -1862,6 +1862,90 @@
   border: 1px dashed #cbd5e1;
 }
 
+.admin-courier-documents-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-courier-document-card {
+  display: grid;
+  gap: 10px;
+  min-height: 100%;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid #e5e7eb;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.admin-courier-document-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(20, 184, 166, 0.35);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+}
+
+.admin-courier-document-card img,
+.admin-courier-document-placeholder {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.admin-courier-document-card img {
+  object-fit: cover;
+}
+
+.admin-courier-document-placeholder {
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f8fafc,
+    #f8fafc 12px,
+    #f1f5f9 12px,
+    #f1f5f9 24px
+  );
+}
+
+.admin-courier-document-card.is-missing {
+  border-style: dashed;
+  color: var(--text-3);
+}
+
+.admin-courier-document-card.is-missing:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: #e5e7eb;
+}
+
+.admin-courier-document-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-courier-document-copy strong {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--text-1);
+}
+
+.admin-courier-document-copy span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.admin-courier-document-copy small {
+  font-size: 11px;
+  color: var(--text-4);
+}
+
 .admin-operations-shell {
   display: grid;
   gap: 18px;
@@ -2248,7 +2332,8 @@
   .admin-kpi-grid-upgraded,
   .admin-ops-snapshot-grid,
   .admin-preview-ops-grid,
-  .admin-preview-facts-grid {
+  .admin-preview-facts-grid,
+  .admin-courier-documents-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -2261,6 +2346,7 @@
   .admin-ops-snapshot-grid,
   .admin-preview-ops-grid,
   .admin-preview-facts-grid,
+  .admin-courier-documents-grid,
   .admin-users-row {
     grid-template-columns: 1fr;
   }

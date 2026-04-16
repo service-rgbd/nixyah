@@ -41,11 +41,13 @@ import {
 import {
   apiClient,
   type AdminChef,
+  type AdminCourier,
   type AdminDashboardPayload,
   type AdminStore,
   type AdminUser,
   type AuthUser,
   type ChefStatus,
+  type CourierStatus,
   type MerchantOrder,
   type MerchantProduct,
   type MerchantProductInput,
@@ -204,6 +206,46 @@ function getChefStatusTone(status: ChefStatus): string {
     rejected: "rejected",
   };
   return map[status] ?? "draft";
+}
+
+function humanizeCourierStatus(status: CourierStatus): string {
+  const map: Record<CourierStatus, string> = {
+    active: "Actif",
+    suspended: "Suspendu",
+    pending_verification: "En verification",
+    rejected: "Rejete",
+  };
+  return map[status] ?? humanizeStatus(status);
+}
+
+function getCourierStatusTone(status: CourierStatus): string {
+  const map: Record<CourierStatus, string> = {
+    active: "approved",
+    suspended: "suspended",
+    pending_verification: "pending_review",
+    rejected: "rejected",
+  };
+  return map[status] ?? "draft";
+}
+
+const COURIER_DOCUMENT_FIELDS: Array<{
+  key: keyof AdminCourier["verificationDocuments"];
+  label: string;
+  hint: string;
+}> = [
+  { key: "identityDocumentUrl", label: "Piece d'identite", hint: "CNI, passeport ou recepisse" },
+  { key: "driverLicenseUrl", label: "Permis de conduire", hint: "Permis du livreur" },
+  { key: "vehicleRegistrationUrl", label: "Carte grise", hint: "Document du vehicule" },
+  { key: "vehiclePhotoUrl", label: "Photo du vehicule", hint: "Vehicule reellement utilise" },
+  { key: "selfiePhotoUrl", label: "Selfie de verification", hint: "Visage clairement visible" },
+];
+
+function getCourierDocumentCount(courier?: AdminCourier | null) {
+  if (!courier) {
+    return 0;
+  }
+
+  return COURIER_DOCUMENT_FIELDS.filter(({ key }) => Boolean(courier.verificationDocuments[key])).length;
 }
 
 function SummaryCard({
@@ -910,6 +952,11 @@ function AdminDashboard({
   setChefsFilter,
   onUpdateChefStatus,
   onVerifyChef,
+  couriers,
+  couriersFilter,
+  setCouriersFilter,
+  onUpdateCourierStatus,
+  onVerifyCourier,
   allUsers,
   busy,
 }: {
@@ -923,6 +970,11 @@ function AdminDashboard({
   setChefsFilter: (value: ChefStatus | "all") => void;
   onUpdateChefStatus: (chefId: string, status: ChefStatus) => void;
   onVerifyChef: (chefId: string, isVerified: boolean) => void;
+  couriers: AdminCourier[];
+  couriersFilter: CourierStatus | "all";
+  setCouriersFilter: (value: CourierStatus | "all") => void;
+  onUpdateCourierStatus: (courierId: number, status: CourierStatus) => void;
+  onVerifyCourier: (courierId: number, isVerified: boolean) => void;
   allUsers: AdminUser[];
   busy: boolean;
 }) {
@@ -942,6 +994,7 @@ function AdminDashboard({
   const [chartMode, setChartMode] = useState<"orders" | "revenue">("orders");
   const [partnerTab, setPartnerTab] = useState<"all" | "supermarkets" | "boutiques" | "courses">("all");
   const [chefSort, setChefSort] = useState<"createdAt" | "rating" | "reviews">("createdAt");
+  const [courierSort, setCourierSort] = useState<"createdAt" | "rating" | "complaints">("createdAt");
   const [rangeStart, setRangeStart] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() - 6);
@@ -1001,14 +1054,18 @@ function AdminDashboard({
       setSelectedChefKey(null);
     }
 
-    if (selectedCourierId && !(dashboard?.couriers.some((courier) => courier.id === selectedCourierId) ?? false)) {
+    if (
+      selectedCourierId &&
+      !couriers.some((courier) => courier.id === selectedCourierId) &&
+      !(dashboard?.couriers.some((courier) => courier.id === selectedCourierId) ?? false)
+    ) {
       setSelectedCourierId(null);
     }
 
     if (selectedStoreId && !stores.some((store) => store.id === selectedStoreId)) {
       setSelectedStoreId(null);
     }
-  }, [allUsers, chefs, dashboard?.chefs, dashboard?.couriers, selectedChefKey, selectedCourierId, selectedStoreId, selectedUserId, stores]);
+  }, [allUsers, chefs, couriers, dashboard?.chefs, dashboard?.couriers, selectedChefKey, selectedCourierId, selectedStoreId, selectedUserId, stores]);
 
   useEffect(() => {
     const hasOpenPreview = Boolean(selectedOrderId || selectedUserId || selectedChefKey || selectedCourierId || selectedStoreId);
@@ -1055,6 +1112,8 @@ function AdminDashboard({
   const selectedChef = chefs.find((chef) => chef.id === selectedChefKey || chef.name === selectedChefKey) ?? null;
   const selectedChefSnapshot = analytics?.chefs.find((chef) => String(chef.id) === selectedChefKey || chef.name === selectedChefKey) ?? null;
   const selectedCourier = analytics?.couriers.find((courier) => courier.id === selectedCourierId) ?? null;
+  const selectedCourierRecord = couriers.find((courier) => courier.id === selectedCourierId) ?? null;
+  const selectedCourierDocumentCount = getCourierDocumentCount(selectedCourierRecord);
   const selectedStore = stores.find((store) => store.id === selectedStoreId) ?? null;
   const delayedOrdersCount = analytics?.orders.filter((order) => order.isDelayed).length ?? 0;
   const chefStatusCounts = useMemo(() => {
@@ -1063,6 +1122,12 @@ function AdminDashboard({
       return accumulator;
     }, {});
   }, [chefs]);
+  const courierStatusCounts = useMemo(() => {
+    return couriers.reduce<Record<string, number>>((accumulator, courier) => {
+      accumulator[courier.status] = (accumulator[courier.status] ?? 0) + 1;
+      return accumulator;
+    }, {});
+  }, [couriers]);
   const topZone = analytics?.zones[0] ?? null;
   const topPartner = analytics?.partners.supermarkets[0] ?? analytics?.partners.boutiques[0] ?? null;
   const currentChartSeries = useMemo(() => {
@@ -1100,6 +1165,23 @@ function AdminDashboard({
     });
     return next;
   }, [chefSort, chefs]);
+  const sortedCouriers = useMemo(() => {
+    const next = [...couriers];
+    if (courierSort === "rating") {
+      next.sort((left, right) => right.rating - left.rating || right.reviewCount - left.reviewCount);
+      return next;
+    }
+    if (courierSort === "complaints") {
+      next.sort((left, right) => left.complaintCount - right.complaintCount || right.rating - left.rating);
+      return next;
+    }
+    next.sort((left, right) => {
+      const leftDate = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+      const rightDate = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+      return rightDate - leftDate;
+    });
+    return next;
+  }, [courierSort, couriers]);
   const visiblePartnerStores = useMemo(() => {
     return visibleStores.filter((store) => partnerTab === "all" || store.universe === partnerTab);
   }, [partnerTab, visibleStores]);
@@ -1681,7 +1763,7 @@ function AdminDashboard({
               <div className="admin-preview-modal-head">
                 <div>
                   <span className="eyebrow">Profil livreur</span>
-                  <h3 id="admin-courier-preview-title">{selectedCourier.name}</h3>
+                  <h3 id="admin-courier-preview-title">{selectedCourierRecord?.name ?? selectedCourier.name}</h3>
                   <p>Etat temps reel du livreur, zone de couverture et KPI de fiabilite.</p>
                 </div>
                 <button className="admin-preview-close" type="button" onClick={closeAllPreviews} aria-label="Fermer le profil livreur">
@@ -1691,14 +1773,14 @@ function AdminDashboard({
               <div className="preview-stack">
                 <div className="admin-detail-hero">
                   <div className="admin-detail-identity">
-                    <div className="admin-profile-avatar teal">{getInitials(selectedCourier.name)}</div>
+                    <div className="admin-profile-avatar teal">{getInitials(selectedCourierRecord?.name ?? selectedCourier.name)}</div>
                     <div>
-                      <strong>{selectedCourier.name}</strong>
-                      <span>{selectedCourier.zone}</span>
+                      <strong>{selectedCourierRecord?.name ?? selectedCourier.name}</strong>
+                      <span>{selectedCourierRecord?.zone ?? selectedCourier.zone}</span>
                     </div>
                   </div>
                   <div className="admin-detail-badges">
-                    <span className="metric-chip metric-chip-success">{selectedCourier.status}</span>
+                    <span className={selectedCourierRecord ? `status-pill status-${getCourierStatusTone(selectedCourierRecord.status)}` : "metric-chip metric-chip-success"}>{selectedCourierRecord ? humanizeCourierStatus(selectedCourierRecord.status) : selectedCourier.status}</span>
                     <span className="metric-chip metric-chip-warning">Fiabilite {selectedCourier.reliability}%</span>
                   </div>
                 </div>
@@ -1706,10 +1788,66 @@ function AdminDashboard({
                   <div><span>Temps moyen</span><strong>{selectedCourier.averageMinutes} min</strong></div>
                   <div><span>Note</span><strong>{selectedCourier.rating.toFixed(1)}</strong></div>
                   <div><span>Fiabilite</span><strong>{selectedCourier.reliability}%</strong></div>
-                  <div><span>Zone</span><strong>{selectedCourier.zone}</strong></div>
+                  <div><span>Zone</span><strong>{selectedCourierRecord?.zone ?? selectedCourier.zone}</strong></div>
                 </div>
+                <div className="preview-grid preview-grid-upgraded admin-preview-facts-grid">
+                  <div><span>Ville</span><strong>{selectedCourierRecord?.location ?? "-"}</strong></div>
+                  <div><span>Email</span><strong>{selectedCourierRecord?.email ?? "-"}</strong></div>
+                  <div><span>Telephone</span><strong>{selectedCourierRecord?.phone ?? "-"}</strong></div>
+                  <div><span>Vehicule</span><strong>{selectedCourierRecord?.vehicleType ?? "-"}</strong></div>
+                  <div><span>Disponibilite</span><strong>{selectedCourierRecord?.isAvailable ? "Disponible" : "Indisponible"}</strong></div>
+                  <div><span>Badge</span><strong>{selectedCourierRecord?.isVerified ? "Verifie" : "En attente"}</strong></div>
+                  <div><span>Dossier</span><strong>{selectedCourierRecord?.isDossierComplete ? "Complet" : "Incomplet"}</strong></div>
+                  <div><span>Soumis le</span><strong>{formatDateOnly(selectedCourierRecord?.dossierSubmittedAt)}</strong></div>
+                  <div><span>Litiges</span><strong>{selectedCourierRecord?.activeInvestigationCount ?? 0}</strong></div>
+                  <div><span>Reclamations</span><strong>{selectedCourierRecord?.complaintCount ?? 0}</strong></div>
+                </div>
+                {selectedCourierRecord ? (
+                  <section className="admin-preview-section">
+                    <div className="admin-preview-section-head">
+                      <div>
+                        <strong>Documents du dossier</strong>
+                        <span>{selectedCourierDocumentCount}/{COURIER_DOCUMENT_FIELDS.length} pieces recues pour verification</span>
+                      </div>
+                    </div>
+                    <div className="admin-courier-documents-grid">
+                      {COURIER_DOCUMENT_FIELDS.map(({ key, label, hint }) => {
+                        const value = selectedCourierRecord.verificationDocuments[key];
+                        return value ? (
+                          <a key={key} className="admin-courier-document-card" href={value} target="_blank" rel="noreferrer">
+                            <img src={value} alt={label} loading="lazy" />
+                            <div className="admin-courier-document-copy">
+                              <strong>{label}</strong>
+                              <span>{hint}</span>
+                              <small>Ouvrir la piece</small>
+                            </div>
+                          </a>
+                        ) : (
+                          <article key={key} className="admin-courier-document-card is-missing">
+                            <div className="admin-courier-document-placeholder"><FileDown size={18} /></div>
+                            <div className="admin-courier-document-copy">
+                              <strong>{label}</strong>
+                              <span>{hint}</span>
+                              <small>Piece non envoyee</small>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ) : null}
                 <div className="preview-actions">
-                  <button className="ghost-button" type="button" onClick={() => setZoneFilter(selectedCourier.zone)}>Isoler la zone</button>
+                  {selectedCourierRecord ? (
+                    selectedCourierRecord.isVerified ? (
+                      <button className="ghost-button danger" type="button" onClick={() => onVerifyCourier(selectedCourierRecord.id, false)}>Retirer badge</button>
+                    ) : (
+                      <button className="primary-button" type="button" onClick={() => onVerifyCourier(selectedCourierRecord.id, true)}>Verifier</button>
+                    )
+                  ) : null}
+                  {selectedCourierRecord && selectedCourierRecord.status !== "active" ? <button className="secondary-button" type="button" onClick={() => onUpdateCourierStatus(selectedCourierRecord.id, "active")}>Activer</button> : null}
+                  {selectedCourierRecord && selectedCourierRecord.status !== "suspended" ? <button className="ghost-button" type="button" onClick={() => onUpdateCourierStatus(selectedCourierRecord.id, "suspended")}>Suspendre</button> : null}
+                  {selectedCourierRecord && selectedCourierRecord.status !== "rejected" ? <button className="ghost-button danger" type="button" onClick={() => onUpdateCourierStatus(selectedCourierRecord.id, "rejected")}>Rejeter</button> : null}
+                  <button className="ghost-button" type="button" onClick={() => setZoneFilter(selectedCourierRecord?.zone ?? selectedCourier.zone)}>Isoler la zone</button>
                   <button className="ghost-button" type="button" onClick={closeAllPreviews}>Fermer</button>
                 </div>
               </div>
@@ -2080,6 +2218,77 @@ function AdminDashboard({
           </section>
         </section>
 
+        <section id="section-courier-moderation" className="glass-panel section-card moderation-section-upgrade admin-chefs-shell">
+          <div className="section-heading refined-heading">
+            <SectionTitle eyebrow="Livreurs" title="Verification et activation" description="Moderation des livreurs avec badge, disponibilite et signaux de risque dans un meme flux." />
+            <Bike size={18} />
+          </div>
+          <div className="moderation-overview-grid">
+            <article className="moderation-overview-card moderation-overview-pending"><span>En verification</span><strong>{courierStatusCounts.pending_verification ?? 0}</strong><small>Comptes livres a arbitrer.</small></article>
+            <article className="moderation-overview-card moderation-overview-active"><span>Actifs</span><strong>{courierStatusCounts.active ?? 0}</strong><small>Profils autorises a prendre des missions.</small></article>
+            <article className="moderation-overview-card moderation-overview-risk"><span>Suspendus / rejetes</span><strong>{(courierStatusCounts.suspended ?? 0) + (courierStatusCounts.rejected ?? 0)}</strong><small>Acces livreur restreint.</small></article>
+          </div>
+          <div className="admin-chef-toolbar">
+            <div className="users-type-tabs">
+              {(["all", "pending_verification", "active", "suspended", "rejected"] as const).map((value) => (
+                <button key={value} className={couriersFilter === value ? "chip active" : "chip"} type="button" onClick={() => setCouriersFilter(value)}>
+                  {value === "all" ? "Tous" : humanizeCourierStatus(value as CourierStatus)}
+                </button>
+              ))}
+            </div>
+            <label className="admin-sort-field">
+              <span>Trier par</span>
+              <select value={courierSort} onChange={(event) => setCourierSort(event.target.value as "createdAt" | "rating" | "complaints")}>
+                <option value="createdAt">Date d inscription</option>
+                <option value="rating">Note</option>
+                <option value="complaints">Moins de reclamations</option>
+              </select>
+            </label>
+          </div>
+          <section className="stores-grid moderation-grid-upgrade admin-chef-moderation-grid">
+            {sortedCouriers.length === 0 ? <div className="glass-panel section-card empty-state">Aucun livreur pour ce filtre.</div> : null}
+            {sortedCouriers.map((courier) => (
+              <article className="glass-panel section-card moderation-card chef-moderation-card" key={courier.id}>
+                <div className="moderation-header">
+                  <div className="chef-card-identity">
+                    <div className="chef-avatar-fallback" style={{ backgroundColor: "#C9F2EF" }}>{getInitials(courier.name)}</div>
+                    <div>
+                      <span className={`status-pill status-${getCourierStatusTone(courier.status)}`}>{humanizeCourierStatus(courier.status)}</span>
+                      <h3>{courier.name}</h3>
+                    </div>
+                  </div>
+                  {courier.isAvailable ? <span className="chef-online-dot" title="Disponible" /> : null}
+                </div>
+                <p className="chef-specialty">{courier.vehicleType} · {courier.zone ?? courier.location ?? "Zone non renseignee"}</p>
+                <div className="moderation-meta">
+                  <span>{courier.location ?? "Ville non renseignee"}</span>
+                  {courier.zone ? <span>{courier.zone}</span> : null}
+                  <span className="chef-rating-badge"><Star size={11} />{courier.rating.toFixed(1)} · {courier.reviewCount} avis</span>
+                </div>
+                <div className="moderation-signal-strip">
+                  <span>{courier.isVerified ? "Badge actif" : "Badge absent"}</span>
+                  <span>{courier.isDossierComplete ? "Dossier complet" : "Dossier incomplet"}</span>
+                  <span>{getCourierDocumentCount(courier)}/{COURIER_DOCUMENT_FIELDS.length} pieces</span>
+                  <span>{courier.isAvailable ? "Disponible" : "Indisponible"}</span>
+                  <span>{courier.complaintCount} reclamations · {courier.activeInvestigationCount} litiges</span>
+                </div>
+                <div className="moderation-owner">
+                  {courier.email ? <span>{courier.email}</span> : null}
+                  {courier.phone ? <span>{courier.phone}</span> : null}
+                  <span>Inscrit le {formatDateOnly(courier.createdAt)}</span>
+                </div>
+                <div className="action-row chef-action-row">
+                  {courier.isVerified ? <button className="ghost-button danger" type="button" onClick={() => onVerifyCourier(courier.id, false)}><UserX size={14} />Retirer badge</button> : <button className="primary-button" type="button" onClick={() => onVerifyCourier(courier.id, true)}><UserCheck size={14} />Verifier</button>}
+                  {courier.status !== "active" && <button className="secondary-button" type="button" onClick={() => onUpdateCourierStatus(courier.id, "active")}>Activer</button>}
+                  {courier.status !== "suspended" && <button className="ghost-button" type="button" onClick={() => onUpdateCourierStatus(courier.id, "suspended")}>Suspendre</button>}
+                  {courier.status !== "rejected" && <button className="ghost-button danger" type="button" onClick={() => onUpdateCourierStatus(courier.id, "rejected")}>Rejeter</button>}
+                  <button className="ghost-button" type="button" onClick={() => openCourierPreview(courier.id)}>Voir profil</button>
+                </div>
+              </article>
+            ))}
+          </section>
+        </section>
+
         <section id="section-stores" className="glass-panel section-card moderation-section-upgrade admin-stores-shell">
           <div className="section-heading refined-heading">
             <SectionTitle eyebrow="Actions" title="Moderation et decisions" description="Validation, remise en revue et blocage des enseignes avec un pattern de cartes uniforme." />
@@ -2154,6 +2363,8 @@ export default function App() {
   const [adminFilter, setAdminFilter] = useState<StoreStatus | "all">("all");
   const [adminChefs, setAdminChefs] = useState<AdminChef[]>([]);
   const [adminChefsFilter, setAdminChefsFilter] = useState<ChefStatus | "all">("all");
+  const [adminCouriers, setAdminCouriers] = useState<AdminCourier[]>([]);
+  const [adminCouriersFilter, setAdminCouriersFilter] = useState<CourierStatus | "all">("all");
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [loginIdentifier, setLoginIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -2215,13 +2426,15 @@ export default function App() {
   }
 
   async function loadAdminWorkspace(token: string, filter: StoreStatus | "all") {
-    const [storesResp, chefsResp, usersResp] = await Promise.allSettled([
+    const [storesResp, chefsResp, couriersResp, usersResp] = await Promise.allSettled([
       apiClient.getAdminStores(token, filter),
       apiClient.getAdminChefs(token, { status: adminChefsFilter }),
+      apiClient.getAdminCouriers(token, { status: adminCouriersFilter }),
       apiClient.getAdminUsers(token),
     ]);
     if (storesResp.status === "fulfilled") setAdminStores(storesResp.value.stores);
     if (chefsResp.status === "fulfilled") setAdminChefs(chefsResp.value.chefs);
+    if (couriersResp.status === "fulfilled") setAdminCouriers(couriersResp.value.couriers);
     if (usersResp.status === "fulfilled") setAdminUsers(usersResp.value.users);
   }
 
@@ -2238,6 +2451,7 @@ export default function App() {
     setOrders([]);
     setAdminStores([]);
     setAdminChefs([]);
+    setAdminCouriers([]);
     setAdminUsers([]);
     setStoreForm(DEFAULT_STORE_FORM);
     setProductForm(DEFAULT_PRODUCT_FORM);
@@ -2293,6 +2507,16 @@ export default function App() {
         .catch(() => {/* silently ignore chef filter errors */});
     });
   }, [adminChefsFilter, session]);
+
+  useEffect(() => {
+    if (!session || session.user.type !== "admin") return;
+    startBusyTransition(() => {
+      void apiClient
+        .getAdminCouriers(session.token, { status: adminCouriersFilter })
+        .then((resp) => setAdminCouriers(resp.couriers))
+        .catch(() => {/* silently ignore courier filter errors */});
+    });
+  }, [adminCouriersFilter, session]);
 
   async function handleLogin() {
     setFatalError(null);
@@ -2507,6 +2731,40 @@ export default function App() {
     });
   }
 
+  async function handleUpdateCourierStatus(courierId: number, status: CourierStatus) {
+    if (!session || session.user.type !== "admin") return;
+    setFatalError(null);
+    startBusyTransition(() => {
+      void (async () => {
+        try {
+          await apiClient.updateAdminCourierStatus(session.token, courierId, status);
+          const resp = await apiClient.getAdminCouriers(session.token, { status: adminCouriersFilter });
+          setAdminCouriers(resp.couriers);
+          setNotice("Statut livreur mis a jour.");
+        } catch (error) {
+          setFatalError(error instanceof Error ? error.message : "Mise a jour livreur impossible.");
+        }
+      })();
+    });
+  }
+
+  async function handleVerifyCourier(courierId: number, isVerified: boolean) {
+    if (!session || session.user.type !== "admin") return;
+    setFatalError(null);
+    startBusyTransition(() => {
+      void (async () => {
+        try {
+          await apiClient.verifyAdminCourier(session.token, courierId, isVerified);
+          const resp = await apiClient.getAdminCouriers(session.token, { status: adminCouriersFilter });
+          setAdminCouriers(resp.couriers);
+          setNotice(isVerified ? "Livreur verifie." : "Badge livreur retire.");
+        } catch (error) {
+          setFatalError(error instanceof Error ? error.message : "Verification livreur impossible.");
+        }
+      })();
+    });
+  }
+
   function handleLogout() {
     commitSession(null);
     resetWorkspace();
@@ -2584,6 +2842,11 @@ export default function App() {
           setChefsFilter={setAdminChefsFilter}
           onUpdateChefStatus={(chefId, status) => void handleUpdateChefStatus(chefId, status)}
           onVerifyChef={(chefId, isVerified) => void handleVerifyChef(chefId, isVerified)}
+          couriers={adminCouriers}
+          couriersFilter={adminCouriersFilter}
+          setCouriersFilter={setAdminCouriersFilter}
+          onUpdateCourierStatus={(courierId, status) => void handleUpdateCourierStatus(courierId, status)}
+          onVerifyCourier={(courierId, isVerified) => void handleVerifyCourier(courierId, isVerified)}
           allUsers={adminUsers}
           busy={busy}
         />
@@ -2619,6 +2882,7 @@ const ADMIN_CONTEXT_MENU: ContextMenuGroup[] = [
     label: "Moderation",
     items: [
       { label: "Cuisinieres", sub: "Verification", id: "chefs" },
+      { label: "Livreurs", sub: "Verification", id: "courier-moderation" },
       { label: "Utilisateurs", sub: "Support", id: "users" },
       { label: "Enseignes", sub: "Validation", id: "stores" },
     ],

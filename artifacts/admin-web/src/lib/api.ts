@@ -37,6 +37,18 @@ export interface ApiErrorPayload {
   email?: string;
 }
 
+export class ApiRequestError extends Error {
+  status: number;
+  payload: unknown;
+
+  constructor(message: string, status: number, payload: unknown) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 export interface LoginResponse {
   token: string;
   user: AuthUser;
@@ -256,6 +268,7 @@ export interface AdminDashboardPartner {
 }
 
 export type ChefStatus = "active" | "suspended" | "pending_verification" | "rejected";
+export type CourierStatus = "active" | "suspended" | "pending_verification" | "rejected";
 
 export interface AdminChef {
   id: string;
@@ -274,6 +287,36 @@ export interface AdminChef {
   reviewCount: number;
   stars: number | null;
   status: ChefStatus;
+  createdAt: string | null;
+}
+
+export interface AdminCourier {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  location: string | null;
+  zone: string | null;
+  vehicleType: string;
+  isVerified: boolean;
+  isAvailable: boolean;
+  rating: number;
+  reviewCount: number;
+  stars: number | null;
+  complaintCount: number;
+  activeInvestigationCount: number;
+  bonusEarnedAmount: number;
+  isDossierComplete: boolean;
+  dossierSubmittedAt: string | null;
+  lastLocationAt: string | null;
+  verificationDocuments: {
+    identityDocumentUrl: string | null;
+    driverLicenseUrl: string | null;
+    vehicleRegistrationUrl: string | null;
+    vehiclePhotoUrl: string | null;
+    selfiePhotoUrl: string | null;
+  };
+  status: CourierStatus;
   createdAt: string | null;
 }
 
@@ -333,24 +376,59 @@ export interface MerchantRegistrationInput {
   bio: string;
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "https://api.nixyah.com/api";
+const explicitApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+const isLocalDev = Boolean(import.meta.env.DEV && typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname));
+const API_BASE_URL = explicitApiBaseUrl || (isLocalDev ? "/api" : "https://api.nixyah.com/api");
 const SESSION_STORAGE_KEY = "nixyah.admin.session";
 
 function normalizeUrl(path: string) {
   return `${API_BASE_URL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+function tryParseJson(rawText: string, contentType: string | null) {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const looksLikeJson =
+    contentType?.includes("application/json") ||
+    contentType?.includes("application/problem+json") ||
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[");
+
+  if (!looksLikeJson) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const rawText = await response.text();
-  const payload = rawText ? JSON.parse(rawText) : null;
+  const contentType = response.headers.get("content-type");
+  const payload = tryParseJson(rawText, contentType);
+  const fallbackBody = rawText.trim();
 
   if (!response.ok) {
     const errorPayload = (payload ?? {}) as ApiErrorPayload;
-    const message = errorPayload.message || errorPayload.error || `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const message =
+      errorPayload.message ||
+      errorPayload.error ||
+      (fallbackBody && !fallbackBody.startsWith("<") ? fallbackBody : "") ||
+      `Request failed with status ${response.status}`;
+    throw new ApiRequestError(message, response.status, payload ?? (fallbackBody || null));
   }
 
-  return payload as T;
+  if (!rawText.trim()) {
+    return null as T;
+  }
+
+  return (payload ?? rawText) as T;
 }
 
 async function request<T>(path: string, init?: RequestInit, token?: string): Promise<T> {
@@ -512,6 +590,28 @@ export const apiClient = {
 
   verifyAdminChef(token: string, chefId: string, isVerified: boolean) {
     return request<{ chef: AdminChef }>(`/admin/chefs/${chefId}/verify`, {
+      method: "POST",
+      body: JSON.stringify({ isVerified }),
+    }, token);
+  },
+
+  getAdminCouriers(token: string, params?: { status?: CourierStatus | "all"; zone?: string }) {
+    const search = new URLSearchParams();
+    if (params?.status && params.status !== "all") search.set("status", params.status);
+    if (params?.zone && params.zone !== "all") search.set("zone", params.zone);
+    const query = search.toString();
+    return request<{ couriers: AdminCourier[] }>(`/admin/couriers${query ? `?${query}` : ""}`, undefined, token);
+  },
+
+  updateAdminCourierStatus(token: string, courierId: number, status: CourierStatus) {
+    return request<{ courier: AdminCourier }>(`/admin/couriers/${courierId}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    }, token);
+  },
+
+  verifyAdminCourier(token: string, courierId: number, isVerified: boolean) {
+    return request<{ courier: AdminCourier }>(`/admin/couriers/${courierId}/verify`, {
       method: "POST",
       body: JSON.stringify({ isVerified }),
     }, token);

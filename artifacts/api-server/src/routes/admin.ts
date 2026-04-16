@@ -144,6 +144,38 @@ function isCourierDossierComplete(profile: typeof courierProfilesTable.$inferSel
   );
 }
 
+function buildAdminCourier(profile: typeof courierProfilesTable.$inferSelect, user?: typeof usersTable.$inferSelect | null) {
+  return {
+    id: profile.id,
+    name: user?.name ?? `Livreur ${profile.id}`,
+    email: user?.email ?? null,
+    phone: user?.phone ?? null,
+    location: user?.location ?? null,
+    zone: profile.zone || null,
+    vehicleType: profile.vehicleType,
+    isVerified: profile.isVerified,
+    isAvailable: profile.isAvailable,
+    rating: profile.rating,
+    reviewCount: profile.reviewCount,
+    stars: profile.stars ?? null,
+    complaintCount: profile.complaintCount,
+    activeInvestigationCount: profile.activeInvestigationCount,
+    bonusEarnedAmount: profile.bonusEarnedAmount,
+    isDossierComplete: isCourierDossierComplete(profile),
+    dossierSubmittedAt: profile.dossierSubmittedAt?.toISOString() ?? null,
+    lastLocationAt: profile.lastLocationAt?.toISOString() ?? null,
+    verificationDocuments: {
+      identityDocumentUrl: profile.identityDocumentUrl ?? null,
+      driverLicenseUrl: profile.driverLicenseUrl ?? null,
+      vehicleRegistrationUrl: profile.vehicleRegistrationUrl ?? null,
+      vehiclePhotoUrl: profile.vehiclePhotoUrl ?? null,
+      selfiePhotoUrl: profile.selfiePhotoUrl ?? null,
+    },
+    status: resolveCourierStatus(profile),
+    createdAt: profile.createdAt?.toISOString() ?? null,
+  };
+}
+
 router.get("/admin/dashboard/overview", requireAdmin, async (req: AuthRequest, res) => {
   try {
     const scale = (["hour", "day", "week"].includes(String(req.query.scale)) ? String(req.query.scale) : "day") as DashboardScale;
@@ -667,28 +699,7 @@ router.get("/admin/couriers", requireAdmin, async (req: AuthRequest, res) => {
       .orderBy(desc(courierProfilesTable.createdAt));
 
     const couriers = profiles
-      .map(({ courier_profiles: cp, users: u }) => ({
-        id: cp.id,
-        name: u.name,
-        email: u.email ?? null,
-        phone: u.phone ?? null,
-        location: u.location ?? null,
-        zone: cp.zone || null,
-        vehicleType: cp.vehicleType,
-        isVerified: cp.isVerified,
-        isAvailable: cp.isAvailable,
-        rating: cp.rating,
-        reviewCount: cp.reviewCount,
-        stars: cp.stars ?? null,
-        complaintCount: cp.complaintCount,
-        activeInvestigationCount: cp.activeInvestigationCount,
-        bonusEarnedAmount: cp.bonusEarnedAmount,
-        isDossierComplete: isCourierDossierComplete(cp),
-        dossierSubmittedAt: cp.dossierSubmittedAt?.toISOString() ?? null,
-        lastLocationAt: cp.lastLocationAt?.toISOString() ?? null,
-        status: resolveCourierStatus(cp),
-        createdAt: cp.createdAt?.toISOString() ?? null,
-      }))
+      .map(({ courier_profiles: cp, users: u }) => buildAdminCourier(cp, u))
       .filter((courier) => {
         if (statusFilter && statusFilter !== "all" && courier.status !== statusFilter) return false;
         if (zoneFilter && zoneFilter !== "all" && courier.zone !== zoneFilter) return false;
@@ -729,30 +740,7 @@ router.post("/admin/couriers/:id/status", requireAdmin, async (req: AuthRequest,
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
 
-    return res.json({
-      courier: {
-        id: updated.id,
-        name: user?.name ?? `Livreur ${updated.id}`,
-        email: user?.email ?? null,
-        phone: user?.phone ?? null,
-        location: user?.location ?? null,
-        zone: updated.zone || null,
-        vehicleType: updated.vehicleType,
-        isVerified: updated.isVerified,
-        isAvailable: updated.isAvailable,
-        rating: updated.rating,
-        reviewCount: updated.reviewCount,
-        stars: updated.stars ?? null,
-        complaintCount: updated.complaintCount,
-        activeInvestigationCount: updated.activeInvestigationCount,
-        bonusEarnedAmount: updated.bonusEarnedAmount,
-        isDossierComplete: isCourierDossierComplete(updated),
-        dossierSubmittedAt: updated.dossierSubmittedAt?.toISOString() ?? null,
-        lastLocationAt: updated.lastLocationAt?.toISOString() ?? null,
-        status: resolveCourierStatus(updated),
-        createdAt: updated.createdAt?.toISOString() ?? null,
-      },
-    });
+    return res.json({ courier: buildAdminCourier(updated, user ?? null) });
   } catch (error) {
     console.error("admin update courier status error", error);
     return res.status(500).json({ error: "InternalError" });
@@ -779,30 +767,7 @@ router.post("/admin/couriers/:id/verify", requireAdmin, async (req: AuthRequest,
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
 
-    return res.json({
-      courier: {
-        id: updated.id,
-        name: user?.name ?? `Livreur ${updated.id}`,
-        email: user?.email ?? null,
-        phone: user?.phone ?? null,
-        location: user?.location ?? null,
-        zone: updated.zone || null,
-        vehicleType: updated.vehicleType,
-        isVerified: updated.isVerified,
-        isAvailable: updated.isAvailable,
-        rating: updated.rating,
-        reviewCount: updated.reviewCount,
-        stars: updated.stars ?? null,
-        complaintCount: updated.complaintCount,
-        activeInvestigationCount: updated.activeInvestigationCount,
-        bonusEarnedAmount: updated.bonusEarnedAmount,
-        isDossierComplete: isCourierDossierComplete(updated),
-        dossierSubmittedAt: updated.dossierSubmittedAt?.toISOString() ?? null,
-        lastLocationAt: updated.lastLocationAt?.toISOString() ?? null,
-        status: resolveCourierStatus(updated),
-        createdAt: updated.createdAt?.toISOString() ?? null,
-      },
-    });
+    return res.json({ courier: buildAdminCourier(updated, user ?? null) });
   } catch (error) {
     console.error("admin verify courier error", error);
     return res.status(500).json({ error: "InternalError" });
