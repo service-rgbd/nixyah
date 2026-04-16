@@ -7,11 +7,21 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { apiFetch, normalizeRemoteUrl } from "@/constants/api";
+import { apiFetch, invalidateApiCache, normalizeRemoteUrl, readApiCache, type ApiCacheConfig } from "@/constants/api";
 
 const FAVORITES_STORAGE_KEY = "nixyah_favorites";
 const ORDERS_STORAGE_KEY = "nixyah_orders";
 const CHATS_STORAGE_KEY = "nixyah_chats";
+const PUBLIC_CHEFS_CACHE = { key: "public-chefs", scope: "public", ttlMs: 10 * 60 * 1000 } satisfies ApiCacheConfig;
+const PUBLIC_STORIES_CACHE = { key: "public-stories", scope: "public", ttlMs: 2 * 60 * 1000 } satisfies ApiCacheConfig;
+
+function buildUserScopedApiCache(key: string, ttlMs: number, userId?: string | null): ApiCacheConfig {
+  return {
+    key,
+    ttlMs,
+    scope: userId ? `user:${userId}` : "anonymous",
+  };
+}
 
 function getStorageScope(userId?: string | null) {
   return userId ? `user:${userId}` : "guest";
@@ -305,6 +315,16 @@ export interface AuthUser {
     userId: string;
     zone: string;
     vehicleType: string;
+    verificationDocuments?: {
+      identityDocumentUrl?: string | null;
+      driverLicenseUrl?: string | null;
+      vehicleRegistrationUrl?: string | null;
+      vehiclePhotoUrl?: string | null;
+      selfiePhotoUrl?: string | null;
+    };
+    isDossierComplete?: boolean;
+    missingDocuments?: string[];
+    dossierSubmittedAt?: string | null;
     isAvailable: boolean;
     isVerified: boolean;
     rating?: number;
@@ -352,6 +372,13 @@ interface AppContextValue {
   registerClient: (data: RegisterClientData) => Promise<AuthRegistrationResult>;
   registerChef: (data: RegisterChefData) => Promise<AuthRegistrationResult>;
   registerCourier: (data: RegisterCourierData) => Promise<AuthRegistrationResult>;
+  updateCourierVerificationDossier: (data: {
+    identityDocumentUrl?: string | null;
+    driverLicenseUrl?: string | null;
+    vehicleRegistrationUrl?: string | null;
+    vehiclePhotoUrl?: string | null;
+    selfiePhotoUrl?: string | null;
+  }) => Promise<AuthUser["courierProfile"]>;
   addOrder: (order: Order) => void;
   createOrder: (data: {
     chefId: string;
@@ -459,9 +486,41 @@ function normalizeImageUrlList(input: unknown, fallback?: string | null): string
   return Array.from(new Set(normalized));
 }
 
-function mapApiChef(c: any): Chef {
-  const mappedDishes = (c.dishes ?? []).map((d: any) => ({
-    id: d.id,
+function mapApiStory(s: any): Story {
+  return {
+    id: String(s.id),
+    chefId: String(s.chefId ?? s.chef_profile_id ?? s.chef_id ?? ""),
+    chefName: s.chefName ?? s.chef_name ?? s.chef_name_display ?? "",
+    chefCoverColor: s.chefCoverColor ?? s.chef_cover_color ?? s.chefCoverColor ?? "#C4522A",
+    caption: s.caption ?? "",
+    dishName: s.dishName ?? s.dish_name ?? null,
+    price: s.price ?? null,
+    emoji: s.emoji ?? null,
+    bgColor: s.bgColor ?? s.bg_color ?? null,
+    imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
+    videoUrl: normalizeRemoteUrl(s.videoUrl ?? s.video_url ?? null),
+    videoDurationSeconds: s.videoDurationSeconds ?? s.video_duration_seconds ?? null,
+    likeCount: Number(s.likeCount ?? s.like_count ?? 0),
+    commentCount: Number(s.commentCount ?? s.comment_count ?? 0),
+    likedByMe: Boolean(s.likedByMe ?? s.liked_by_me ?? false),
+    comments: (s.comments ?? []).map((comment: any) => ({
+      id: String(comment.id),
+      storyId: String(comment.storyId ?? comment.story_id ?? s.id),
+      userId: String(comment.userId ?? comment.user_id ?? ""),
+      userName: String(comment.userName ?? comment.user_name ?? "Utilisateur"),
+      userAvatarUrl: normalizeRemoteUrl(comment.userAvatarUrl ?? comment.user_avatar_url ?? null),
+      userCoverColor: comment.userCoverColor ?? comment.user_cover_color ?? null,
+      body: String(comment.body ?? ""),
+      createdAt: String(comment.createdAt ?? comment.created_at ?? new Date().toISOString()),
+    })),
+    createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
+    expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+function mapApiDish(d: any): Dish {
+  return {
+    id: String(d.id),
     name: d.name,
     description: d.description,
     price: Number(d.price ?? 0),
@@ -474,22 +533,16 @@ function mapApiChef(c: any): Chef {
     savingsAmount: Number(d.savingsAmount ?? 0),
     imageUrl: normalizeRemoteUrl(d.imageUrl ?? null),
     imageUrls: normalizeImageUrlList(d.imageUrls, d.imageUrl ?? null),
-  }));
-  const mappedStories = (c.stories ?? []).map((s: any) => ({
-    id: String(s.id),
-    chefId: String(s.chefId ?? s.chef_profile_id ?? c.id),
+  };
+}
+
+function mapApiChef(c: any): Chef {
+  const mappedDishes = (c.dishes ?? []).map(mapApiDish);
+  const mappedStories = (c.stories ?? []).map((s: any) => mapApiStory({
+    ...s,
+    chefId: s.chefId ?? s.chef_profile_id ?? c.id,
     chefName: s.chefName ?? s.chef_name ?? c.name,
     chefCoverColor: s.chefCoverColor ?? s.chef_cover_color ?? c.coverColor ?? "#C4522A",
-    caption: s.caption,
-    dishName: s.dishName ?? s.dish_name ?? null,
-    price: s.price ?? null,
-    emoji: s.emoji ?? null,
-    bgColor: s.bgColor ?? s.bg_color ?? null,
-    imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
-    videoUrl: normalizeRemoteUrl(s.videoUrl ?? s.video_url ?? null),
-    videoDurationSeconds: s.videoDurationSeconds ?? s.video_duration_seconds ?? null,
-    createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
-    expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   }));
   const heroImageUrl =
     mappedDishes.find((dish: Dish) => dish.imageUrls?.[0])?.imageUrls?.[0] ??
@@ -533,7 +586,21 @@ function mapApiAuthUser(input: any): AuthUser {
           specialties: input.chefProfile.specialties ?? undefined,
         }
       : null,
-    courierProfile: input?.courierProfile ?? null,
+    courierProfile: input?.courierProfile
+      ? {
+          ...input.courierProfile,
+          verificationDocuments: input.courierProfile.verificationDocuments
+            ? {
+                identityDocumentUrl: normalizeRemoteUrl(input.courierProfile.verificationDocuments.identityDocumentUrl ?? null),
+                driverLicenseUrl: normalizeRemoteUrl(input.courierProfile.verificationDocuments.driverLicenseUrl ?? null),
+                vehicleRegistrationUrl: normalizeRemoteUrl(input.courierProfile.verificationDocuments.vehicleRegistrationUrl ?? null),
+                vehiclePhotoUrl: normalizeRemoteUrl(input.courierProfile.verificationDocuments.vehiclePhotoUrl ?? null),
+                selfiePhotoUrl: normalizeRemoteUrl(input.courierProfile.verificationDocuments.selfiePhotoUrl ?? null),
+              }
+            : undefined,
+          missingDocuments: Array.isArray(input.courierProfile.missingDocuments) ? input.courierProfile.missingDocuments : [],
+        }
+      : null,
   };
 }
 
@@ -738,7 +805,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const refreshChefs = useCallback(async () => {
     try {
-      const data = await apiFetch<{ chefs: any[] }>("/chefs");
+      const data = await apiFetch<{ chefs: any[] }>("/chefs", { cacheConfig: PUBLIC_CHEFS_CACHE });
       setChefs(data.chefs.map(mapApiChef));
     } catch (e) {
       console.warn("Failed to load chefs from API:", e);
@@ -749,36 +816,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const refreshStories = useCallback(async () => {
     try {
-      const data = await apiFetch<{ stories: any[] }>("/stories");
-      setStories((data.stories ?? []).map((s: any) => ({
-        id: String(s.id),
-        chefId: String(s.chefId ?? s.chef_profile_id ?? s.chef_id ?? ""),
-        chefName: s.chefName ?? s.chef_name ?? s.chef_name_display ?? "",
-        chefCoverColor: s.chefCoverColor ?? s.chef_cover_color ?? s.chefCoverColor ?? "#C4522A",
-        caption: s.caption ?? "",
-        dishName: s.dishName ?? s.dish_name ?? null,
-        price: s.price ?? null,
-        emoji: s.emoji ?? null,
-        bgColor: s.bgColor ?? s.bg_color ?? null,
-        imageUrl: normalizeRemoteUrl(s.imageUrl ?? s.image_url ?? null),
-        videoUrl: normalizeRemoteUrl(s.videoUrl ?? s.video_url ?? null),
-        videoDurationSeconds: s.videoDurationSeconds ?? s.video_duration_seconds ?? null,
-        likeCount: Number(s.likeCount ?? s.like_count ?? 0),
-        commentCount: Number(s.commentCount ?? s.comment_count ?? 0),
-        likedByMe: Boolean(s.likedByMe ?? s.liked_by_me ?? false),
-        comments: (s.comments ?? []).map((comment: any) => ({
-          id: String(comment.id),
-          storyId: String(comment.storyId ?? comment.story_id ?? s.id),
-          userId: String(comment.userId ?? comment.user_id ?? ""),
-          userName: String(comment.userName ?? comment.user_name ?? "Utilisateur"),
-          userAvatarUrl: normalizeRemoteUrl(comment.userAvatarUrl ?? comment.user_avatar_url ?? null),
-          userCoverColor: comment.userCoverColor ?? comment.user_cover_color ?? null,
-          body: String(comment.body ?? ""),
-          createdAt: String(comment.createdAt ?? comment.created_at ?? new Date().toISOString()),
-        })),
-        createdAt: s.createdAt ?? s.created_at ?? new Date().toISOString(),
-        expiresAt: s.expiresAt ?? s.expires_at ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      })));
+      const data = await apiFetch<{ stories: any[] }>("/stories", { cacheConfig: PUBLIC_STORIES_CACHE });
+      setStories((data.stories ?? []).map(mapApiStory));
     } catch (e) {
       console.warn("Failed to load stories:", e);
     }
@@ -789,17 +828,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const data = await apiFetch<{ orders: any[] }>("/orders", { token });
+      const data = await apiFetch<{ orders: any[] }>("/orders", {
+        token,
+        cacheConfig: buildUserScopedApiCache("client-orders", 90 * 1000, user.id),
+      });
       setOrders((data.orders ?? []).map(mapApiOrder));
     } catch (error) {
       console.warn("Failed to load orders:", error);
     }
-  }, [token, user?.type]);
+  }, [token, user?.id, user?.type]);
 
   const fetchCustomRequests = useCallback(async () => {
     if (!token || user?.type !== "client") return;
     try {
-      const data = await apiFetch<{ requests: any[] }>("/custom-requests", { token });
+      const data = await apiFetch<{ requests: any[] }>("/custom-requests", {
+        token,
+        cacheConfig: buildUserScopedApiCache("client-custom-requests", 90 * 1000, user.id),
+      });
       setCustomRequests((data.requests ?? []).map(mapApiCustomRequest));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error ?? "");
@@ -809,12 +854,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       console.warn("Failed to load custom requests:", error);
     }
-  }, [token, user?.type]);
+  }, [token, user?.id, user?.type]);
 
   const fetchChefCustomRequests = useCallback(async () => {
     if (!token || user?.type !== "chef") return;
     try {
-      const data = await apiFetch<{ requests: any[] }>("/chef/custom-requests", { token });
+      const data = await apiFetch<{ requests: any[] }>("/chef/custom-requests", {
+        token,
+        cacheConfig: buildUserScopedApiCache("chef-custom-requests", 45 * 1000, user.id),
+      });
       setChefCustomRequests((data.requests ?? []).map(mapApiChefCustomRequest));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error ?? "");
@@ -824,24 +872,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       console.warn("Failed to load chef custom requests:", error);
     }
-  }, [token, user?.type]);
+  }, [token, user?.id, user?.type]);
 
   const fetchChefOrders = useCallback(async () => {
     if (!token || user?.type !== "chef") return;
     try {
       setIsLoadingChefOrders(true);
-      const data = await apiFetch<{ orders: any[] }>("/chef/orders", { token });
+      const data = await apiFetch<{ orders: any[] }>("/chef/orders", {
+        token,
+        cacheConfig: buildUserScopedApiCache("chef-orders", 45 * 1000, user.id),
+      });
       setChefOrders((data.orders ?? []).map(mapApiChefOrder));
     } catch (error) {
       console.warn("Failed to load chef orders:", error);
     } finally {
       setIsLoadingChefOrders(false);
     }
-  }, [token, user?.type]);
+  }, [token, user?.id, user?.type]);
 
   const likeStory = useCallback(async (storyId: string) => {
     try {
       const response = await apiFetch<{ liked: boolean; likeCount: number }>(`/stories/${storyId}/like`, { method: "POST", token: token ?? undefined });
+      await invalidateApiCache("/stories", PUBLIC_STORIES_CACHE);
       setStories((current) =>
         current.map((story) =>
           story.id === storyId
@@ -865,6 +917,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         token: token ?? undefined,
         body: JSON.stringify({ body }),
       });
+      await invalidateApiCache("/stories", PUBLIC_STORIES_CACHE);
 
       setStories((current) =>
         current.map((story) =>
@@ -914,6 +967,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
+      await invalidateApiCache("/stories", PUBLIC_STORIES_CACHE);
+
       setStories((current) =>
         current.map((story) =>
           story.id === storyId
@@ -934,6 +989,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             method: "POST",
             token: resolvedToken,
           });
+
+          await invalidateApiCache("/stories", PUBLIC_STORIES_CACHE);
 
           setStories((current) =>
             current.map((story) =>
@@ -961,6 +1018,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
+        const [cachedChefs, cachedStories] = await Promise.all([
+          readApiCache<{ chefs: any[] }>("/chefs", PUBLIC_CHEFS_CACHE, { allowExpired: true }),
+          readApiCache<{ stories: any[] }>("/stories", PUBLIC_STORIES_CACHE, { allowExpired: true }),
+        ]);
+
+        if (cachedChefs?.chefs?.length) {
+          setChefs(cachedChefs.chefs.map(mapApiChef));
+          setIsLoadingChefs(false);
+        }
+
+        if (cachedStories?.stories?.length) {
+          setStories(cachedStories.stories.map(mapApiStory));
+        }
+
         const savedToken = await AsyncStorage.getItem("nixyah_token");
         if (savedToken) {
           try {
@@ -1137,6 +1208,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await AsyncStorage.setItem("nixyah_token", res.token);
       setToken(res.token);
       setUser(mapApiAuthUser(res.user));
+      await invalidateApiCache("/chefs", PUBLIC_CHEFS_CACHE);
       await refreshChefs();
       return { requiresEmailConfirmation: false, email: res.user.email };
     }
@@ -1144,6 +1216,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.removeItem("nixyah_token");
     setToken(null);
     setUser(null);
+    await invalidateApiCache("/chefs", PUBLIC_CHEFS_CACHE);
     await refreshChefs();
     return {
       requiresEmailConfirmation: Boolean(res.requiresEmailConfirmation),
@@ -1172,6 +1245,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const updateCourierVerificationDossier = useCallback(async (data: {
+    identityDocumentUrl?: string | null;
+    driverLicenseUrl?: string | null;
+    vehicleRegistrationUrl?: string | null;
+    vehiclePhotoUrl?: string | null;
+    selfiePhotoUrl?: string | null;
+  }) => {
+    if (!token || user?.type !== "courier") {
+      throw new Error("Session livreur requise");
+    }
+
+    const payload = Object.fromEntries(
+      Object.entries(data).filter(([, value]) => typeof value !== "undefined")
+    ) as typeof data;
+
+    if (Object.keys(payload).length === 0) {
+      if (user.courierProfile) {
+        return user.courierProfile;
+      }
+      throw new Error("Aucun document à mettre à jour");
+    }
+
+    const response = await apiFetch<{ courierProfile: AuthUser["courierProfile"] }>("/auth/me/courier-dossier", {
+      method: "PATCH",
+      token,
+      body: JSON.stringify(payload),
+    });
+
+    const nextCourierProfile = mapApiAuthUser({ courierProfile: response.courierProfile }).courierProfile;
+    setUser((current) => {
+      if (!current || current.type !== "courier") {
+        return current;
+      }
+
+      return {
+        ...current,
+        courierProfile: nextCourierProfile,
+      };
+    });
+
+    return nextCourierProfile;
+  }, [token, user?.type]);
+
   const postStory = useCallback(async (storyData: { caption: string; dishName?: string; price?: number; emoji?: string; bgColor?: string; imageUrl?: string | null; videoUrl?: string | null; videoDurationSeconds?: number | null }) => {
     if (!token) throw new Error("Non connecté");
     await apiFetch("/stories", {
@@ -1179,6 +1295,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify(storyData),
       token,
     });
+    await Promise.all([
+      invalidateApiCache("/stories", PUBLIC_STORIES_CACHE),
+      invalidateApiCache("/chefs", PUBLIC_CHEFS_CACHE),
+    ]);
     await Promise.all([refreshStories(), refreshChefs()]);
   }, [token, refreshChefs, refreshStories]);
 
@@ -1218,8 +1338,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const mappedOrder = mapApiOrder(response);
     setOrders((prev) => [mappedOrder, ...prev.filter((order) => order.id !== mappedOrder.id)]);
+    await invalidateApiCache("/orders", buildUserScopedApiCache("client-orders", 90 * 1000, user.id));
     return mappedOrder;
-  }, [token, user?.location, user?.type]);
+  }, [token, user?.id, user?.location, user?.type]);
 
   const createCustomRequest = useCallback(async (data: {
     chefId: string;
@@ -1256,8 +1377,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const mappedRequest = mapApiCustomRequest(response.request);
     setCustomRequests((prev) => [mappedRequest, ...prev.filter((request) => request.id !== mappedRequest.id)]);
+    await invalidateApiCache("/custom-requests", buildUserScopedApiCache("client-custom-requests", 90 * 1000, user.id));
     return mappedRequest;
-  }, [token, user?.location, user?.type]);
+  }, [token, user?.id, user?.location, user?.type]);
 
   const toggleFavorite = useCallback((chefId: string) => {
     setFavorites((prev) =>
@@ -1315,6 +1437,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     const nextUser = mapApiAuthUser(updated);
     setUser(nextUser);
+    await invalidateApiCache("/chefs", PUBLIC_CHEFS_CACHE);
     await refreshChefs();
     return nextUser;
   }, [token, refreshChefs]);
@@ -1322,37 +1445,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const fetchChefStats = useCallback(async (chefId: string) => {
     try {
       setIsLoadingNotifications(true);
-      const data = await apiFetch<ChefStats>(`/chef/${chefId}/stats`, { token: token ?? undefined });
+      const data = await apiFetch<ChefStats>(`/chef/${chefId}/stats`, {
+        token: token ?? undefined,
+        cacheConfig: buildUserScopedApiCache(`chef-stats:${chefId}`, 60 * 1000, user?.id),
+      });
       setChefStats(data);
     } catch (error) {
       console.warn("Failed to load chef stats:", error);
     } finally {
       setIsLoadingNotifications(false);
     }
-  }, [token]);
+  }, [token, user?.id]);
 
   const fetchChefDishes = useCallback(async (chefId: string) => {
     try {
-      const data = await apiFetch<{ dishes: any[] }>(`/chef/${chefId}/dishes`);
-      setChefDishes(data.dishes.map((d: any) => ({
-        id: String(d.id),
-        name: d.name,
-        description: d.description,
-        price: Number(d.price ?? 0),
-        basePrice: Number(d.basePrice ?? d.price ?? 0),
-        category: d.category,
-        prepTime: d.prepTime,
-        isPopular: d.isPopular,
-        discountPercent: Number(d.discountPercent ?? 0),
-        discountLabel: d.discountLabel ?? "",
-        savingsAmount: Number(d.savingsAmount ?? 0),
-        imageUrl: normalizeRemoteUrl(d.imageUrl ?? null),
-        imageUrls: normalizeImageUrlList(d.imageUrls, d.imageUrl ?? null),
-      })));
+      const data = await apiFetch<{ dishes: any[] }>(`/chef/${chefId}/dishes`, {
+        cacheConfig: buildUserScopedApiCache(`chef-dishes:${chefId}`, 5 * 60 * 1000, user?.id),
+      });
+      setChefDishes(data.dishes.map(mapApiDish));
     } catch (error) {
       console.warn("Failed to load chef dishes:", error);
     }
-  }, []);
+  }, [user?.id]);
 
   const updateChefDish = useCallback(async (dishId: string, data: { name: string; description: string; category: string; prepTime: string; imageUrls: string[]; isPopular?: boolean; discountPercent?: number; discountLabel?: string }) => {
     if (!token || !user?.id) throw new Error("Non connecté");
@@ -1371,6 +1485,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         discountLabel: data.discountLabel ?? "",
       }),
     });
+    await Promise.all([
+      invalidateApiCache(`/chef/${user.id}/dishes`, buildUserScopedApiCache(`chef-dishes:${user.id}`, 5 * 60 * 1000, user.id)),
+      invalidateApiCache("/chefs", PUBLIC_CHEFS_CACHE),
+    ]);
     await Promise.all([fetchChefDishes(user.id), refreshChefs()]);
   }, [fetchChefDishes, refreshChefs, token, user?.id]);
 
@@ -1380,6 +1498,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       method: "DELETE",
       token,
     });
+    await Promise.all([
+      invalidateApiCache(`/chef/${user.id}/dishes`, buildUserScopedApiCache(`chef-dishes:${user.id}`, 5 * 60 * 1000, user.id)),
+      invalidateApiCache("/chefs", PUBLIC_CHEFS_CACHE),
+    ]);
     await Promise.all([fetchChefDishes(user.id), refreshChefs()]);
   }, [fetchChefDishes, refreshChefs, token, user?.id]);
 
@@ -1393,8 +1515,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         chefResponse: data.chefResponse ?? "",
       }),
     });
+    await invalidateApiCache("/chef/custom-requests", buildUserScopedApiCache("chef-custom-requests", 45 * 1000, user.id));
     await fetchChefCustomRequests();
-  }, [fetchChefCustomRequests, token, user?.type]);
+  }, [fetchChefCustomRequests, token, user?.id, user?.type]);
 
   const updateChefOrderStatus = useCallback(async (orderId: string, status: ReceivedOrder["status"]) => {
     if (!token || user?.type !== "chef") throw new Error("Non connectée");
@@ -1403,6 +1526,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       token,
       body: JSON.stringify({ status }),
     });
+    await Promise.all([
+      invalidateApiCache("/chef/orders", buildUserScopedApiCache("chef-orders", 45 * 1000, user.id)),
+      invalidateApiCache(`/chef/${user.id}/stats`, buildUserScopedApiCache(`chef-stats:${user.id}`, 60 * 1000, user.id)),
+    ]);
     await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
   }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
 
@@ -1412,6 +1539,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       token,
     });
+    await Promise.all([
+      invalidateApiCache("/chef/orders", buildUserScopedApiCache("chef-orders", 45 * 1000, user.id)),
+      invalidateApiCache(`/chef/${user.id}/stats`, buildUserScopedApiCache(`chef-stats:${user.id}`, 60 * 1000, user.id)),
+    ]);
     await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
   }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
 
@@ -1421,6 +1552,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       token,
     });
+    await Promise.all([
+      invalidateApiCache("/chef/orders", buildUserScopedApiCache("chef-orders", 45 * 1000, user.id)),
+      invalidateApiCache(`/chef/${user.id}/stats`, buildUserScopedApiCache(`chef-stats:${user.id}`, 60 * 1000, user.id)),
+    ]);
     await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
   }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
 
@@ -1428,7 +1563,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!token || !user?.id) return;
     try {
       setIsLoadingNotifications(true);
-      const data = await apiFetch<{ notifications: any[] }>("/chef/notifications/list", { token },);
+      const data = await apiFetch<{ notifications: any[] }>("/chef/notifications/list", {
+        token,
+        cacheConfig: buildUserScopedApiCache("chef-notifications", 45 * 1000, user.id),
+      });
       setNotifications(data.notifications.map((n: any) => ({
         id: String(n.id),
         type: n.type,
@@ -1470,6 +1608,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       registerClient,
       registerChef,
       registerCourier,
+      updateCourierVerificationDossier,
       postStory,
       addOrder,
       createOrder,
@@ -1497,7 +1636,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, updateCourierVerificationDossier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
