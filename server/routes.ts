@@ -21,7 +21,7 @@ import {
 } from "@shared/schema";
 import { PUBLISHING_CONFIG } from "@shared/publishing-config";
 import { and, desc, eq, inArray, or, sql, gt, isNull } from "drizzle-orm";
-import { createPresignedRead, createPresignedUpload } from "./uploads";
+import { createPresignedRead, createPresignedUpload, hasObjectInR2 } from "./uploads";
 import { uploadBufferToR2 } from "./uploads";
 import multer from "multer";
 import {
@@ -307,6 +307,16 @@ export async function registerRoutes(
   function apiUrl(req: any, path: string): string {
     const base = apiBaseUrl(req);
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
+  function mediaUrl(req: any, params: { key?: string | null; sourceUrl?: string | null }): string | null {
+    const sourceUrl = sanitizeUrl(params.sourceUrl ?? null);
+    const key = String(params.key ?? "").trim();
+    if (!key && !sourceUrl) return null;
+    const searchParams = new URLSearchParams();
+    if (key) searchParams.set("key", key);
+    if (sourceUrl) searchParams.set("fallbackUrl", sourceUrl);
+    return apiUrl(req, `/api/media?${searchParams.toString()}`);
   }
 
   function deriveCookieDomainFromAppBase(): string | undefined {
@@ -2023,6 +2033,39 @@ export async function registerRoutes(
     }),
   );
 
+  app.get(
+    "/api/media",
+    asyncHandler(async (req, res) => {
+      const key = z
+        .string()
+        .optional()
+        .transform((value) => value?.trim() || "")
+        .parse(req.query.key);
+      const fallbackUrl = sanitizeUrl(
+        z
+          .string()
+          .optional()
+          .transform((value) => value?.trim() || "")
+          .parse(req.query.fallbackUrl),
+      );
+
+      if (!key && !fallbackUrl) {
+        return res.status(400).json({ message: "Missing media reference" });
+      }
+
+      if (key && (await hasObjectInR2(key))) {
+        const signedUrl = await createPresignedRead(key, 60 * 60);
+        return res.redirect(signedUrl);
+      }
+
+      if (fallbackUrl) {
+        return res.redirect(fallbackUrl);
+      }
+
+      return res.status(404).json({ message: "Media not found" });
+    }),
+  );
+
   app.post(
     "/api/login",
     asyncHandler(async (req, res) => {
@@ -2824,41 +2867,18 @@ export async function registerRoutes(
 
             const coverUrl = sanitizeUrl(media?.cover?.url ?? null) ?? sanitizedProfilePhotoUrl ?? null;
             const coverKey = media?.cover?.key ?? inferKeyFromUrl(coverUrl);
-
-            let resolvedCover = coverUrl;
-            if (coverKey) {
-              try {
-                resolvedCover = await createPresignedRead(coverKey, 60 * 60 * 24 * 7);
-              } catch {
-                // fallback to url if signing fails
-              }
-            }
+            const resolvedCover = mediaUrl(req, { key: coverKey, sourceUrl: coverUrl });
 
             const photoItems = (media?.photos ?? []).slice(0, 12);
-            const resolvedPhotos = await Promise.all(
-              photoItems.map(async (ph) => {
-                const u = sanitizeUrl(ph.url);
-                const key = ph.key ?? inferKeyFromUrl(u);
-                if (key) {
-                  try {
-                    return await createPresignedRead(key, 60 * 60 * 24 * 7);
-                  } catch {
-                    return u;
-                  }
-                }
-                return u;
-              }),
-            );
+            const resolvedPhotos = photoItems.map((ph) => {
+              const u = sanitizeUrl(ph.url);
+              const key = ph.key ?? inferKeyFromUrl(u);
+              return mediaUrl(req, { key, sourceUrl: u });
+            });
 
-            let resolvedVideo = sanitizeUrl(media?.video?.url ?? null);
-            const videoKey = media?.video?.key ?? inferKeyFromUrl(resolvedVideo);
-            if (videoKey) {
-              try {
-                resolvedVideo = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-              } catch {
-                // keep url
-              }
-            }
+            const rawVideoUrl = sanitizeUrl(media?.video?.url ?? null);
+            const videoKey = media?.video?.key ?? inferKeyFromUrl(rawVideoUrl);
+            const resolvedVideo = mediaUrl(req, { key: videoKey, sourceUrl: rawVideoUrl });
 
             return {
               ...safe,
@@ -3067,41 +3087,18 @@ export async function registerRoutes(
 
           const coverUrl = sanitizeUrl(media?.cover?.url ?? null) ?? sanitizedProfilePhotoUrl ?? null;
           const coverKey = media?.cover?.key ?? inferKeyFromUrl(coverUrl);
-
-          let resolvedCover = coverUrl;
-          if (coverKey) {
-            try {
-              resolvedCover = await createPresignedRead(coverKey, 60 * 60 * 24 * 7);
-            } catch {
-              // keep url
-            }
-          }
+          const resolvedCover = mediaUrl(req, { key: coverKey, sourceUrl: coverUrl });
 
           const photoItems = (media?.photos ?? []).slice(0, 12);
-          const resolvedPhotos = await Promise.all(
-            photoItems.map(async (ph) => {
-              const u = sanitizeUrl(ph.url);
-              const key = ph.key ?? inferKeyFromUrl(u);
-              if (key) {
-                try {
-                  return await createPresignedRead(key, 60 * 60 * 24 * 7);
-                } catch {
-                  return u;
-                }
-              }
-              return u;
-            }),
-          );
+          const resolvedPhotos = photoItems.map((ph) => {
+            const u = sanitizeUrl(ph.url);
+            const key = ph.key ?? inferKeyFromUrl(u);
+            return mediaUrl(req, { key, sourceUrl: u });
+          });
 
-          let resolvedVideo = sanitizeUrl(media?.video?.url ?? null);
-          const videoKey = media?.video?.key ?? inferKeyFromUrl(resolvedVideo);
-          if (videoKey) {
-            try {
-              resolvedVideo = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-            } catch {
-              // keep url
-            }
-          }
+          const rawVideoUrl = sanitizeUrl(media?.video?.url ?? null);
+          const videoKey = media?.video?.key ?? inferKeyFromUrl(rawVideoUrl);
+          const resolvedVideo = mediaUrl(req, { key: videoKey, sourceUrl: rawVideoUrl });
 
           return {
             id: a.id,
@@ -3611,32 +3608,17 @@ export async function registerRoutes(
             .orderBy(profileMedia.sortOrder);
 
     const photoItems = media.filter((m) => m.type === "photo");
-    const resolvedPhotos = await Promise.all(
-      photoItems.map(async (m) => {
-        const u = sanitizeUrl(m.url);
-        const key = m.key ?? inferKeyFromUrl(u);
-        if (key) {
-          try {
-            return await createPresignedRead(key, 60 * 60 * 24 * 7);
-          } catch {
-            return u;
-          }
-        }
-        return u;
-      }),
-    );
+    const resolvedPhotos = photoItems.map((m) => {
+      const u = sanitizeUrl(m.url);
+      const key = m.key ?? inferKeyFromUrl(u);
+      return mediaUrl(req, { key, sourceUrl: u });
+    });
     const photos = resolvedPhotos.filter((x): x is string => Boolean(x));
 
     const video = media.find((m) => m.type === "video") ?? null;
-    let videoUrl = sanitizeUrl(video?.url ?? null);
-    const videoKey = video?.key ?? inferKeyFromUrl(videoUrl);
-    if (videoKey) {
-      try {
-        videoUrl = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-      } catch {
-        // keep url
-      }
-    }
+    const rawVideoUrl = sanitizeUrl(video?.url ?? null);
+    const videoKey = video?.key ?? inferKeyFromUrl(rawVideoUrl);
+    const videoUrl = mediaUrl(req, { key: videoKey, sourceUrl: rawVideoUrl });
 
     const latestAnnonce =
       !hasAnnonces
@@ -3707,7 +3689,13 @@ export async function registerRoutes(
 
     res.json({
       ...p,
-      photoUrl: photos[0] ?? sanitizeUrl(p.photoUrl ?? null) ?? null,
+      photoUrl:
+        photos[0] ??
+        mediaUrl(req, {
+          key: (p as any).photoKey ?? inferKeyFromUrl(sanitizeUrl(p.photoUrl ?? null)),
+          sourceUrl: sanitizeUrl(p.photoUrl ?? null),
+        }) ??
+        null,
       photos,
       videoUrl,
       distanceKm,

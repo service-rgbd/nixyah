@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getEnv } from "./env";
 import { randomUUID } from "crypto";
@@ -63,6 +63,21 @@ export async function createPresignedRead(key: string, expiresInSeconds = 3600) 
     Key: key,
   });
   return await getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+}
+
+export async function hasObjectInR2(key: string): Promise<boolean> {
+  const { env, client } = getR2Client();
+  try {
+    await client.send(
+      new HeadObjectCommand({
+        Bucket: env.R2_BUCKET!,
+        Key: key,
+      }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function uploadBufferToR2(params: {
