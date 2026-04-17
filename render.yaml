@@ -4,8 +4,8 @@ services:
     runtime: node
     plan: starter
     autoDeploy: true
-    buildCommand: npm ci && npm run build
-    startCommand: npm run start
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @workerspace/api-server build
+    startCommand: pnpm --filter @workerspace/api-server start
     healthCheckPath: /api/healthz
     envVars:
       - key: NODE_VERSION
