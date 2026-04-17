@@ -1190,10 +1190,7 @@ export async function registerRoutes(
         }
 
         const reference = `paystack_${crypto.randomUUID()}`;
-        const callbackUrl = apiUrl(
-          req,
-          `/api/payments/paystack/callback?reference=${encodeURIComponent(reference)}`,
-        );
+        const callbackUrl = apiUrl(req, "/api/payments/paystack/callback");
         const cancelUrl = appUrl("/dashboard?pay=cancel&provider=paystack");
         const initializeRes = await fetch("https://api.paystack.co/transaction/initialize", {
           method: "POST",
