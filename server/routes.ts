@@ -46,6 +46,7 @@ import { getEnv } from "./env";
 import { Resend } from "resend";
 import crypto from "crypto";
 import {
+  getPaystackAmountForPackage,
   TOKEN_PACKAGES,
   findTokenPackage,
   getDefaultPaymentProvider,
@@ -1192,6 +1193,7 @@ export async function registerRoutes(
         const reference = `paystack_${crypto.randomUUID()}`;
         const callbackUrl = apiUrl(req, "/api/payments/paystack/callback");
         const cancelUrl = appUrl("/dashboard?pay=cancel&provider=paystack");
+        const paystackAmount = getPaystackAmountForPackage(pack);
         const initializeRes = await fetch("https://api.paystack.co/transaction/initialize", {
           method: "POST",
           headers: {
@@ -1200,7 +1202,7 @@ export async function registerRoutes(
           },
           body: JSON.stringify({
             email: customerEmail,
-            amount: String(pack.amount),
+            amount: String(paystackAmount),
             currency: pack.currency,
             reference,
             callback_url: callbackUrl,
@@ -1256,10 +1258,11 @@ export async function registerRoutes(
         const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
         const pack = findTokenPackage(packageId);
         const amount = Number(transaction.amount ?? NaN);
+        const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
         const currency = String(transaction.currency ?? "").toUpperCase();
         const status = String(transaction.status ?? "").toLowerCase();
 
-        if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== pack.amount || currency !== pack.currency) {
+        if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== expectedAmount || currency !== pack.currency) {
           if (userId) {
             await recordPaymentFailure({
               userId,
@@ -1280,7 +1283,7 @@ export async function registerRoutes(
           provider: "paystack",
           providerRef: reference,
           pack,
-          amount,
+          amount: pack.amount,
           currency,
           rawEventId: transaction.id ? String(transaction.id) : null,
           meta: { reference, transactionId: transaction.id ?? null },
@@ -1341,11 +1344,12 @@ export async function registerRoutes(
       const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
       const pack = findTokenPackage(packageId);
       const amount = Number(event.data.amount ?? NaN);
+      const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
       const currency = String(event.data.currency ?? "").toUpperCase();
       const status = String(event.data.status ?? "").toLowerCase();
       const reference = String(event.data.reference);
 
-      if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== pack.amount || currency !== pack.currency) {
+      if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== expectedAmount || currency !== pack.currency) {
         if (userId) {
           await recordPaymentFailure({
             userId,
@@ -1366,7 +1370,7 @@ export async function registerRoutes(
         provider: "paystack",
         providerRef: reference,
         pack,
-        amount,
+        amount: pack.amount,
         currency,
         rawEventId: eventId,
         meta: { reference, transactionId: event.data.id ?? null },
