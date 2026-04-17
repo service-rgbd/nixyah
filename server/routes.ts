@@ -2032,11 +2032,13 @@ export async function registerRoutes(
         .object({
           username: z.string().min(1),
           password: z.string().min(1),
-          turnstileToken: z.string().optional(),
+          turnstileToken: z.string().nullable().optional(),
         })
         .parse(req.body);
 
-      if (!(await requireTurnstile(req, res, (payload as any).turnstileToken))) return;
+      const turnstileToken = typeof payload.turnstileToken === "string" ? payload.turnstileToken : undefined;
+
+      if (!(await requireTurnstile(req, res, turnstileToken))) return;
 
       const identifier = payload.username.trim();
       const identLower = identifier.toLowerCase();
