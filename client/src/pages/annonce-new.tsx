@@ -210,6 +210,10 @@ export default function AnnonceNew() {
     return title.trim().length >= 2 && services.length > 0;
   }, [title, services.length]);
 
+  const extendedSupportsMoney = Array.isArray(publishingConfig?.promote?.extended?.paymentMode)
+    ? publishingConfig.promote.extended.paymentMode.includes("money")
+    : false;
+
   const recap = useMemo(() => {
     const cfg = publishingConfig;
     const promote = cfg?.promote ?? {};
@@ -597,16 +601,20 @@ export default function AnnonceNew() {
                                 <div className="text-sm font-semibold text-foreground">{o.days} jours</div>
                                 <div className="text-xs text-muted-foreground">{o.tokens}🪙</div>
                               </div>
-                              <div className="text-xs text-muted-foreground mt-1">
-                                {o.pricePromo ? `${o.pricePromo} CFA (promo)` : o.price ? `${o.price} CFA` : ""}
-                              </div>
+                              {!extendedSupportsMoney ? (
+                                <div className="text-xs text-muted-foreground mt-1">Débit sur votre solde de jetons</div>
+                              ) : (
+                                <div className="text-xs text-muted-foreground mt-1">
+                                  {o.pricePromo ? `${o.pricePromo} CFA (promo)` : o.price ? `${o.price} CFA` : ""}
+                                </div>
+                              )}
                             </button>
                           );
                         })}
                       </div>
                       {extendedOptionId !== "none" ? (
                         <div className="text-xs text-muted-foreground">
-                          Paiement en jetons uniquement (paiement Mobile Money / carte à venir).
+                          Paiement en jetons uniquement. Paystack sert uniquement a acheter des packs de jetons pour le moment.
                         </div>
                       ) : null}
                     </div>
