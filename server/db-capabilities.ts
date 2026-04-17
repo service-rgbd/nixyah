@@ -7,134 +7,144 @@ let hasUsersEmailPromise: Promise<boolean> | null = null;
 let hasProfilesAttributesPromise: Promise<boolean> | null = null;
 let hasUsersEmailVerificationPromise: Promise<boolean> | null = null;
 let hasProfilesBusinessPromise: Promise<boolean> | null = null;
+let hasProfilesAccountTypePromise: Promise<boolean> | null = null;
+let hasProfilesProFieldsPromise: Promise<boolean> | null = null;
+let hasProfilesVisibilityPromise: Promise<boolean> | null = null;
+let hasProfilesContactFieldsPromise: Promise<boolean> | null = null;
+let hasProfilesGeoFieldsPromise: Promise<boolean> | null = null;
+let hasProfilesShowLocationPromise: Promise<boolean> | null = null;
+let hasSalonsTablePromise: Promise<boolean> | null = null;
+let hasProfileMediaTablePromise: Promise<boolean> | null = null;
+let hasAnnoncesTablePromise: Promise<boolean> | null = null;
+let hasAnnoncesPromotionPromise: Promise<boolean> | null = null;
+
+async function hasColumn(tableName: string, columnName: string): Promise<boolean> {
+  try {
+    const res = await db.execute(sql`
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+      limit 1
+    `);
+    const rows = ((res as any)?.rows ?? []) as any[];
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function hasTable(tableName: string): Promise<boolean> {
+  try {
+    const res = await db.execute(sql`
+      select 1
+      from information_schema.tables
+      where table_schema = 'public'
+        and table_name = ${tableName}
+      limit 1
+    `);
+    const rows = ((res as any)?.rows ?? []) as any[];
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 export async function hasProfilesContactPreferenceColumn(): Promise<boolean> {
   if (hasContactPreferencePromise) return hasContactPreferencePromise;
-  hasContactPreferencePromise = (async () => {
-    try {
-      const res = await db.execute(sql`
-        select 1
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'profiles'
-          and column_name = 'contact_preference'
-        limit 1
-      `);
-      // drizzle returns { rows } for node-postgres
-      const rows = ((res as any)?.rows ?? []) as any[];
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  hasContactPreferencePromise = hasColumn("profiles", "contact_preference");
   return hasContactPreferencePromise;
 }
 
 export async function hasProfilesVipColumn(): Promise<boolean> {
   if (hasProfilesVipPromise) return hasProfilesVipPromise;
-  hasProfilesVipPromise = (async () => {
-    try {
-      const res = await db.execute(sql`
-        select 1
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'profiles'
-          and column_name = 'is_vip'
-        limit 1
-      `);
-      const rows = ((res as any)?.rows ?? []) as any[];
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  hasProfilesVipPromise = hasColumn("profiles", "is_vip");
   return hasProfilesVipPromise;
 }
 
 export async function hasUsersEmailColumn(): Promise<boolean> {
   if (hasUsersEmailPromise) return hasUsersEmailPromise;
-  hasUsersEmailPromise = (async () => {
-    try {
-      const res = await db.execute(sql`
-        select 1
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'users'
-          and column_name = 'email'
-        limit 1
-      `);
-      const rows = ((res as any)?.rows ?? []) as any[];
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  hasUsersEmailPromise = hasColumn("users", "email");
   return hasUsersEmailPromise;
 }
 
 export async function hasProfilesAttributesColumns(): Promise<boolean> {
   if (hasProfilesAttributesPromise) return hasProfilesAttributesPromise;
-  hasProfilesAttributesPromise = (async () => {
-    try {
-      // Checking for one column is enough to decide whether the migration ran.
-      const res = await db.execute(sql`
-        select 1
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'profiles'
-          and column_name = 'corpulence'
-        limit 1
-      `);
-      const rows = ((res as any)?.rows ?? []) as any[];
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  hasProfilesAttributesPromise = hasColumn("profiles", "corpulence");
   return hasProfilesAttributesPromise;
 }
 
 export async function hasUsersEmailVerificationColumns(): Promise<boolean> {
   if (hasUsersEmailVerificationPromise) return hasUsersEmailVerificationPromise;
-  hasUsersEmailVerificationPromise = (async () => {
-    try {
-      const res = await db.execute(sql`
-        select 1
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'users'
-          and column_name = 'email_verified'
-        limit 1
-      `);
-      const rows = ((res as any)?.rows ?? []) as any[];
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  hasUsersEmailVerificationPromise = hasColumn("users", "email_verified");
   return hasUsersEmailVerificationPromise;
 }
 
 export async function hasProfilesBusinessColumns(): Promise<boolean> {
   if (hasProfilesBusinessPromise) return hasProfilesBusinessPromise;
-  hasProfilesBusinessPromise = (async () => {
-    try {
-      // Checking for one column is enough to decide whether the migration ran.
-      const res = await db.execute(sql`
-        select 1
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'profiles'
-          and column_name = 'business_name'
-        limit 1
-      `);
-      const rows = ((res as any)?.rows ?? []) as any[];
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  hasProfilesBusinessPromise = hasColumn("profiles", "business_name");
   return hasProfilesBusinessPromise;
+}
+
+export async function hasProfilesAccountTypeColumn(): Promise<boolean> {
+  if (hasProfilesAccountTypePromise) return hasProfilesAccountTypePromise;
+  hasProfilesAccountTypePromise = hasColumn("profiles", "account_type");
+  return hasProfilesAccountTypePromise;
+}
+
+export async function hasProfilesProFields(): Promise<boolean> {
+  if (hasProfilesProFieldsPromise) return hasProfilesProFieldsPromise;
+  hasProfilesProFieldsPromise = hasColumn("profiles", "is_pro");
+  return hasProfilesProFieldsPromise;
+}
+
+export async function hasProfilesVisibilityColumn(): Promise<boolean> {
+  if (hasProfilesVisibilityPromise) return hasProfilesVisibilityPromise;
+  hasProfilesVisibilityPromise = hasColumn("profiles", "visible");
+  return hasProfilesVisibilityPromise;
+}
+
+export async function hasProfilesContactFields(): Promise<boolean> {
+  if (hasProfilesContactFieldsPromise) return hasProfilesContactFieldsPromise;
+  hasProfilesContactFieldsPromise = hasColumn("profiles", "show_phone");
+  return hasProfilesContactFieldsPromise;
+}
+
+export async function hasProfilesGeoFields(): Promise<boolean> {
+  if (hasProfilesGeoFieldsPromise) return hasProfilesGeoFieldsPromise;
+  hasProfilesGeoFieldsPromise = hasColumn("profiles", "lat");
+  return hasProfilesGeoFieldsPromise;
+}
+
+export async function hasProfilesShowLocationColumn(): Promise<boolean> {
+  if (hasProfilesShowLocationPromise) return hasProfilesShowLocationPromise;
+  hasProfilesShowLocationPromise = hasColumn("profiles", "show_location");
+  return hasProfilesShowLocationPromise;
+}
+
+export async function hasSalonsTable(): Promise<boolean> {
+  if (hasSalonsTablePromise) return hasSalonsTablePromise;
+  hasSalonsTablePromise = hasTable("salons");
+  return hasSalonsTablePromise;
+}
+
+export async function hasProfileMediaTable(): Promise<boolean> {
+  if (hasProfileMediaTablePromise) return hasProfileMediaTablePromise;
+  hasProfileMediaTablePromise = hasTable("profile_media");
+  return hasProfileMediaTablePromise;
+}
+
+export async function hasAnnoncesTable(): Promise<boolean> {
+  if (hasAnnoncesTablePromise) return hasAnnoncesTablePromise;
+  hasAnnoncesTablePromise = hasTable("annonces");
+  return hasAnnoncesTablePromise;
+}
+
+export async function hasAnnoncesPromotionColumn(): Promise<boolean> {
+  if (hasAnnoncesPromotionPromise) return hasAnnoncesPromotionPromise;
+  hasAnnoncesPromotionPromise = hasColumn("annonces", "promotion");
+  return hasAnnoncesPromotionPromise;
 }
 
 
