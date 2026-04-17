@@ -1115,11 +1115,20 @@ export async function registerRoutes(
           ...PUBLISHING_CONFIG.promote,
           extended: {
             ...PUBLISHING_CONFIG.promote.extended,
-            options: PUBLISHING_CONFIG.promote.extended.options.map((o) => ({
-              ...o,
-              pricePromo: Math.round(o.price * PROMO_FACTOR),
-              promoPercent: 30,
-            })),
+            options: PUBLISHING_CONFIG.promote.extended.options.map((o) => {
+              const supportsMoney = PUBLISHING_CONFIG.promote.extended.paymentMode.includes("money");
+
+              if (!supportsMoney) {
+                const { price: _price, ...rest } = o;
+                return rest;
+              }
+
+              return {
+                ...o,
+                pricePromo: Math.round(o.price * PROMO_FACTOR),
+                promoPercent: 30,
+              };
+            }),
           },
         },
         // Keep backend-only rules off the public config by default.
