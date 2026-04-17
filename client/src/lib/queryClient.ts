@@ -1,11 +1,12 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-// En dev : même origine (backend local sur le même port).
-// En production : API déployée (ex. Render).
-export const API_BASE_URL =
-  typeof import.meta !== "undefined" && import.meta.env?.DEV
-    ? ""
-    : "https://nixyah.onrender.com";
+const envApiBaseUrl =
+  typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_API_BASE_URL === "string"
+    ? import.meta.env.VITE_API_BASE_URL.trim()
+    : "";
+
+// Le frontend pointe désormais vers l'API Render par défaut, y compris en développement.
+export const API_BASE_URL = envApiBaseUrl || "https://nixyah.onrender.com";
 
 let csrfTokenPromise: Promise<string | null> | null = null;
 
