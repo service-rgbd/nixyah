@@ -29,17 +29,17 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
       - key: R2_ACCOUNT_ID
-        sync: false
+        value: 90b110d9c9e7d9671f85ac48fe800e61
       - key: R2_ACCESS_KEY_ID
         sync: false
       - key: R2_SECRET_ACCESS_KEY
         sync: false
       - key: R2_BUCKET
-        sync: false
+        value: djantrah
       - key: R2_PUBLIC_BASE_URL
-        sync: false
+        value: https://pub-c4d2f077b8bf4164a9ecdea6a7d140c1.r2.dev
       - key: R2_ENDPOINT
-        sync: false
+        value: https://90b110d9c9e7d9671f85ac48fe800e61.r2.cloudflarestorage.com
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM
