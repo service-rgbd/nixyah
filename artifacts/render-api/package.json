@@ -1,0 +1,10 @@
+{
+  "name": "@workerspace/api-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cd ../.. && DOTENV_CONFIG_PATH=.env node -r dotenv/config node_modules/tsx/dist/cli.mjs script/build.ts",
+    "start": "cd ../.. && DOTENV_CONFIG_PATH=.env node -r dotenv/config node_modules/tsx/dist/cli.mjs script/build.ts && DOTENV_CONFIG_PATH=.env NODE_ENV=production node -r dotenv/config dist/index.cjs"
+  }
+}

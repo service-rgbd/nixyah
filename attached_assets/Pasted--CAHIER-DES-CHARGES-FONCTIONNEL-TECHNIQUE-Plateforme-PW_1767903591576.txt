@@ -1,0 +1,211 @@
+# CAHIER DES CHARGES FONCTIONNEL & TECHNIQUE
+
+## Plateforme PWA de mise en relation – **Djantrah.com**
+
+---
+
+## 1. PRÉSENTATION GÉNÉRALE
+
+**Nom du projet :** Djantrah.com
+**Type :** Application Web Progressive (PWA) – Mobile First
+**Cible :** Adultes uniquement (+18 ans)
+**Positionnement :** Mise en avant de profils anonymes, vérifiés, accessibles par swipe, avec contact direct encadré.
+
+Djantrah.com est une plateforme où les utilisateurs (femmes et hommes) publient un profil clair et visuellement valorisé afin d’être contactés par des visiteurs ou membres inscrits, selon des critères définis à l’avance.
+
+⚠️ **Principe fondamental : anonymat, responsabilité individuelle et prudence.**
+
+---
+
+## 2. OBJECTIFS DU PRODUIT
+
+* Mettre en avant les profils avant toute autre fonctionnalité
+* Offrir une expérience fluide, immersive et 100 % mobile
+* Réduire au maximum la friction à l’inscription
+* Garantir l’anonymat des utilisateurs
+* Instaurer un cadre clair de bonne foi et de responsabilité
+* Permettre l’ajout de **photos et vidéos** pour renforcer l’authenticité
+
+---
+
+## 3. PÉRIMÈTRE FONCTIONNEL
+
+### 3.1 Accès & anonymat
+
+* Aucune information d’identité réelle visible publiquement
+* Utilisation de pseudonymes uniquement
+* Aucun affichage de numéro de téléphone ou email
+* Communication via messagerie interne ou CTA encadré
+
+---
+
+## 4. INSCRIPTION & ONBOARDING
+
+### 4.1 Séquence d’inscription (courte & stylée)
+
+**Étapes (max. 4 écrans) :**
+
+1. Choix : Homme / Femme
+2. Âge + Ville
+3. Pseudo + mot de passe
+4. Ajout photo principale (obligatoire)
+
+* Animation fluide entre les écrans
+* Barre de progression visuelle
+* Ton rassurant et élégant
+* Mention claire : *Plateforme réservée aux +18 ans*
+
+---
+
+## 5. PROFIL UTILISATEUR (CŒUR DU PRODUIT)
+
+### 5.1 Structure du profil (6 sections)
+
+1. **Identité visuelle**
+
+   * Pseudo
+   * Âge
+   * Ville
+   * Badge « Profil vérifié »
+
+2. **Présentation multimédia**
+
+   * 1 photo principale (mise en avant)
+   * Galerie photos (max défini par l’admin)
+   * 1 vidéo de présentation (optionnelle mais valorisée)
+
+3. **Disponibilité**
+
+   * Date
+   * Heure de début
+   * Durée
+
+4. **Type de service**
+
+   * Massage
+   * Dating
+   * Accompagnement
+   * Autres (liste contrôlée)
+
+5. **Lieu de rencontre**
+
+   * Hôtel
+   * Résidence
+   * Lieu privé
+   * À définir
+
+6. **Tarification**
+
+   * Prix affiché clairement
+   * Options éventuelles
+
+---
+
+## 6. MISE EN AVANT DES PROFILS
+
+* Carte profil **plein écran**
+* Photo principale dominante
+* Overlay léger (pseudo, âge, ville)
+* Swipe vertical ou horizontal :
+
+  * Profil suivant
+  * Accès détails
+  * Bouton CTA « Contacter »
+
+Priorité absolue au **visuel et à la lisibilité**.
+
+---
+
+## 7. NAVIGATION & UX
+
+* Application 100 % mobile-first
+* Swipe fluide type dating
+* Transitions élégantes
+* Aucune surcharge fonctionnelle
+* Temps de chargement optimisé
+
+---
+
+## 8. DESIGN & DIRECTION ARTISTIQUE
+
+### Palette principale
+
+* Violet / Aubergine (#4B3A4F) – fonds & cartes
+* Rouge sombre / Rouge vif (#E31C23) – CTA
+* Noir – contrastes
+* Blanc – textes principaux
+* Gris clair – champs & séparateurs
+* Beige / crème – arrière-plans photos
+
+### Style
+
+* Élégant
+* Sensuel mais sobre
+* Premium
+* Moderne
+
+---
+
+## 9. ADMINISTRATION & MODÉRATION
+
+### 9.1 Rôle administrateur
+
+* Validation manuelle des profils
+* Validation des photos et vidéos
+* Attribution du badge « Profil vérifié »
+* Suspension / suppression de profils
+* Gestion des signalements
+
+### 9.2 Sécurité
+
+* Aucun profil visible sans validation
+* Historique des actions admin
+* Filtrage de contenu
+
+---
+
+## 10. RESPONSABILITÉ & BONNE FOI (POINT CRITIQUE)
+
+⚠️ **Message affiché clairement sur la plateforme :**
+
+* Djantrah.com est un espace de mise en relation
+* Chaque utilisateur est responsable de ses choix
+* La plateforme ne garantit pas l’identité réelle des membres
+* Il est recommandé de :
+
+  * Prendre le temps d’échanger
+  * Choisir des lieux sûrs
+  * Faire preuve de discernement
+
+L’utilisateur accepte ces principes lors de l’inscription.
+
+---
+
+## 11. CONFORMITÉ LÉGALE
+
+* Mentions légales
+* Conditions d’utilisation
+* Politique de confidentialité
+* Confirmation +18 ans obligatoire
+
+---
+
+## 12. LIVRABLES ATTENDUS
+
+* Application PWA responsive
+* Interface utilisateur stylée et fluide
+* Back-office administrateur
+* Système de validation des profils
+* Hébergement sécurisé
+
+---
+
+## 13. ADN DU PRODUIT
+
+✔️ Anonyme
+✔️ Visuel
+✔️ Direct
+✔️ Mobile
+✔️ Responsable
+
+**Djantrah.com met en avant les profils, pas les promesses.**
