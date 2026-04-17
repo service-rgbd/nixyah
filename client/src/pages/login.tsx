@@ -83,7 +83,11 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      const res = await apiRequest("POST", "/api/login", { username, password, turnstileToken });
+      const res = await apiRequest("POST", "/api/login", {
+        username,
+        password,
+        ...(turnstileToken ? { turnstileToken } : {}),
+      });
       const json = await res.json();
       setSessionIds({ userId: json.userId, profileId: json.profileId });
       setLocation("/dashboard");

@@ -202,7 +202,7 @@ export default function Signup() {
         pseudo: formData.pseudo.trim(),
         password: formData.password,
         email: formData.email || undefined,
-        turnstileToken,
+        ...(turnstileToken ? { turnstileToken } : {}),
       });
       const json = await res.json();
       if (!res.ok) {
