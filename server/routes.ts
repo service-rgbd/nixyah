@@ -1194,6 +1194,7 @@ export async function registerRoutes(
           req,
           `/api/payments/paystack/callback?reference=${encodeURIComponent(reference)}`,
         );
+        const cancelUrl = appUrl("/dashboard?pay=cancel&provider=paystack");
         const initializeRes = await fetch("https://api.paystack.co/transaction/initialize", {
           method: "POST",
           headers: {
@@ -1202,11 +1203,12 @@ export async function registerRoutes(
           },
           body: JSON.stringify({
             email: customerEmail,
-            amount: pack.amount,
+            amount: String(pack.amount),
             currency: pack.currency,
             reference,
             callback_url: callbackUrl,
             metadata: {
+              cancel_action: cancelUrl,
               userId,
               packageId: pack.id,
               tokens: pack.tokens,
