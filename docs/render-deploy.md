@@ -28,8 +28,8 @@ These must be set in Render before the service can boot correctly:
 
 These are strongly recommended for real production behavior:
 
-- `APP_BASE_URL=https://nixyah.onrender.com`
-- `CORS_ORIGINS=https://nixyah.onrender.com`
+- `APP_BASE_URL=https://www.nixyah.com`
+- `CORS_ORIGINS=https://www.nixyah.com,https://nixyah.onrender.com`
 - `ADMIN_EMAIL`
 - `RESEND_API_KEY`
 - `RESEND_FROM`
