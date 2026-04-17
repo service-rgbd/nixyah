@@ -66,6 +66,10 @@ export function sessionMiddleware() {
     // ignore
   }
 
+  if (isProd && (!derivedDomain || /\.onrender\.com$/i.test(derivedDomain))) {
+    derivedDomain = ".nixyah.com";
+  }
+
   const cookieDomain =
     (process.env.SESSION_COOKIE_DOMAIN || "").trim() ||
     (isProd ? derivedDomain : undefined);

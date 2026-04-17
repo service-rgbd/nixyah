@@ -5,8 +5,14 @@ const envApiBaseUrl =
     ? import.meta.env.VITE_API_BASE_URL.trim()
     : "";
 
-// Le frontend pointe désormais vers l'API Render par défaut, y compris en développement.
-export const API_BASE_URL = envApiBaseUrl || "https://nixyah.onrender.com";
+const browserHost =
+  typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
+
+const useSameOriginApi = /^(www\.)?nixyah\.com$/i.test(browserHost);
+
+// Sur les domaines publics, le Worker Cloudflare proxifie /api vers Render.
+// Ailleurs, on garde Render comme fallback explicite.
+export const API_BASE_URL = envApiBaseUrl || (useSameOriginApi ? "" : "https://nixyah.onrender.com");
 
 let csrfTokenPromise: Promise<string | null> | null = null;
 

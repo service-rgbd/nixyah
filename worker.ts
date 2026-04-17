@@ -3,13 +3,20 @@ export default {
     const url = new URL(request.url);
 
     // Redirect API calls to the backend API host.
-    // This prevents 404s when an old frontend bundle (or a relative fetch) hits https://nixyah.com/api/...
-    // while the real API lives on Render.
+    // Proxy them instead of redirecting so the browser stays same-origin and avoids CORS.
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       const target = new URL(request.url);
       target.hostname = "nixyah.onrender.com";
       target.protocol = "https:";
-      return Response.redirect(target.toString(), 307);
+      const headers = new Headers(request.headers);
+      headers.set("x-forwarded-host", url.host);
+      headers.set("x-forwarded-proto", url.protocol.replace(/:$/, ""));
+      return fetch(new Request(target.toString(), {
+        method: request.method,
+        headers,
+        body: request.body,
+        redirect: "manual",
+      }));
     }
 
     // First try to serve the static asset (if binding is available).
