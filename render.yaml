@@ -1,21 +1,62 @@
 services:
   - type: web
-    name: ivory-diaspora-api
+    name: nixyah
     runtime: node
-    rootDir: .
-    buildCommand: pnpm install --frozen-lockfile
-    startCommand: pnpm --filter @workspace/api-server start
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
     healthCheckPath: /api/healthz
     envVars:
       - key: NODE_VERSION
         value: 20
-      - key: PORT
-        value: 10000
-      - key: API_PUBLIC_URL
-        value: https://api.nixyah.com/api
-      - key: EXPO_PUBLIC_API_URL
-        value: https://api.nixyah.com/api
-      - key: EXPO_PUBLIC_APP_URL
-        value: mobile://
+      - key: NODE_ENV
+        value: production
+      - key: APP_BASE_URL
+        value: https://nixyah.onrender.com
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: SECRET_TOKEN
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: SUPPORT_TELEGRAM_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
       - key: R2_PUBLIC_BASE_URL
-        value: https://media.nixyah.com
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      - key: VITE_TURNSTILE_SITE_KEY
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: VITE_PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://nixyah.onrender.com
