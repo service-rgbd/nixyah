@@ -77,6 +77,11 @@ function addAllowedOrigin(origin: string) {
 for (const origin of ["http://localhost:5000", "http://127.0.0.1:5000"]) {
   addAllowedOrigin(origin);
 }
+if (isProd) {
+  for (const origin of ["https://www.nixyah.com", "https://nixyah.com"]) {
+    addAllowedOrigin(origin);
+  }
+}
 if (env.APP_BASE_URL) addAllowedOrigin(env.APP_BASE_URL);
 if (env.CORS_ORIGINS) {
   for (const o of env.CORS_ORIGINS.split(",")) {
