@@ -1,8 +1,13 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-// En production, toutes les requêtes /api/... doivent pointer vers l'API Render.
-// On fixe explicitement la base pour éviter tout problème de configuration d'env.
-export const API_BASE_URL = "https://api.nixyah.com";
+// En dev : même origine (backend local sur le même port).
+// En production : API déployée (ex. Render).
+export const API_BASE_URL =
+  typeof import.meta !== "undefined" && import.meta.env?.DEV
+    ? ""
+    : "https://nixyah.onrender.com";
+
+let csrfTokenPromise: Promise<string | null> | null = null;
 
 export class ApiError extends Error {
   status: number;
@@ -19,6 +24,55 @@ function withApiBase(url: string): string {
   if (!API_BASE_URL) return url;
   const base = API_BASE_URL.replace(/\/+$/, "");
   return `${base}${url}`;
+}
+
+async function getCsrfToken(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  if (!csrfTokenPromise) {
+    csrfTokenPromise = (async () => {
+      try {
+        const res = await fetch(withApiBase("/api/csrf-token"), {
+          credentials: "include",
+        });
+        if (!res.ok) return null;
+        const data = (await res.json()) as { csrfToken?: string | null };
+        return typeof data?.csrfToken === "string" && data.csrfToken.trim().length > 0
+          ? data.csrfToken
+          : null;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return csrfTokenPromise;
+}
+
+async function buildHeaders(
+  initHeaders: HeadersInit | undefined,
+  needsCsrf: boolean,
+): Promise<Headers> {
+  const headers = new Headers(initHeaders ?? {});
+  if (needsCsrf && !headers.has("x-csrf-token")) {
+    const csrfToken = await getCsrfToken();
+    if (csrfToken) headers.set("x-csrf-token", csrfToken);
+  }
+  return headers;
+}
+
+export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const method = String(init.method ?? "GET").toUpperCase();
+  const headers = await buildHeaders(init.headers, !["GET", "HEAD", "OPTIONS"].includes(method));
+  return fetch(withApiBase(input), {
+    ...init,
+    headers,
+    credentials: init.credentials ?? "include",
+  });
+}
+
+export async function apiGetJson<T>(url: string): Promise<T> {
+  const res = await apiFetch(url);
+  await throwIfResNotOk(res);
+  return (await res.json()) as T;
 }
 
 async function throwIfResNotOk(res: Response) {
@@ -47,9 +101,10 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const headers = await buildHeaders(data ? { "Content-Type": "application/json" } : {}, true);
   const res = await fetch(withApiBase(url), {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -64,9 +119,7 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(withApiBase(queryKey.join("/") as string), {
-      credentials: "include",
-    });
+    const res = await apiFetch(queryKey.join("/") as string);
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

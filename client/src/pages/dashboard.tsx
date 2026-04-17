@@ -120,7 +120,10 @@ export default function Dashboard() {
     retry: false,
   });
 
-  const { data: tokenPackagesRes } = useQuery<{ packages: Array<{ id: string; label: string; tokens: number; currency: string; amount: number }> }>({
+  const { data: tokenPackagesRes } = useQuery<{
+    packages: Array<{ id: string; label: string; tokens: number; currency: string; amount: number }>;
+    defaultProvider?: "paystack" | "mobile_money";
+  }>({
     queryKey: ["/api/tokens/packages"],
     retry: false,
   });
@@ -343,8 +346,8 @@ export default function Dashboard() {
             <DialogTitle className="text-base">{lang === "en" ? "Buy tokens" : "Acheter des jetons"}</DialogTitle>
             <DialogDescription className="text-xs">
               {lang === "en"
-                ? "Pay by card with Stripe. Mobile Money will be added next."
-                : "Paiement par carte via Stripe. Mobile Money arrive ensuite."}
+                ? "Secure online payment. Mobile Money will be added next."
+                : "Paiement sécurisé en ligne. Mobile Money arrive ensuite."}
             </DialogDescription>
           </DialogHeader>
 
@@ -362,7 +365,7 @@ export default function Dashboard() {
                     try {
                       const r = await apiRequest("POST", "/api/tokens/checkout", {
                         packageId: p.id,
-                        provider: "stripe",
+                        provider: tokenPackagesRes?.defaultProvider ?? "paystack",
                       });
                       const json = await r.json();
                       const url = String(json?.checkoutUrl ?? "");

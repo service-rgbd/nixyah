@@ -6,9 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/lib/i18n";
-import { apiRequest } from "@/lib/queryClient";
+import { apiGetJson, apiRequest } from "@/lib/queryClient";
 import { Turnstile } from "@/components/turnstile";
-import { API_BASE_URL } from "@/lib/queryClient";
 
 export default function PasswordForgot() {
   const [, setLocation] = useLocation();
@@ -26,9 +25,7 @@ export default function PasswordForgot() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/support`, { credentials: "include" });
-        if (!res.ok) return;
-        const data = (await res.json()) as { turnstileRequired?: boolean };
+        const data = await apiGetJson<{ turnstileRequired?: boolean }>("/api/support");
         if (!cancelled) setTurnstileRequired(Boolean(data.turnstileRequired));
       } catch {
         // ignore

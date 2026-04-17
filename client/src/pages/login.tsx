@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
+import { apiGetJson, apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import { Turnstile } from "@/components/turnstile";
@@ -29,11 +29,7 @@ export default function Login() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/support`, {
-          credentials: "include",
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as { resetEmail?: string | null; turnstileRequired?: boolean };
+        const data = await apiGetJson<{ resetEmail?: string | null; turnstileRequired?: boolean }>("/api/support");
         if (cancelled) return;
         setResetEmail(data.resetEmail ?? null);
         setTurnstileRequired(Boolean(data.turnstileRequired));

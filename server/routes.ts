@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { z } from "zod";
 import { db } from "./db";
-import { hashPassword, verifyPassword } from "./auth";
+import { hashOpaqueToken, hashPassword, verifyPassword } from "./auth";
 import {
   annonceCreateSchema,
   profiles,
@@ -35,8 +35,14 @@ import {
 import { getEnv } from "./env";
 import { Resend } from "resend";
 import crypto from "crypto";
-import { TOKEN_PACKAGES, findTokenPackage, getStripe, getStripeWebhookSecret } from "./payments";
-import type Stripe from "stripe";
+import {
+  TOKEN_PACKAGES,
+  findTokenPackage,
+  getDefaultPaymentProvider,
+  getEnabledPaymentProviders,
+  getPaystackSecretKey,
+  type PaymentProvider,
+} from "./payments";
 import { getOrSet, invalidateTag } from "./cache";
 
 function isPlaceholderUrl(url: string | null | undefined) {
@@ -256,12 +262,30 @@ export async function registerRoutes(
     const withScheme = /^https?:\/\//i.test(base) ? base : `https://${base}`;
     const clean = withScheme.replace(/\/+$/, "");
     // Safety: if someone mistakenly sets APP_BASE_URL to the API host, convert api.* -> root.
-    // Example: https://api.nixyah.com -> https://nixyah.com
+    // Example: https://api.example.com -> https://example.com
     return clean.replace(/^https?:\/\/api\./i, (m) => m.replace(/api\./i, ""));
   }
 
   function appUrl(path: string): string {
     const base = normalizeFrontendBase(env.APP_BASE_URL || "http://localhost:5000");
+    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
+  function apiBaseUrl(req: any): string {
+    const forwardedProto = String(req.get?.("x-forwarded-proto") ?? "")
+      .split(",")[0]
+      .trim();
+    const forwardedHost = String(req.get?.("x-forwarded-host") ?? "")
+      .split(",")[0]
+      .trim();
+    const host = forwardedHost || String(req.get?.("host") ?? "").trim();
+    const protocol = forwardedProto || String(req.protocol || "").trim() || "https";
+    if (host) return `${protocol}://${host.replace(/\/+$/, "")}`;
+    return normalizeFrontendBase(env.APP_BASE_URL || "http://localhost:5000");
+  }
+
+  function apiUrl(req: any, path: string): string {
+    const base = apiBaseUrl(req);
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
@@ -284,6 +308,17 @@ export async function registerRoutes(
       if (!req.session) return resolve();
       req.session.save(() => resolve());
     });
+  }
+
+  function ensureCsrfToken(req: any): string {
+    if (!req.session?.csrfToken) {
+      req.session.csrfToken = generateToken();
+    }
+    return String(req.session.csrfToken);
+  }
+
+  function isCsrfExemptPath(path: string): boolean {
+    return path === "/api/payments/paystack/webhook";
   }
 
   async function redirectAfterSessionSave(req: any, res: any, url: string): Promise<void> {
@@ -353,6 +388,159 @@ export async function registerRoutes(
 
   function generateToken(): string {
     return crypto.randomBytes(32).toString("hex");
+  }
+
+  async function getPaystackTransaction(reference: string) {
+    const secret = getPaystackSecretKey();
+    if (!secret) throw new Error("Paystack non configuré.");
+
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${secret}`,
+        },
+      },
+    );
+
+    const json = (await response.json().catch(() => null)) as
+      | {
+          status?: boolean;
+          message?: string;
+          data?: {
+            id?: number | string;
+            reference?: string;
+            status?: string;
+            amount?: number;
+            currency?: string;
+            customer?: { email?: string | null };
+            metadata?: Record<string, unknown> | null;
+          };
+        }
+      | null;
+
+    if (!response.ok || !json?.status || !json.data) {
+      throw new Error(json?.message || "Échec de vérification Paystack.");
+    }
+
+    return json.data;
+  }
+
+  async function recordPaymentFailure(input: {
+    userId: string;
+    provider: Exclude<PaymentProvider, "mobile_money">;
+    providerRef: string;
+    status?: "failed" | "cancelled";
+    rawEventId?: string | null;
+    amount?: number | null;
+    currency?: string | null;
+    packageId?: string | null;
+    reason?: string | null;
+  }) {
+    await db
+      .insert(payments)
+      .values({
+        userId: input.userId,
+        provider: input.provider,
+        providerRef: input.providerRef,
+        status: input.status ?? "failed",
+        currency: input.currency ?? null,
+        amount: input.amount ?? null,
+        tokens: 0,
+        items: {
+          kind: "tokens",
+          packageId: input.packageId ?? null,
+          reason: input.reason ?? null,
+        } as any,
+        ...(input.rawEventId ? { rawEventId: input.rawEventId } : {}),
+      } as any)
+      .onConflictDoUpdate({
+        target: [(payments as any).provider, (payments as any).providerRef],
+        set: {
+          status: input.status ?? "failed",
+          currency: input.currency ?? null,
+          amount: input.amount ?? null,
+          tokens: 0,
+          items: {
+            kind: "tokens",
+            packageId: input.packageId ?? null,
+            reason: input.reason ?? null,
+          } as any,
+          ...(input.rawEventId ? { rawEventId: input.rawEventId } : {}),
+        } as any,
+      });
+  }
+
+  async function reconcileTokenPurchase(input: {
+    userId: string;
+    provider: Exclude<PaymentProvider, "mobile_money">;
+    providerRef: string;
+    pack: NonNullable<ReturnType<typeof findTokenPackage>>;
+    amount: number;
+    currency: string;
+    rawEventId?: string | null;
+    meta?: Record<string, unknown>;
+  }): Promise<{ credited: boolean }> {
+    return db.transaction(async (tx) => {
+      const paymentValues = {
+        userId: input.userId,
+        provider: input.provider,
+        providerRef: input.providerRef,
+        status: "paid",
+        currency: input.currency,
+        amount: input.amount,
+        tokens: input.pack.tokens,
+        items: { packageId: input.pack.id, kind: "tokens", ...(input.meta ?? {}) } as any,
+        paidAt: new Date(),
+        ...(input.rawEventId ? { rawEventId: input.rawEventId } : {}),
+      } as any;
+
+      const inserted = await tx
+        .insert(payments)
+        .values(paymentValues)
+        .onConflictDoNothing({ target: [(payments as any).provider, (payments as any).providerRef] })
+        .returning({ id: payments.id });
+
+      let shouldCredit = inserted.length > 0;
+
+      if (!shouldCredit) {
+        const updated = await tx
+          .update(payments)
+          .set(paymentValues)
+          .where(
+            and(
+              eq((payments as any).provider, input.provider),
+              eq((payments as any).providerRef, input.providerRef),
+              sql`${payments.status} <> 'paid'`,
+            ),
+          )
+          .returning({ id: payments.id });
+        shouldCredit = updated.length > 0;
+      }
+
+      if (!shouldCredit) {
+        return { credited: false };
+      }
+
+      await tx
+        .update(users)
+        .set({ tokensBalance: sql`${users.tokensBalance} + ${input.pack.tokens}` } as any)
+        .where(eq(users.id, input.userId));
+
+      await tx.insert(tokenTransactions).values({
+        userId: input.userId,
+        delta: input.pack.tokens,
+        reason: "purchase",
+        meta: {
+          provider: input.provider,
+          providerRef: input.providerRef,
+          packageId: input.pack.id,
+          ...(input.meta ?? {}),
+        } as any,
+      } as any);
+
+      return { credited: true };
+    });
   }
 
   function renderEmailLayout(opts: {
@@ -449,13 +637,14 @@ export async function registerRoutes(
     }
 
     const token = generateToken();
+    const tokenHash = hashOpaqueToken(token);
     const sentAt = new Date();
 
     // Store token first so the link is valid even if the user clicks quickly.
     await db
       .update(users as any)
       .set({
-        emailVerificationToken: token,
+        emailVerificationToken: tokenHash,
         emailVerificationSentAt: sentAt,
         emailVerified: false,
       })
@@ -514,12 +703,13 @@ export async function registerRoutes(
     }
 
     const token = generateToken();
+    const tokenHash = hashOpaqueToken(token);
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1h
 
     await db
       .update(users as any)
       .set({
-        resetPasswordToken: token,
+        resetPasswordToken: tokenHash,
         resetPasswordExpiresAt: expiresAt,
       })
       .where(eq(users.id, userId));
@@ -699,6 +889,30 @@ export async function registerRoutes(
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  app.get(
+    "/api/csrf-token",
+    asyncHandler(async (req, res) => {
+      const csrfToken = ensureCsrfToken(req);
+      await saveSession(req);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ csrfToken });
+    }),
+  );
+
+  app.use("/api", (req, res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+    if (isCsrfExemptPath(req.path)) return next();
+
+    const expected = String(req.session?.csrfToken ?? "").trim();
+    const provided = String(req.get("x-csrf-token") ?? "").trim();
+
+    if (!expected || !provided || expected !== provided) {
+      return res.status(419).json({ message: "Jeton CSRF manquant ou invalide." });
+    }
+
+    return next();
   });
 
   // --- Authentification Google OAuth2 (login uniquement, sans création auto de profil) ---
@@ -888,7 +1102,11 @@ export async function registerRoutes(
     "/api/tokens/packages",
     asyncHandler(async (_req, res) => {
       res.setHeader("Cache-Control", "no-store");
-      res.json({ packages: TOKEN_PACKAGES });
+      res.json({
+        packages: TOKEN_PACKAGES,
+        providers: getEnabledPaymentProviders(),
+        defaultProvider: getDefaultPaymentProvider(),
+      });
     }),
   );
 
@@ -901,7 +1119,7 @@ export async function registerRoutes(
       const payload = z
         .object({
           packageId: z.string().min(3).max(64),
-          provider: z.enum(["stripe", "mobile_money"]).default("stripe"),
+          provider: z.enum(["paystack", "mobile_money"]).default(getDefaultPaymentProvider()),
         })
         .parse(req.body);
 
@@ -909,148 +1127,214 @@ export async function registerRoutes(
         return res.status(501).json({ message: "Mobile Money: bientôt disponible" });
       }
 
-      const stripe = getStripe();
-      if (!stripe) {
-        return res.status(500).json({ message: "Paiement indisponible (Stripe non configuré)." });
-      }
-
       const pack = findTokenPackage(payload.packageId);
       if (!pack) return res.status(400).json({ message: "Pack jetons invalide." });
 
-      const session = await stripe.checkout.sessions.create({
-        mode: "payment",
-        line_items: [
-          {
-            price_data: {
-              currency: pack.currency.toLowerCase(),
-              unit_amount: pack.amount,
-              product_data: { name: `NIXYAH – ${pack.label}` },
-            },
-            quantity: 1,
+      if (payload.provider === "paystack") {
+        const paystackSecret = getPaystackSecretKey();
+        if (!paystackSecret) {
+          return res.status(500).json({ message: "Paiement indisponible (Paystack non configuré)." });
+        }
+        if (!hasUsersEmail) {
+          return res.status(400).json({ message: "Ajoute un email à ton compte avant de payer." });
+        }
+
+        const [u] = await db
+          .select({ email: (users as any).email })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1);
+
+        const customerEmail = String((u as any)?.email ?? "").trim().toLowerCase();
+        if (!customerEmail) {
+          return res.status(400).json({ message: "Ajoute un email à ton compte avant de payer." });
+        }
+
+        const reference = `paystack_${crypto.randomUUID()}`;
+        const callbackUrl = apiUrl(
+          req,
+          `/api/payments/paystack/callback?reference=${encodeURIComponent(reference)}`,
+        );
+        const initializeRes = await fetch("https://api.paystack.co/transaction/initialize", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${paystackSecret}`,
+            "Content-Type": "application/json",
           },
-        ],
-        // Note: use a URL on the frontend domain
-        success_url: appUrl(`/dashboard?pay=success&session_id={CHECKOUT_SESSION_ID}`),
-        cancel_url: appUrl(`/dashboard?pay=cancel`),
-        metadata: {
-          userId,
-          packageId: pack.id,
-          tokens: String(pack.tokens),
-        },
-      });
+          body: JSON.stringify({
+            email: customerEmail,
+            amount: pack.amount,
+            currency: pack.currency,
+            reference,
+            callback_url: callbackUrl,
+            metadata: {
+              userId,
+              packageId: pack.id,
+              tokens: pack.tokens,
+            },
+          }),
+        });
 
-      // Store payment record (created) for support + later reconciliation
-      await db
-        .insert(payments)
-        .values({
-          userId,
-          provider: "stripe",
-          providerRef: session.id,
-          status: "created",
-          currency: pack.currency,
-          amount: pack.amount,
-          tokens: pack.tokens,
-          items: { packageId: pack.id, kind: "tokens" } as any,
-        } as any)
-        .onConflictDoNothing();
+        const initializeJson = (await initializeRes.json().catch(() => null)) as
+          | { status?: boolean; message?: string; data?: { authorization_url?: string | null } }
+          | null;
 
-      res.json({ checkoutUrl: session.url });
+        if (!initializeRes.ok || !initializeJson?.status || !initializeJson.data?.authorization_url) {
+          return res.status(502).json({
+            message: initializeJson?.message || "Initialisation Paystack impossible.",
+          });
+        }
+
+        await db
+          .insert(payments)
+          .values({
+            userId,
+            provider: "paystack",
+            providerRef: reference,
+            status: "created",
+            currency: pack.currency,
+            amount: pack.amount,
+            tokens: pack.tokens,
+            items: { packageId: pack.id, kind: "tokens" } as any,
+          } as any)
+          .onConflictDoNothing();
+
+        return res.json({ checkoutUrl: initializeJson.data.authorization_url, provider: "paystack" });
+      }
+
+      return res.status(400).json({ message: "Provider de paiement invalide." });
+    }),
+  );
+
+  app.get(
+    "/api/payments/paystack/callback",
+    asyncHandler(async (req, res) => {
+      const reference = z.string().min(8).max(200).parse(req.query.reference);
+
+      try {
+        const transaction = await getPaystackTransaction(reference);
+        const metadata = (transaction.metadata ?? {}) as Record<string, unknown>;
+        const userId = typeof metadata.userId === "string" ? metadata.userId : "";
+        const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
+        const pack = findTokenPackage(packageId);
+        const amount = Number(transaction.amount ?? NaN);
+        const currency = String(transaction.currency ?? "").toUpperCase();
+        const status = String(transaction.status ?? "").toLowerCase();
+
+        if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== pack.amount || currency !== pack.currency) {
+          if (userId) {
+            await recordPaymentFailure({
+              userId,
+              provider: "paystack",
+              providerRef: reference,
+              rawEventId: transaction.id ? String(transaction.id) : null,
+              amount: Number.isFinite(amount) ? amount : null,
+              currency: currency || null,
+              packageId,
+              reason: "paystack_callback_mismatch",
+            });
+          }
+          return res.redirect(appUrl("/dashboard?pay=cancel&provider=paystack"));
+        }
+
+        await reconcileTokenPurchase({
+          userId,
+          provider: "paystack",
+          providerRef: reference,
+          pack,
+          amount,
+          currency,
+          rawEventId: transaction.id ? String(transaction.id) : null,
+          meta: { reference, transactionId: transaction.id ?? null },
+        });
+
+        return res.redirect(appUrl("/dashboard?pay=success&provider=paystack"));
+      } catch (e) {
+        console.error("Paystack callback failed", e);
+        return res.redirect(appUrl("/dashboard?pay=cancel&provider=paystack"));
+      }
     }),
   );
 
   app.post(
-    "/api/payments/stripe/webhook",
+    "/api/payments/paystack/webhook",
     asyncHandler(async (req, res) => {
-      const stripe = getStripe();
-      const whsec = getStripeWebhookSecret();
-      if (!stripe || !whsec) {
-        return res.status(500).json({ message: "Stripe webhook not configured" });
+      const secret = getPaystackSecretKey();
+      if (!secret) {
+        return res.status(500).json({ message: "Paystack webhook not configured" });
       }
 
-      const sig = req.get("stripe-signature") || "";
+      const signature = String(req.get("x-paystack-signature") ?? "").trim();
       const raw = (req as any).rawBody;
       const rawBuf = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ""));
-
-      let event: Stripe.Event;
-      try {
-        event = stripe.webhooks.constructEvent(rawBuf, sig, whsec);
-      } catch {
+      const expected = crypto.createHmac("sha512", secret).update(rawBuf).digest("hex");
+      if (!signature || signature !== expected) {
         return res.status(400).json({ message: "Invalid signature" });
       }
 
-      // Idempotence by event id
-      const already = await db
-        .select({ id: payments.id })
-        .from(payments)
-        .where(and(eq((payments as any).provider, "stripe"), eq((payments as any).rawEventId, event.id)))
-        .limit(1);
-      if (already.length) return res.json({ ok: true, deduped: true });
+      const event = JSON.parse(rawBuf.toString("utf8")) as {
+        event?: string;
+        data?: {
+          id?: number | string;
+          reference?: string;
+          status?: string;
+          amount?: number;
+          currency?: string;
+          metadata?: Record<string, unknown> | null;
+        };
+      };
 
-      if (event.type === "checkout.session.completed") {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const userId = (session.metadata?.userId as string | undefined) ?? undefined;
-        const tokens = Number(session.metadata?.tokens ?? 0);
-        const packageId = (session.metadata?.packageId as string | undefined) ?? null;
-        if (!userId || !Number.isFinite(tokens) || tokens <= 0) {
-          // still store the event id to avoid retries storm
-          await db
-            .insert(payments)
-            .values({
-              userId: userId ?? (sql`gen_random_uuid()` as any),
-              provider: "stripe",
-              providerRef: String(session.id ?? session.payment_intent ?? event.id),
-              status: "failed",
-              tokens: 0,
-              rawEventId: event.id,
-              items: { packageId } as any,
-            } as any)
-            .onConflictDoNothing();
-          return res.json({ ok: true });
-        }
-
-        await db.transaction(async (tx) => {
-          // Mark payment as paid (or insert if missing) with event id (idempotence)
-          await tx
-            .insert(payments)
-            .values({
-              userId,
-              provider: "stripe",
-              providerRef: String(session.id ?? session.payment_intent ?? event.id),
-              status: "paid",
-              currency: (session.currency ?? null)?.toUpperCase() ?? null,
-              amount: typeof session.amount_total === "number" ? session.amount_total : null,
-              tokens,
-              items: { packageId, kind: "tokens" } as any,
-              rawEventId: event.id,
-              paidAt: new Date(),
-            } as any)
-            .onConflictDoUpdate({
-              target: [(payments as any).provider, (payments as any).providerRef],
-              set: {
-                status: "paid",
-                rawEventId: event.id,
-                paidAt: new Date(),
-              } as any,
-            });
-
-          // Credit tokens balance
-          await tx
-            .update(users)
-            .set({ tokensBalance: sql`${users.tokensBalance} + ${tokens}` } as any)
-            .where(eq(users.id, userId));
-
-          // Ledger entry
-          await tx.insert(tokenTransactions).values({
-            userId,
-            delta: tokens,
-            reason: "purchase",
-            meta: { provider: "stripe", sessionId: session.id, packageId } as any,
-          } as any);
-        });
+      if (event.event !== "charge.success" || !event.data?.reference) {
+        return res.json({ ok: true });
       }
 
-      // Acknowledge for all event types
-      res.json({ ok: true });
+      const eventId = event.data.id ? String(event.data.id) : null;
+      if (eventId) {
+        const already = await db
+          .select({ id: payments.id })
+          .from(payments)
+          .where(and(eq((payments as any).provider, "paystack"), eq((payments as any).rawEventId, eventId)))
+          .limit(1);
+        if (already.length) return res.json({ ok: true, deduped: true });
+      }
+
+      const metadata = (event.data.metadata ?? {}) as Record<string, unknown>;
+      const userId = typeof metadata.userId === "string" ? metadata.userId : "";
+      const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
+      const pack = findTokenPackage(packageId);
+      const amount = Number(event.data.amount ?? NaN);
+      const currency = String(event.data.currency ?? "").toUpperCase();
+      const status = String(event.data.status ?? "").toLowerCase();
+      const reference = String(event.data.reference);
+
+      if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== pack.amount || currency !== pack.currency) {
+        if (userId) {
+          await recordPaymentFailure({
+            userId,
+            provider: "paystack",
+            providerRef: reference,
+            rawEventId: eventId,
+            amount: Number.isFinite(amount) ? amount : null,
+            currency: currency || null,
+            packageId,
+            reason: "paystack_webhook_mismatch",
+          });
+        }
+        return res.json({ ok: true });
+      }
+
+      await reconcileTokenPurchase({
+        userId,
+        provider: "paystack",
+        providerRef: reference,
+        pack,
+        amount,
+        currency,
+        rawEventId: eventId,
+        meta: { reference, transactionId: event.data.id ?? null },
+      });
+
+      return res.json({ ok: true });
     }),
   );
 
@@ -1153,6 +1437,7 @@ export async function registerRoutes(
           token: z.string().min(10).max(200),
         })
         .parse(req.body);
+      const tokenHash = hashOpaqueToken(payload.token);
 
       // Expire tokens after 7 days to limit long-lived links.
       const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
@@ -1167,7 +1452,7 @@ export async function registerRoutes(
         })
         .where(
           and(
-            eq((users as any).emailVerificationToken, payload.token),
+            eq((users as any).emailVerificationToken, tokenHash),
             or(
               // Backward-compat: allow older rows where sentAt is null.
               isNull((users as any).emailVerificationSentAt),
@@ -1252,6 +1537,7 @@ export async function registerRoutes(
           password: z.string().min(6).max(200),
         })
         .parse(req.body);
+      const tokenHash = hashOpaqueToken(payload.token);
 
       const now = new Date();
 
@@ -1261,7 +1547,12 @@ export async function registerRoutes(
           resetPasswordExpiresAt: (users as any).resetPasswordExpiresAt,
         })
         .from(users)
-        .where(eq((users as any).resetPasswordToken, payload.token))
+        .where(
+          or(
+            eq((users as any).resetPasswordToken, payload.token),
+            eq((users as any).resetPasswordToken, tokenHash),
+          ),
+        )
         .limit(1);
 
       if (!u) {
@@ -2998,7 +3289,6 @@ export async function registerRoutes(
           .update(users)
           .set({
             tokensBalance: sql`coalesce(${users.tokensBalance}, 0) + ${payload.tokens}`,
-            updatedAt: new Date(),
           } as any)
           .where(eq(users.id, userId))
           .returning({ tokensBalance: users.tokensBalance });
@@ -3532,6 +3822,17 @@ export async function registerRoutes(
         if (!updated.length) {
           throw Object.assign(new Error("Solde de jetons insuffisant : publication refusée."), { status: 403 });
         }
+
+        await tx.insert(tokenTransactions).values({
+          userId,
+          delta: -totalTokens,
+          reason: "annonce_publish",
+          meta: {
+            profileId: payload.profileId,
+            totalTokens,
+            promote: payload.promote ?? null,
+          } as any,
+        } as any);
       }
 
       const existing = await tx

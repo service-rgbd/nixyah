@@ -10,6 +10,7 @@ import { getProfileId } from "@/lib/session";
 import { adultProducts as staticAdultProducts } from "@/lib/maleProducts";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { apiFetch } from "@/lib/queryClient";
 
 type PaymentMethod = "delivery" | "direct";
 
@@ -70,7 +71,7 @@ export default function AdultProductDetailPage() {
         }
 
         // 2) Sinon, chercher dans la base SQL
-        const res = await fetch(`/api/adult-products/${params.id}`);
+        const res = await apiFetch(`/api/adult-products/${params.id}`);
         if (!res.ok) throw new Error("Produit introuvable");
         const data = (await res.json()) as ApiAdultProduct;
         if (!cancelled) {
@@ -104,7 +105,7 @@ export default function AdultProductDetailPage() {
     (async () => {
       if (!product?.ownerProfileId) return;
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/adult-products?ownerProfileId=${encodeURIComponent(product.ownerProfileId)}&limit=8`,
         );
         if (!res.ok) return;
@@ -155,7 +156,7 @@ export default function AdultProductDetailPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/adult-orders", {
+      const res = await apiFetch("/api/adult-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

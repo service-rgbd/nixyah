@@ -8,6 +8,7 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     profileId?: string;
+    csrfToken?: string;
   }
 }
 
@@ -42,7 +43,7 @@ export function sessionMiddleware() {
     }
   }
 
-  // When frontend and API are on different origins (e.g. nixyah.com vs api.nixyah.com),
+  // When frontend and API are on different origins,
   // cookies can be rejected or not sent depending on SameSite/Domain rules and browser policies.
   // We default to a robust production setup:
   // - SameSite=None (allows credentialed cross-origin XHR)

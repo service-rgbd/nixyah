@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express, { type Request, type RequestHandler, Response, NextFunction } from "express";
-import cors from "cors";
+import cors, { type CorsOptionsDelegate } from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
@@ -60,19 +60,21 @@ if (env.CORS_ORIGINS) {
     if (v) allowedOrigins.add(v.replace(/\/+$/, ""));
   }
 }
+const corsOrigin: CorsOptionsDelegate<Request> = (origin, cb) => {
+  // same-origin / server-to-server requests (no Origin header)
+  if (!origin) return cb(null, true);
+  const normalized = origin.replace(/\/+$/, "");
+  if (allowedOrigins.size === 0) {
+    // Default: lock down in production, allow in dev for local testing
+    return cb(null, !isProd);
+  }
+  return cb(null, allowedOrigins.has(normalized));
+};
+
 app.use(
   cors({
     credentials: true,
-    origin: (origin, cb) => {
-      // same-origin / server-to-server requests (no Origin header)
-      if (!origin) return cb(null, true);
-      const normalized = origin.replace(/\/+$/, "");
-      if (allowedOrigins.size === 0) {
-        // Default: lock down in production, allow in dev for local testing
-        return cb(null, !isProd);
-      }
-      return cb(null, allowedOrigins.has(normalized));
-    },
+    origin: corsOrigin,
   }),
 );
 

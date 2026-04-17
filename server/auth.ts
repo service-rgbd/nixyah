@@ -1,4 +1,4 @@
-import { pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, pbkdf2Sync, randomBytes, timingSafeEqual } from "crypto";
 
 const PBKDF2_ITERATIONS = 210_000;
 const KEYLEN = 32;
@@ -24,6 +24,10 @@ export function verifyPassword(password: string, stored: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function hashOpaqueToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 

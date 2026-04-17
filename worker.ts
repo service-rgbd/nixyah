@@ -4,10 +4,10 @@ export default {
 
     // Redirect API calls to the backend API host.
     // This prevents 404s when an old frontend bundle (or a relative fetch) hits https://nixyah.com/api/...
-    // while the real API lives on https://api.nixyah.com.
+    // while the real API lives on Render.
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
       const target = new URL(request.url);
-      target.hostname = "api.nixyah.com";
+      target.hostname = "nixyah.onrender.com";
       target.protocol = "https:";
       return Response.redirect(target.toString(), 307);
     }

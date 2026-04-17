@@ -1,5 +1,6 @@
-import Stripe from "stripe";
 import { getEnv } from "./env";
+
+export type PaymentProvider = "paystack" | "mobile_money";
 
 export type TokenPackage = {
   id: string;
@@ -16,17 +17,20 @@ export const TOKEN_PACKAGES: TokenPackage[] = [
   { id: "pack_40", label: "40 jetons", tokens: 40, currency: "XOF", amount: 12000 },
 ];
 
-export function getStripe(): Stripe | null {
+export function getPaystackSecretKey(): string | null {
   const env = getEnv();
-  const key = (env as any).STRIPE_SECRET_KEY as string | undefined;
-  if (!key) return null;
-  // Keep in sync with the Stripe SDK bundled types.
-  return new Stripe(key, { apiVersion: "2025-12-15.clover" });
+  return ((env as any).PAYSTACK_SECRET_KEY as string | undefined) ?? null;
 }
 
-export function getStripeWebhookSecret(): string | null {
-  const env = getEnv();
-  return ((env as any).STRIPE_WEBHOOK_SECRET as string | undefined) ?? null;
+export function getEnabledPaymentProviders(): PaymentProvider[] {
+  const providers: PaymentProvider[] = [];
+  if (getPaystackSecretKey()) providers.push("paystack");
+  providers.push("mobile_money");
+  return providers;
+}
+
+export function getDefaultPaymentProvider(): PaymentProvider {
+  return getPaystackSecretKey() ? "paystack" : "mobile_money";
 }
 
 export function findTokenPackage(id: string): TokenPackage | null {

@@ -21,6 +21,7 @@ async function main() {
     "R2_ACCESS_KEY_ID",
     "R2_SECRET_ACCESS_KEY",
     "R2_BUCKET",
+    "PAYSTACK_SECRET_KEY",
   ] as const;
 
   const missing = required.filter((k) => !isSet(env[k]));

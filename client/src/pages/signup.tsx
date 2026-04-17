@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
+import { apiFetch, apiGetJson, apiRequest, API_BASE_URL } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { getProfileId } from "@/lib/session";
 import { cityOptions } from "@/lib/cities";
@@ -139,9 +139,7 @@ export default function Signup() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/support`, { credentials: "include" });
-        if (!res.ok) return;
-        const data = (await res.json()) as { turnstileRequired?: boolean };
+        const data = await apiGetJson<{ turnstileRequired?: boolean }>("/api/support");
         if (!cancelled) setTurnstileRequired(Boolean(data.turnstileRequired));
       } catch {
         // ignore
@@ -578,10 +576,8 @@ export default function Signup() {
                             try {
                               const lat = pos.coords.latitude;
                               const lng = pos.coords.longitude;
-                              const r = await fetch(
-                                `${API_BASE_URL}/api/geo/reverse?lat=${encodeURIComponent(
-                                  lat,
-                                )}&lng=${encodeURIComponent(lng)}`,
+                              const r = await apiFetch(
+                                `/api/geo/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
                               );
                               if (!r.ok) {
                                 throw new Error();

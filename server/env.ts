@@ -61,9 +61,7 @@ const envAliases: Record<string, string[]> = {
 
   TURNSTILE_SECRET_KEY: ["TURNSTILE_SECRET_KEY", "turnstile_secret_key", "turnstileSecretKey"],
 
-  // Stripe
-  STRIPE_SECRET_KEY: ["STRIPE_SECRET_KEY", "stripe_secret_key", "stripeSecretKey"],
-  STRIPE_WEBHOOK_SECRET: ["STRIPE_WEBHOOK_SECRET", "stripe_webhook_secret", "stripeWebhookSecret"],
+  PAYSTACK_SECRET_KEY: ["PAYSTACK_SECRET_KEY", "paystack_secret_key", "paystackSecretKey"],
 
   // CORS (comma-separated list of allowed origins for API when frontend is deployed separately)
   CORS_ORIGINS: ["CORS_ORIGINS", "cors_origins", "corsOrigins", "CORS_ORIGIN", "cors_origin"],
@@ -113,8 +111,7 @@ const envSchema = z.object({
 
   TURNSTILE_SECRET_KEY: z.string().optional(),
 
-  STRIPE_SECRET_KEY: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  PAYSTACK_SECRET_KEY: z.string().optional(),
 
   CORS_ORIGINS: z.string().optional(),
   SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).optional(),

@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useI18n } from "@/lib/i18n";
-import { apiRequest, API_BASE_URL } from "@/lib/queryClient";
+import { apiFetch, apiRequest } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 
 type AdminUser = {
@@ -55,7 +55,7 @@ export default function AdminPage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/admin/me`, { credentials: "include" });
+        const res = await apiFetch("/api/admin/me");
         setAllowed(res.ok);
       } catch {
         setAllowed(false);

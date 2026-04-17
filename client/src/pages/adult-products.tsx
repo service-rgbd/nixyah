@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AdultProduct } from "@shared/schema";
 import { adultProducts as staticAdultProducts } from "@/lib/maleProducts";
+import { apiFetch } from "@/lib/queryClient";
 
 type ApiAdultProduct = AdultProduct;
 
@@ -30,7 +31,7 @@ export default function AdultProductsPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/api/adult-products");
+        const res = await apiFetch("/api/adult-products");
         const apiProducts = res.ok ? ((await res.json()) as ApiAdultProduct[]) : [];
 
         const staticList: ListProduct[] = staticAdultProducts.map((p) => ({
