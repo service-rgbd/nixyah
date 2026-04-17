@@ -53,6 +53,9 @@ app.use(
 
 // CORS (needed when frontend is on Cloudflare Pages and API is on Render)
 const allowedOrigins = new Set<string>();
+for (const origin of ["http://localhost:5000", "http://127.0.0.1:5000"]) {
+  allowedOrigins.add(origin);
+}
 if (env.APP_BASE_URL) allowedOrigins.add(env.APP_BASE_URL.replace(/\/+$/, ""));
 if (env.CORS_ORIGINS) {
   for (const o of env.CORS_ORIGINS.split(",")) {
