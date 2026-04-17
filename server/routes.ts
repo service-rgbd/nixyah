@@ -1339,6 +1339,14 @@ export async function registerRoutes(
   );
 
   app.get(
+    "/api/healthz",
+    asyncHandler(async (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, service: "nixyah-api" });
+    }),
+  );
+
+  app.get(
     "/api/support",
     asyncHandler(async (_req, res) => {
       res.setHeader("Cache-Control", "no-store");
