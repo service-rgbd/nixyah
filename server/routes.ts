@@ -25,9 +25,11 @@ import { createPresignedRead, createPresignedUpload } from "./uploads";
 import { uploadBufferToR2 } from "./uploads";
 import multer from "multer";
 import {
+  hasProfilesAccountTypeColumn,
   hasProfilesAttributesColumns,
   hasProfilesBusinessColumns,
   hasProfilesContactPreferenceColumn,
+  hasSalonsTable,
   hasProfilesVipColumn,
   hasUsersEmailColumn,
   hasUsersEmailVerificationColumns,
@@ -248,6 +250,8 @@ export async function registerRoutes(
   const hasProfileAttrs = await hasProfilesAttributesColumns();
   const hasUsersEmailVerified = await hasUsersEmailVerificationColumns();
   const hasProfilesBusiness = await hasProfilesBusinessColumns();
+  const hasAccountType = await hasProfilesAccountTypeColumn();
+  const hasSalons = await hasSalonsTable();
   const env = getEnv();
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -2177,7 +2181,7 @@ export async function registerRoutes(
             photoKey: payload.photoKey,
             visible: true,
             isPro: accountType !== "profile",
-            accountType,
+            ...(hasAccountType ? { accountType } : {}),
             // default availability shown in UI
             disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" },
           })
@@ -2330,6 +2334,10 @@ export async function registerRoutes(
   app.get(
     "/api/salons",
     asyncHandler(async (req, res) => {
+      if (!hasSalons) {
+        return res.json([]);
+      }
+
       const types =
         typeof req.query.types === "string" && req.query.types.length
           ? String(req.query.types)
@@ -2661,7 +2669,7 @@ export async function registerRoutes(
           verified: profiles.verified,
           photoUrl: profiles.photoUrl,
           isPro: profiles.isPro,
-          accountType: profiles.accountType,
+          accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
           ...(hasProfilesBusiness
             ? {
                 businessName: (profiles as any).businessName,
@@ -2938,7 +2946,7 @@ export async function registerRoutes(
           ville: profiles.ville,
           verified: profiles.verified,
           isPro: profiles.isPro,
-          accountType: profiles.accountType,
+          accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
           ...(hasVip ? { isVip: (profiles as any).isVip } : {}),
           photoUrl: profiles.photoUrl,
           tarif: profiles.tarif,
@@ -3521,8 +3529,8 @@ export async function registerRoutes(
         verified: profiles.verified,
         photoUrl: profiles.photoUrl,
         isPro: profiles.isPro,
-        isVip: (profiles as any).isVip ?? sql<boolean>`false`,
-        accountType: profiles.accountType,
+        isVip: hasVip ? (profiles as any).isVip : (sql<boolean>`false` as any),
+        accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
         businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
         address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
         openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),

@@ -7,6 +7,8 @@ let hasUsersEmailPromise: Promise<boolean> | null = null;
 let hasProfilesAttributesPromise: Promise<boolean> | null = null;
 let hasUsersEmailVerificationPromise: Promise<boolean> | null = null;
 let hasProfilesBusinessPromise: Promise<boolean> | null = null;
+let hasProfilesAccountTypePromise: Promise<boolean> | null = null;
+let hasSalonsTablePromise: Promise<boolean> | null = null;
 
 export async function hasProfilesContactPreferenceColumn(): Promise<boolean> {
   if (hasContactPreferencePromise) return hasContactPreferencePromise;
@@ -135,6 +137,47 @@ export async function hasProfilesBusinessColumns(): Promise<boolean> {
     }
   })();
   return hasProfilesBusinessPromise;
+}
+
+export async function hasProfilesAccountTypeColumn(): Promise<boolean> {
+  if (hasProfilesAccountTypePromise) return hasProfilesAccountTypePromise;
+  hasProfilesAccountTypePromise = (async () => {
+    try {
+      const res = await db.execute(sql`
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'profiles'
+          and column_name = 'account_type'
+        limit 1
+      `);
+      const rows = ((res as any)?.rows ?? []) as any[];
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  return hasProfilesAccountTypePromise;
+}
+
+export async function hasSalonsTable(): Promise<boolean> {
+  if (hasSalonsTablePromise) return hasSalonsTablePromise;
+  hasSalonsTablePromise = (async () => {
+    try {
+      const res = await db.execute(sql`
+        select 1
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name = 'salons'
+        limit 1
+      `);
+      const rows = ((res as any)?.rows ?? []) as any[];
+      return rows.length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  return hasSalonsTablePromise;
 }
 
 
