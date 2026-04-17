@@ -25,10 +25,18 @@ import { createPresignedRead, createPresignedUpload } from "./uploads";
 import { uploadBufferToR2 } from "./uploads";
 import multer from "multer";
 import {
+  hasAnnoncesPromotionColumn,
+  hasAnnoncesTable,
   hasProfilesAccountTypeColumn,
   hasProfilesAttributesColumns,
   hasProfilesBusinessColumns,
+  hasProfilesContactFields,
   hasProfilesContactPreferenceColumn,
+  hasProfilesGeoFields,
+  hasProfileMediaTable,
+  hasProfilesProFields,
+  hasProfilesShowLocationColumn,
+  hasProfilesVisibilityColumn,
   hasSalonsTable,
   hasProfilesVipColumn,
   hasUsersEmailColumn,
@@ -251,7 +259,15 @@ export async function registerRoutes(
   const hasUsersEmailVerified = await hasUsersEmailVerificationColumns();
   const hasProfilesBusiness = await hasProfilesBusinessColumns();
   const hasAccountType = await hasProfilesAccountTypeColumn();
+  const hasProfilesPro = await hasProfilesProFields();
+  const hasProfilesVisibility = await hasProfilesVisibilityColumn();
+  const hasProfilesContact = await hasProfilesContactFields();
+  const hasProfilesGeo = await hasProfilesGeoFields();
+  const hasProfilesShowLocation = await hasProfilesShowLocationColumn();
   const hasSalons = await hasSalonsTable();
+  const hasProfileMedia = await hasProfileMediaTable();
+  const hasAnnonces = await hasAnnoncesTable();
+  const hasAnnoncesPromotion = await hasAnnoncesPromotionColumn();
   const env = getEnv();
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -1879,17 +1895,17 @@ export async function registerRoutes(
       const [updated] = await db
         .update(profiles)
         .set({
-          ...(payload.visible === undefined ? {} : { visible: payload.visible }),
-          ...(payload.phone === undefined ? {} : { phone: payload.phone }),
-          ...(payload.showPhone === undefined ? {} : { showPhone: payload.showPhone }),
-          ...(payload.telegram === undefined ? {} : { telegram: payload.telegram }),
-          ...(payload.showTelegram === undefined ? {} : { showTelegram: payload.showTelegram }),
+          ...(hasProfilesVisibility && payload.visible !== undefined ? { visible: payload.visible } : {}),
+          ...(hasProfilesContact && payload.phone !== undefined ? { phone: payload.phone } : {}),
+          ...(hasProfilesContact && payload.showPhone !== undefined ? { showPhone: payload.showPhone } : {}),
+          ...(hasProfilesContact && payload.telegram !== undefined ? { telegram: payload.telegram } : {}),
+          ...(hasProfilesContact && payload.showTelegram !== undefined ? { showTelegram: payload.showTelegram } : {}),
           ...(hasContactPref && payload.contactPreference !== undefined
             ? { contactPreference: payload.contactPreference }
             : {}),
-          ...(payload.lat === undefined ? {} : { lat: payload.lat }),
-          ...(payload.lng === undefined ? {} : { lng: payload.lng }),
-          ...(payload.showLocation === undefined ? {} : { showLocation: payload.showLocation }),
+          ...(hasProfilesGeo && payload.lat !== undefined ? { lat: payload.lat } : {}),
+          ...(hasProfilesGeo && payload.lng !== undefined ? { lng: payload.lng } : {}),
+          ...(hasProfilesShowLocation && payload.showLocation !== undefined ? { showLocation: payload.showLocation } : {}),
           ...(hasProfilesBusiness && payload.businessName !== undefined ? { businessName: payload.businessName } : {}),
           ...(hasProfilesBusiness && payload.address !== undefined ? { address: payload.address } : {}),
           ...(hasProfilesBusiness && payload.openingHours !== undefined ? { openingHours: payload.openingHours } : {}),
@@ -1899,14 +1915,14 @@ export async function registerRoutes(
         .where(eq(profiles.id, profileId))
         .returning({
           id: profiles.id,
-          visible: profiles.visible,
-          phone: profiles.phone,
-          showPhone: profiles.showPhone,
-          telegram: profiles.telegram,
-          showTelegram: profiles.showTelegram,
+          visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+          phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+          showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+          telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+          showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
           ...(hasContactPref ? { contactPreference: profiles.contactPreference } : {}),
-          lat: profiles.lat,
-          lng: profiles.lng,
+          lat: hasProfilesGeo ? profiles.lat : (sql<number | null>`null` as any),
+          lng: hasProfilesGeo ? profiles.lng : (sql<number | null>`null` as any),
           businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
           address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
           openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),
@@ -2176,14 +2192,16 @@ export async function registerRoutes(
             gender: payload.gender,
             age: payload.age,
             ville: payload.ville.trim(),
-            lieu: payload.lieu,
+            ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
             photoUrl: payload.photoUrl,
             photoKey: payload.photoKey,
-            visible: true,
-            isPro: accountType !== "profile",
+            ...(hasProfilesVisibility ? { visible: true } : {}),
+            ...(hasProfilesPro ? { isPro: accountType !== "profile" } : {}),
             ...(hasAccountType ? { accountType } : {}),
             // default availability shown in UI
-            disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" },
+            ...(hasProfilesPro
+              ? { disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" } }
+              : {}),
           })
           .returning({
             id: profiles.id,
@@ -2192,12 +2210,12 @@ export async function registerRoutes(
             ville: profiles.ville,
             verified: profiles.verified,
             photoUrl: profiles.photoUrl,
-            isPro: profiles.isPro,
-            visible: profiles.visible,
+            isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
+            visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
           });
 
         // Optional: seed first photo into media table (for gallery)
-        if (payload.photoUrl) {
+        if (hasProfileMedia && payload.photoUrl) {
           await tx.insert(profileMedia).values({
             profileId: p.id,
             type: "photo",
@@ -2643,17 +2661,17 @@ export async function registerRoutes(
       PROFILES_CACHE_TTL_MS,
       async () => {
         const where = and(
-          eq(profiles.visible, true),
+          hasProfilesVisibility ? eq(profiles.visible, true) : undefined,
           q.verifiedOnly ? eq(profiles.verified, true) : undefined,
-          q.proOnly ? eq(profiles.isPro, true) : undefined,
+          hasProfilesPro && q.proOnly ? eq(profiles.isPro, true) : undefined,
           hasVip && vipOnlyChoice ? eq((profiles as any).isVip, true) : undefined,
-          q.servicesFilter.length
+          hasProfilesPro && q.servicesFilter.length
             ? sql`coalesce(${profiles.services}, ARRAY[]::text[]) && ${sqlTextArray(q.servicesFilter)}`
             : undefined,
         );
 
         const distanceKm =
-          q.userLat !== undefined && q.userLng !== undefined
+          hasProfilesGeo && q.userLat !== undefined && q.userLng !== undefined
             ? sql<number>`(6371 * acos(
                 cos(radians(${q.userLat})) * cos(radians(${profiles.lat})) *
                 cos(radians(${profiles.lng}) - radians(${q.userLng})) +
@@ -2668,7 +2686,7 @@ export async function registerRoutes(
           ville: profiles.ville,
           verified: profiles.verified,
           photoUrl: profiles.photoUrl,
-          isPro: profiles.isPro,
+          isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
           accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
           ...(hasProfilesBusiness
             ? {
@@ -2684,18 +2702,18 @@ export async function registerRoutes(
                 roomsCount: sql<number | null>`null`,
               }),
           ...(hasVip ? { isVip: (profiles as any).isVip } : {}),
-          visible: profiles.visible,
-          phone: profiles.phone,
-          showPhone: profiles.showPhone,
-          telegram: profiles.telegram,
-          showTelegram: profiles.showTelegram,
-          lat: profiles.lat,
-          lng: profiles.lng,
-          tarif: profiles.tarif,
-          lieu: profiles.lieu,
-          services: profiles.services,
-          disponibilite: profiles.disponibilite,
-          description: profiles.description,
+          visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+          phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+          showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+          telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+          showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
+          lat: hasProfilesGeo ? profiles.lat : (sql<number | null>`null` as any),
+          lng: hasProfilesGeo ? profiles.lng : (sql<number | null>`null` as any),
+          tarif: hasProfilesPro ? profiles.tarif : (sql<string | null>`null` as any),
+          lieu: hasProfilesPro ? profiles.lieu : (sql<string | null>`null` as any),
+          services: hasProfilesPro ? profiles.services : (sql<any>`null` as any),
+          disponibilite: hasProfilesPro ? profiles.disponibilite : (sql<any>`null` as any),
+          description: hasProfilesPro ? profiles.description : (sql<string | null>`null` as any),
           ...(hasProfileAttrs
             ? {
                 corpulence: (profiles as any).corpulence,
@@ -2732,14 +2750,14 @@ export async function registerRoutes(
           { id: string; title: string; createdAt: string; badges: string[] }
         >();
 
-        if (includeLatestAnnonce && ids.length) {
+        if (includeLatestAnnonce && hasAnnonces && ids.length) {
           const annonceRows = await db
             .select({
               profileId: annonces.profileId,
               id: annonces.id,
               title: annonces.title,
               createdAt: annonces.createdAt,
-              promotion: (annonces as any).promotion,
+              promotion: hasAnnoncesPromotion ? (annonces as any).promotion : (sql<any>`null` as any),
             })
             .from(annonces)
             .where(and(inArray(annonces.profileId, ids), eq(annonces.active, true)))
@@ -2762,7 +2780,7 @@ export async function registerRoutes(
         }
 
         const mediaRows =
-          ids.length === 0
+          !hasProfileMedia || ids.length === 0
             ? []
             : await db
                 .select({
@@ -2870,6 +2888,10 @@ export async function registerRoutes(
   app.get(
     "/api/annonces",
     asyncHandler(async (req, res) => {
+      if (!hasAnnonces) {
+        return res.json([]);
+      }
+
       const limit = z
         .string()
         .optional()
@@ -2913,17 +2935,17 @@ export async function registerRoutes(
 
       const where = and(
         eq(annonces.active, true),
-        eq(profiles.visible, true),
+        hasProfilesVisibility ? eq(profiles.visible, true) : undefined,
         q.verifiedOnly ? eq(profiles.verified, true) : undefined,
-        q.proOnly ? eq(profiles.isPro, true) : undefined,
+        hasProfilesPro && q.proOnly ? eq(profiles.isPro, true) : undefined,
         hasVip && (vipOnly === undefined ? false : vipOnly) ? eq((profiles as any).isVip, true) : undefined,
-        q.servicesFilter.length
+        hasProfilesPro && q.servicesFilter.length
           ? sql`coalesce(${profiles.services}, ARRAY[]::text[]) && ${sqlTextArray(q.servicesFilter)}`
           : undefined,
       );
 
       const distanceKm =
-        q.userLat !== undefined && q.userLng !== undefined
+        hasProfilesGeo && q.userLat !== undefined && q.userLng !== undefined
           ? sql<number>`(6371 * acos(
               cos(radians(${q.userLat})) * cos(radians(${profiles.lat})) *
               cos(radians(${profiles.lng}) - radians(${q.userLng})) +
@@ -2938,21 +2960,21 @@ export async function registerRoutes(
           body: annonces.body,
           active: annonces.active,
           createdAt: annonces.createdAt,
-          promotion: (annonces as any).promotion,
+          promotion: hasAnnoncesPromotion ? (annonces as any).promotion : (sql<any>`null` as any),
 
           profileId: profiles.id,
           pseudo: profiles.pseudo,
           age: profiles.age,
           ville: profiles.ville,
           verified: profiles.verified,
-          isPro: profiles.isPro,
+          isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
           accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
           ...(hasVip ? { isVip: (profiles as any).isVip } : {}),
           photoUrl: profiles.photoUrl,
-          tarif: profiles.tarif,
-          lieu: profiles.lieu,
-          services: profiles.services,
-          description: profiles.description,
+          tarif: hasProfilesPro ? profiles.tarif : (sql<string | null>`null` as any),
+          lieu: hasProfilesPro ? profiles.lieu : (sql<string | null>`null` as any),
+          services: hasProfilesPro ? profiles.services : (sql<any>`null` as any),
+          description: hasProfilesPro ? profiles.description : (sql<string | null>`null` as any),
           ...(hasProfileAttrs
             ? {
                 corpulence: (profiles as any).corpulence,
@@ -3003,7 +3025,7 @@ export async function registerRoutes(
 
       const ids = sorted.map((a) => a.profileId);
       const mediaRows =
-        ids.length === 0
+        !hasProfileMedia || ids.length === 0
           ? []
           : await db
               .select({
@@ -3528,24 +3550,24 @@ export async function registerRoutes(
         ville: profiles.ville,
         verified: profiles.verified,
         photoUrl: profiles.photoUrl,
-        isPro: profiles.isPro,
+        isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
         isVip: hasVip ? (profiles as any).isVip : (sql<boolean>`false` as any),
         accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
         businessName: hasProfilesBusiness ? (profiles as any).businessName : (sql<string | null>`null` as any),
         address: hasProfilesBusiness ? (profiles as any).address : (sql<string | null>`null` as any),
         openingHours: hasProfilesBusiness ? (profiles as any).openingHours : (sql<string | null>`null` as any),
         roomsCount: hasProfilesBusiness ? (profiles as any).roomsCount : (sql<number | null>`null` as any),
-        visible: profiles.visible,
-        phone: profiles.phone,
-        showPhone: profiles.showPhone,
-        telegram: profiles.telegram,
-        showTelegram: profiles.showTelegram,
-        tarif: profiles.tarif,
-        lieu: profiles.lieu,
-        services: profiles.services,
-        disponibilite: profiles.disponibilite,
-        description: profiles.description,
-        showLocation: (profiles as any).showLocation,
+      visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+      phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+      showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+      telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+      showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
+      tarif: hasProfilesPro ? profiles.tarif : (sql<string | null>`null` as any),
+      lieu: hasProfilesPro ? profiles.lieu : (sql<string | null>`null` as any),
+      services: hasProfilesPro ? profiles.services : (sql<any>`null` as any),
+      disponibilite: hasProfilesPro ? profiles.disponibilite : (sql<any>`null` as any),
+      description: hasProfilesPro ? profiles.description : (sql<string | null>`null` as any),
+      showLocation: hasProfilesShowLocation ? (profiles as any).showLocation : (sql<boolean>`false` as any),
         ...(hasProfileAttrs
           ? {
               corpulence: (profiles as any).corpulence,
@@ -3571,17 +3593,20 @@ export async function registerRoutes(
 
     if (!p) return res.status(404).json({ message: "Profil introuvable" });
 
-    const media = await db
-      .select({
-        id: profileMedia.id,
-        type: profileMedia.type,
-        url: profileMedia.url,
-        key: profileMedia.key,
-        sortOrder: profileMedia.sortOrder,
-      })
-      .from(profileMedia)
-      .where(eq(profileMedia.profileId, id))
-      .orderBy(profileMedia.sortOrder);
+    const media =
+      !hasProfileMedia
+        ? []
+        : await db
+            .select({
+              id: profileMedia.id,
+              type: profileMedia.type,
+              url: profileMedia.url,
+              key: profileMedia.key,
+              sortOrder: profileMedia.sortOrder,
+            })
+            .from(profileMedia)
+            .where(eq(profileMedia.profileId, id))
+            .orderBy(profileMedia.sortOrder);
 
     const photoItems = media.filter((m) => m.type === "photo");
     const resolvedPhotos = await Promise.all(
@@ -3611,19 +3636,22 @@ export async function registerRoutes(
       }
     }
 
-    const latestAnnonce = await db
-      .select({
-        id: annonces.id,
-        title: annonces.title,
-        body: annonces.body,
-        active: annonces.active,
-        createdAt: annonces.createdAt,
-        promotion: (annonces as any).promotion,
-      })
-      .from(annonces)
-      .where(and(eq(annonces.profileId, id), eq(annonces.active, true)))
-      .orderBy(desc(annonces.createdAt))
-      .limit(1);
+    const latestAnnonce =
+      !hasAnnonces
+        ? []
+        : await db
+            .select({
+              id: annonces.id,
+              title: annonces.title,
+              body: annonces.body,
+              active: annonces.active,
+              createdAt: annonces.createdAt,
+              promotion: hasAnnoncesPromotion ? (annonces as any).promotion : (sql<any>`null` as any),
+            })
+            .from(annonces)
+            .where(and(eq(annonces.profileId, id), eq(annonces.active, true)))
+            .orderBy(desc(annonces.createdAt))
+            .limit(1);
 
     const isOwner = req.session?.profileId === id;
 
@@ -3642,6 +3670,7 @@ export async function registerRoutes(
 
     let distanceKm: number | null = null;
     if (
+      hasProfilesGeo &&
       userLat !== undefined &&
       userLng !== undefined &&
       (p as any).lat !== null &&
@@ -3662,8 +3691,9 @@ export async function registerRoutes(
     }
 
     let mapUrl: string | null = null;
-    const showLocation = (p as any).showLocation ?? false;
+    const showLocation = hasProfilesShowLocation ? ((p as any).showLocation ?? false) : false;
     if (
+      hasProfilesGeo &&
       (p as any).lat !== null &&
       (p as any).lng !== null &&
       (p as any).lat !== undefined &&
