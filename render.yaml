@@ -13,7 +13,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: APP_BASE_URL
-        value: https://nixyah.onrender.com
+        value: https://www.nixyah.com
       - key: DATABASE_URL
         sync: false
       - key: ADMIN_TOKEN
@@ -59,4 +59,4 @@ services:
       - key: VITE_PAYSTACK_PUBLIC_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: https://nixyah.onrender.com
+        value: https://www.nixyah.com,https://nixyah.com
