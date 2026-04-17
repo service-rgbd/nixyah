@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { clearSession, getProfileId } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import avatarUrl from "@assets/avatar.png";
-import { apiRequest } from "@/lib/queryClient";
+import { apiFetch, apiGetJson, apiRequest } from "@/lib/queryClient";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,17 @@ type ApiProfileDetail = {
       }
     | null;
 };
+
+type TokenPackagesResponse = {
+  packages: Array<{ id: string; label: string; tokens: number; currency: string; amount: number }>;
+  providers?: Array<"paystack" | "mobile_money">;
+  defaultProvider?: "paystack" | "mobile_money";
+};
+
+function pickCheckoutProvider(config: TokenPackagesResponse | null | undefined): "paystack" | "mobile_money" {
+  if (config?.providers?.includes("paystack")) return "paystack";
+  return config?.defaultProvider ?? "paystack";
+}
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
@@ -120,10 +131,7 @@ export default function Dashboard() {
     retry: false,
   });
 
-  const { data: tokenPackagesRes } = useQuery<{
-    packages: Array<{ id: string; label: string; tokens: number; currency: string; amount: number }>;
-    defaultProvider?: "paystack" | "mobile_money";
-  }>({
+  const { data: tokenPackagesRes } = useQuery<TokenPackagesResponse>({
     queryKey: ["/api/tokens/packages"],
     retry: false,
   });
@@ -136,10 +144,16 @@ export default function Dashboard() {
     queryKey: ["/api/support"],
   });
 
-  const { data: adminMe } = useQuery<{ ok: boolean }>({
+  const { data: adminMe } = useQuery<{ ok: boolean } | null>({
     queryKey: ["/api/admin/me"],
     enabled: Boolean(profileId),
     retry: false,
+    queryFn: async () => {
+      const res = await apiFetch("/api/admin/me");
+      if (res.status === 401 || res.status === 403) return null;
+      if (!res.ok) throw new Error("Unable to check admin access");
+      return (await res.json()) as { ok: boolean };
+    },
   });
 
   useEffect(() => {
@@ -363,10 +377,27 @@ export default function Dashboard() {
                     if (buyingTokens) return;
                     setBuyingTokens(true);
                     try {
-                      const r = await apiRequest("POST", "/api/tokens/checkout", {
-                        packageId: p.id,
-                        provider: tokenPackagesRes?.defaultProvider ?? "paystack",
-                      });
+                      const freshTokenConfig = await apiGetJson<TokenPackagesResponse>("/api/tokens/packages")
+                        .catch(() => tokenPackagesRes ?? null);
+                      const selectedProvider = pickCheckoutProvider(freshTokenConfig);
+
+                      let r;
+                      try {
+                        r = await apiRequest("POST", "/api/tokens/checkout", {
+                          packageId: p.id,
+                          provider: selectedProvider,
+                        });
+                      } catch (e: any) {
+                        if (e?.status === 501 && selectedProvider !== "paystack") {
+                          r = await apiRequest("POST", "/api/tokens/checkout", {
+                            packageId: p.id,
+                            provider: "paystack",
+                          });
+                        } else {
+                          throw e;
+                        }
+                      }
+
                       const json = await r.json();
                       const url = String(json?.checkoutUrl ?? "");
                       if (!url) throw new Error("Checkout URL missing");
