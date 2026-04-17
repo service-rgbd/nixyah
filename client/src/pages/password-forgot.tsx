@@ -52,7 +52,10 @@ export default function PasswordForgot() {
     }
     setLoading(true);
     try {
-      await apiRequest("POST", "/api/password/forgot", { identifier, turnstileToken });
+      await apiRequest("POST", "/api/password/forgot", {
+        identifier,
+        ...(turnstileToken ? { turnstileToken } : {}),
+      });
       setDone(true);
     } catch (e: any) {
       setError(
