@@ -4309,12 +4309,7 @@ export async function registerRoutes(
               })
               .from(profileMedia)
               .innerJoin(profiles, eq(profileMedia.profileId, profiles.id))
-              .where(
-                and(
-                  eq(profileMedia.type, "video"),
-                  hasProfilesVisibility ? eq(profiles.visible, true) : undefined,
-                ),
-              )
+              .where(and(eq(profileMedia.type, "video")))
               .orderBy(desc(profileMedia.createdAt))
               .limit(80)
           : [];
