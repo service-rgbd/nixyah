@@ -451,6 +451,10 @@ export async function registerRoutes(
 
   function isCsrfExemptPath(path: string): boolean {
     return [
+      "/login",
+      "/signup",
+      "/password/forgot",
+      "/password/reset",
       "/api/login",
       "/api/signup",
       "/api/password/forgot",
@@ -1050,7 +1054,8 @@ export async function registerRoutes(
 
   app.use("/api", (req, res, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
-    if (isCsrfExemptPath(req.path)) return next();
+    const mountedPath = `${String(req.baseUrl ?? "")}${String(req.path ?? "")}`;
+    if (isCsrfExemptPath(req.path) || isCsrfExemptPath(mountedPath)) return next();
 
     const expected = String(req.session?.csrfToken ?? "").trim();
     const provided = String(req.get("x-csrf-token") ?? "").trim();
