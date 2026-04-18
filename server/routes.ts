@@ -2971,8 +2971,18 @@ export async function registerRoutes(
           string,
           { id: string; title: string; createdAt: string; badges: string[] }
         >();
+        const latestAnnonceSortMetaByProfile = new Map<
+          string,
+          {
+            createdAtMs: number;
+            topActive: boolean;
+            featuredActive: boolean;
+            urgentActive: boolean;
+            topLastBumpAtMs: number | null;
+          }
+        >();
 
-        if (includeLatestAnnonce && hasAnnonces && ids.length) {
+        if (hasAnnonces && ids.length) {
           const annonceRows = await db
             .select({
               profileId: annonces.profileId,
@@ -2991,6 +3001,13 @@ export async function registerRoutes(
                 annonceCreatedAt: a.createdAt,
                 promotion: (a as any).promotion,
               });
+              latestAnnonceSortMetaByProfile.set(a.profileId, {
+                createdAtMs: new Date(a.createdAt).getTime(),
+                topActive: meta.topActive,
+                featuredActive: meta.featuredActive,
+                urgentActive: meta.urgentActive,
+                topLastBumpAtMs: meta.topLastBumpAt ? new Date(meta.topLastBumpAt).getTime() : null,
+              });
               latestAnnonceByProfile.set(a.profileId, {
                 id: a.id,
                 title: a.title,
@@ -3000,6 +3017,35 @@ export async function registerRoutes(
             }
           }
         }
+
+        const sortedProfiles = distanceKm
+          ? filtered
+          : [...filtered].sort((a: any, b: any) => {
+              const aMeta = latestAnnonceSortMetaByProfile.get(a.id) ?? null;
+              const bMeta = latestAnnonceSortMetaByProfile.get(b.id) ?? null;
+
+              const aTop = Boolean(aMeta?.topActive);
+              const bTop = Boolean(bMeta?.topActive);
+              if (aTop !== bTop) return aTop ? -1 : 1;
+
+              const aTopBump = aMeta?.topLastBumpAtMs ?? aMeta?.createdAtMs ?? new Date(a.createdAt).getTime();
+              const bTopBump = bMeta?.topLastBumpAtMs ?? bMeta?.createdAtMs ?? new Date(b.createdAt).getTime();
+              if (aTopBump !== bTopBump) return bTopBump - aTopBump;
+
+              const aFeatured = Boolean(aMeta?.featuredActive);
+              const bFeatured = Boolean(bMeta?.featuredActive);
+              if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
+
+              const aUrgent = Boolean(aMeta?.urgentActive);
+              const bUrgent = Boolean(bMeta?.urgentActive);
+              if (aUrgent !== bUrgent) return aUrgent ? -1 : 1;
+
+              const aAnnonceCreatedAt = aMeta?.createdAtMs ?? 0;
+              const bAnnonceCreatedAt = bMeta?.createdAtMs ?? 0;
+              if (aAnnonceCreatedAt !== bAnnonceCreatedAt) return bAnnonceCreatedAt - aAnnonceCreatedAt;
+
+              return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            });
 
         const mediaRows =
           !hasProfileMedia || ids.length === 0
@@ -3036,7 +3082,7 @@ export async function registerRoutes(
         }
 
         const payload = await Promise.all(
-          filtered.map(async (p) => {
+          sortedProfiles.map(async (p) => {
             const { phone, showPhone, telegram, showTelegram, ...safe } = p as any;
             const preference = (p as any).contactPreference ?? "whatsapp";
             const media = mediaByProfile.get(p.id);
