@@ -18,6 +18,20 @@ const PgStore = connectPgSimple(session);
 let pgPool: pg.Pool | null = null;
 let store: session.Store | null = null;
 
+function deriveCookieDomainFromAppBase(): string | undefined {
+  try {
+    const raw = String(process.env.APP_BASE_URL || "").trim();
+    if (!raw) return undefined;
+    const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const host = new URL(withScheme).hostname.replace(/^www\./i, "");
+    if (!host || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return undefined;
+    if (!host.includes(".")) return undefined;
+    return `.${host}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function sessionMiddleware() {
   const secret = process.env.SECRET_TOKEN || process.env.SESSION_SECRET || "dev-secret";
   const isProd = process.env.NODE_ENV === "production";
@@ -48,7 +62,8 @@ export function sessionMiddleware() {
   // otherwise browsers can reject the cookie when frontend and backend hosts differ.
   const sameSite =
     (process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax");
-  const cookieDomain = (process.env.SESSION_COOKIE_DOMAIN || "").trim() || undefined;
+  const cookieDomain =
+    (process.env.SESSION_COOKIE_DOMAIN || "").trim() || deriveCookieDomainFromAppBase();
 
   return session({
     store,
