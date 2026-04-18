@@ -450,7 +450,13 @@ export async function registerRoutes(
   }
 
   function isCsrfExemptPath(path: string): boolean {
-    return path === "/api/payments/paystack/webhook";
+    return [
+      "/api/login",
+      "/api/signup",
+      "/api/password/forgot",
+      "/api/password/reset",
+      "/api/payments/paystack/webhook",
+    ].includes(path);
   }
 
   async function redirectAfterSessionSave(req: any, res: any, url: string): Promise<void> {
@@ -874,13 +880,14 @@ export async function registerRoutes(
     const token = String(req.get?.("x-admin-token") ?? "");
     if (env.ADMIN_TOKEN && token && token === env.ADMIN_TOKEN) return true;
 
-    // 2) Session-based admin (preferred): compare email (or fallback to username for backward-compat)
+    // 2) Session-based admin
     const userId = req.session?.userId as string | undefined;
     if (!userId) return false;
-    if (!env.ADMIN_EMAIL) return false;
+    if (env.ADMIN_USER_ID && userId === env.ADMIN_USER_ID) return true;
 
     const [u] = await db
       .select({
+        id: users.id,
         username: users.username,
         email: hasUsersEmail ? (users as any).email : sql<string | null>`null`,
         emailVerified: hasUsersEmailVerified ? (users as any).emailVerified : sql<boolean>`false`,
@@ -890,15 +897,23 @@ export async function registerRoutes(
       .limit(1);
 
     if (!u) return false;
-    const adminEmail = env.ADMIN_EMAIL.toLowerCase();
     const email = (u as any).email ? String((u as any).email).toLowerCase() : null;
     const username = String(u.username).toLowerCase();
-    // If email-based admin is used, require verified email (when column exists).
-    if (email && email === adminEmail) {
-      if (hasUsersEmailVerified && !(u as any).emailVerified) return false;
+
+    if (env.ADMIN_USERNAME && username === env.ADMIN_USERNAME.toLowerCase()) {
       return true;
     }
-    return username === adminEmail;
+
+    if (env.ADMIN_EMAIL) {
+      const adminEmail = env.ADMIN_EMAIL.toLowerCase();
+      if (email && email === adminEmail) {
+        if (hasUsersEmailVerified && !(u as any).emailVerified) return false;
+        return true;
+      }
+      if (username === adminEmail) return true;
+    }
+
+    return false;
   }
 
   function getClientIp(req: any): string | null {

@@ -39,6 +39,8 @@ const envAliases: Record<string, string[]> = {
   ADMIN_TOKEN: ["ADMIN_TOKEN", "admin_token", "adminToken"],
   SECRET_TOKEN: ["SECRET_TOKEN", "secret_token", "secretToken"],
   ADMIN_EMAIL: ["ADMIN_EMAIL", "admin_email", "adminEmail"],
+  ADMIN_USERNAME: ["ADMIN_USERNAME", "admin_username", "adminUsername"],
+  ADMIN_USER_ID: ["ADMIN_USER_ID", "admin_user_id", "adminUserId"],
 
   R2_ACCOUNT_ID: ["R2_ACCOUNT_ID", "r2_account_id", "R2AccountId", "r2AccountId"],
   R2_ACCESS_KEY_ID: ["R2_ACCESS_KEY_ID", "r2_access_key_id", "r2AccessKeyId"],
@@ -68,6 +70,7 @@ const envAliases: Record<string, string[]> = {
 
   // Session cookie tweaks (advanced)
   SESSION_COOKIE_SAMESITE: ["SESSION_COOKIE_SAMESITE", "session_cookie_samesite"],
+  SESSION_COOKIE_DOMAIN: ["SESSION_COOKIE_DOMAIN", "session_cookie_domain"],
 };
 
 for (const [canonical, aliases] of Object.entries(envAliases)) {
@@ -89,6 +92,8 @@ const envSchema = z.object({
   ADMIN_TOKEN: nonEmpty("ADMIN_TOKEN").optional(),
   SECRET_TOKEN: nonEmpty("SECRET_TOKEN").optional(),
   ADMIN_EMAIL: z.string().email().optional(),
+  ADMIN_USERNAME: nonEmpty("ADMIN_USERNAME").optional(),
+  ADMIN_USER_ID: z.string().uuid().optional(),
 
   R2_ACCOUNT_ID: nonEmpty("R2_ACCOUNT_ID").optional(),
   R2_ACCESS_KEY_ID: nonEmpty("R2_ACCESS_KEY_ID").optional(),
@@ -115,6 +120,7 @@ const envSchema = z.object({
 
   CORS_ORIGINS: z.string().optional(),
   SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).optional(),
+  SESSION_COOKIE_DOMAIN: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
