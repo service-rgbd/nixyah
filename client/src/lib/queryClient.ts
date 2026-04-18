@@ -5,16 +5,15 @@ const envApiBaseUrl =
     ? import.meta.env.VITE_API_BASE_URL.trim()
     : "";
 
-const browserHost =
-  typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
-
-const useSameOriginApi = /^(www\.)?nixyah\.com$/i.test(browserHost);
-
-// Sur les domaines publics, le Worker Cloudflare proxifie /api vers Render.
-// Ailleurs, on garde Render comme fallback explicite.
-export const API_BASE_URL = envApiBaseUrl || (useSameOriginApi ? "" : "https://nixyah.onrender.com");
+// Prefer same-origin API calls so the Cloudflare worker can proxy `/api/*`
+// and session cookies remain first-party for the browser.
+export const API_BASE_URL = envApiBaseUrl || "";
 
 let csrfTokenPromise: Promise<string | null> | null = null;
+
+export function resetCsrfTokenCache() {
+  csrfTokenPromise = null;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -108,13 +107,22 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
-  const headers = await buildHeaders(data ? { "Content-Type": "application/json" } : {}, true);
-  const res = await fetch(withApiBase(url), {
-    method,
-    headers,
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  const makeRequest = async () => {
+    const headers = await buildHeaders(data ? { "Content-Type": "application/json" } : {}, true);
+    return fetch(withApiBase(url), {
+      method,
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+      credentials: "include",
+    });
+  };
+
+  let res = await makeRequest();
+
+  if (res.status === 419) {
+    resetCsrfTokenCache();
+    res = await makeRequest();
+  }
 
   await throwIfResNotOk(res);
   return res;

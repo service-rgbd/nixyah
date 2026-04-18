@@ -22,6 +22,19 @@ import { useI18n } from "@/lib/i18n";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
 import avatarUrl from "@assets/avatar.png";
 
+function dedupeMedia(urls: Array<string | null | undefined>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const url of urls) {
+    if (!url) continue;
+    const stable = url.split("#")[0]?.split("?")[0] ?? url;
+    if (seen.has(stable)) continue;
+    seen.add(stable);
+    out.push(url);
+  }
+  return out;
+}
+
 type ApiProfile = {
   id: string;
   pseudo: string;
@@ -41,6 +54,13 @@ type ApiProfile = {
   accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
   latestAnnonce?: { id: string; title: string; createdAt: string; badges?: string[] } | null;
 };
+
+function getAccountTypeLabel(accountType: ApiProfile["accountType"], lang: "fr" | "en") {
+  if (accountType === "residence") return lang === "en" ? "Residence" : "Résidence";
+  if (accountType === "salon") return "Salon / SPA";
+  if (accountType === "adult_shop") return lang === "en" ? "Adult shop" : "Boutique adulte";
+  return lang === "en" ? "Profile" : "Profil";
+}
 
 function formatRelativeTime(iso: string, lang: "fr" | "en") {
   const ts = new Date(iso).getTime();
@@ -68,21 +88,24 @@ function ProfileRow({
   const urgent = badges.includes("URGENT");
   const premium = badges.includes("PREMIUM");
   const top = badges.includes("TOP");
-  const photoCount = Array.isArray(p.photos) ? p.photos.length : 0;
+  const previewPhotos = dedupeMedia([p.photoUrl, ...(p.photos ?? [])]).slice(0, 3);
+  const photoCount = previewPhotos.length;
   const title = p.latestAnnonce?.title?.trim()
     ? p.latestAnnonce?.title
     : `${p.pseudo} • ${p.age}`;
+  const accountLabel = getAccountTypeLabel(p.accountType, lang);
+  const primaryPhoto = previewPhotos[0] || p.photoUrl || avatarUrl;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group w-full text-left rounded-3xl border border-border bg-card/70 hover:bg-card transition-colors overflow-hidden shadow-sm hover:shadow-md"
+      className="group w-full overflow-hidden rounded-[28px] border border-border bg-card text-left transition hover:border-foreground/20 hover:shadow-[0_26px_55px_-42px_rgba(0,0,0,0.38)]"
     >
-      <div className="flex gap-3 p-3">
-        <div className="relative w-[92px] h-[112px] rounded-2xl overflow-hidden border border-border shrink-0 bg-muted/30">
+      <div className="grid gap-0 lg:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="relative h-[250px] overflow-hidden border-b border-border bg-muted/20 lg:h-full lg:min-h-[280px] lg:border-b-0 lg:border-r">
           <img
-            src={p.photoUrl || avatarUrl}
+            src={primaryPhoto}
             alt={p.pseudo}
             className="absolute inset-0 w-full h-full object-cover"
             onError={(e) => {
@@ -91,105 +114,126 @@ function ProfileRow({
               img.src = avatarUrl;
             }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/5 to-transparent" />
 
-          <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+          <div className="absolute left-4 top-4 flex flex-wrap gap-2">
             {p.isVip && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/35 text-white border border-white/15 backdrop-blur flex items-center gap-1">
+              <span className="flex items-center gap-1 rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] text-white">
                 <Crown className="w-3.5 h-3.5 text-amber-300" />
                 VIP
               </span>
             )}
+            <span className="rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white">
+              {accountLabel}
+            </span>
           </div>
 
-          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2">
-            {photoCount > 0 ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/35 text-white border border-white/15 backdrop-blur">
-                {photoCount} {lang === "en" ? "photos" : "photos"}
-              </span>
-            ) : (
-              <span />
-            )}
+          <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-3">
+            <div className="rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] text-white">
+              {photoCount} {lang === "en" ? "photos" : "photos"}
+            </div>
             {urgent ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-500/80 text-white border border-white/15">
+              <span className="rounded-full border border-white/15 bg-red-500/85 px-3 py-1 text-[10px] text-white">
                 {lang === "en" ? "Urgent" : "Urgent"}
               </span>
             ) : null}
           </div>
         </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 p-5 lg:p-6">
+          <div className="flex items-start justify-between gap-4 border-b border-border/70 pb-4">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-foreground leading-snug line-clamp-2">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                {lang === "en" ? "Featured profile" : "Profil en avant"}
+              </div>
+              <div className="mt-2 text-xl font-semibold leading-tight text-foreground line-clamp-2 md:text-2xl">
                 {title}
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span>
-                  {lang === "en" ? "Posted by" : "Publié par"}{" "}
-                  <span className="text-foreground/90 font-medium">{p.pseudo}</span>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="rounded-full border border-border bg-background px-3 py-1.5">
+                  {lang === "en" ? "Published by" : "Publié par"}{" "}
+                  <span className="font-medium text-foreground/90">{p.pseudo}</span>
                 </span>
                 {p.isPro ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-primary/10 text-primary border border-primary/20">
+                  <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[10px] uppercase tracking-wide text-primary">
                     pro
                   </span>
                 ) : null}
                 {p.verified ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] text-emerald-400">
                     <BadgeCheck className="w-3.5 h-3.5" />
                     {lang === "en" ? "Certified" : "Certifié"}
                   </span>
                 ) : null}
               </div>
             </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5 group-hover:text-foreground transition-colors" />
+            <ChevronRight className="mt-5 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
           </div>
 
-          <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-            <MapPin className="w-3.5 h-3.5" />
-            <span className="truncate">
-              {p.ville}
-              {p.lieu ? ` • ${p.lieu}` : ""}
-              {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
-            </span>
+          <div className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_220px]">
+            <div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <MapPin className="w-4 h-4" />
+                <span className="truncate">
+                  {p.ville}
+                  {p.lieu ? ` • ${p.lieu}` : ""}
+                  {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
+                </span>
+              </div>
+
+              <div className="mt-4 text-sm leading-7 text-muted-foreground line-clamp-4">
+                {p.description ?? "—"}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-1">
+              <div className="rounded-[20px] border border-border bg-background p-4">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                  {lang === "en" ? "Rate" : "Tarif"}
+                </div>
+                <div className="mt-2 text-lg font-semibold text-foreground">
+                  {p.tarif || (lang === "en" ? "On request" : "Sur demande")}
+                </div>
+              </div>
+              <div className="rounded-[20px] border border-border bg-background p-4">
+                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                  {lang === "en" ? "Published" : "Publication"}
+                </div>
+                <div className="mt-2 text-lg font-semibold text-foreground">
+                  {p.latestAnnonce?.createdAt ? formatRelativeTime(p.latestAnnonce.createdAt, lang) : "—"}
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2 border-t border-border/70 pt-4">
             {premium ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] text-emerald-400">
                 PREMIUM
               </span>
             ) : null}
             {top ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20">
+              <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-[10px] text-sky-400">
                 TOP
               </span>
             ) : null}
-            {(p.services ?? []).slice(0, 2).map((s) => (
+            {(p.services ?? []).slice(0, 3).map((s) => (
               <span
                 key={s}
-                className="px-2 py-0.5 rounded-full text-[10px] bg-muted/30 text-muted-foreground border border-border"
+                className="rounded-full border border-border bg-muted/20 px-3 py-1.5 text-[10px] text-muted-foreground"
               >
                 {s}
               </span>
             ))}
           </div>
 
-          <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">
-            {p.description ?? "—"}
-          </div>
-
-          <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-            <span className="truncate">
-              {p.tarif ? (
-                <span className="text-foreground font-semibold">{p.tarif}</span>
-              ) : (
-                <span />
-              )}
+          <div className="mt-5 flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">
+              {lang === "en" ? "Open the full profile for media, contact and details." : "Ouvre la fiche complète pour les médias, le contact et les détails."}
+            </div>
+            <span className="rounded-full bg-foreground px-4 py-2 text-[11px] font-medium text-background">
+              {lang === "en" ? "View profile" : "Voir le profil"}
             </span>
-            {p.latestAnnonce?.createdAt ? (
-              <span className="shrink-0">{formatRelativeTime(p.latestAnnonce.createdAt, lang)}</span>
-            ) : null}
           </div>
         </div>
       </div>
@@ -275,11 +319,11 @@ export default function Explore() {
     const qQuartier = normalize(quartier);
     return arr.filter((p) => {
       if (p.age < ageRange[0] || p.age > ageRange[1]) return false;
-      if (zone !== "__all__" && p.ville !== zone) return false;
+      if (zone !== "__all__" && normalize(p.ville) !== normalize(zone)) return false;
       if (accountType !== "__all__" && (p.accountType ?? "profile") !== accountType) return false;
       if (qQuartier) {
-        const lieu = normalize(p.lieu ?? "");
-        if (!lieu.includes(qQuartier)) return false;
+        const locationText = normalize([p.ville, p.lieu].filter(Boolean).join(" • "));
+        if (!locationText.includes(qQuartier)) return false;
       }
       return true;
     });
@@ -317,7 +361,7 @@ export default function Explore() {
     return (
       <div className="h-[100svh] bg-background">
         <div className="fixed top-0 left-0 right-0 z-30 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none">
-          <div className="mx-auto max-w-md flex items-center justify-between gap-2 pointer-events-auto">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 pointer-events-auto">
             <Button
               variant="secondary"
               size="icon"
@@ -633,8 +677,8 @@ export default function Explore() {
 
   return (
     <div className="min-h-[100svh] bg-background">
-      <header className="sticky top-0 z-30 bg-background/90 backdrop-blur border-b border-border">
-        <div className="mx-auto max-w-md px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-6 lg:px-8">
           <Button
             variant="secondary"
             size="icon"
@@ -644,20 +688,93 @@ export default function Explore() {
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <div className="text-sm font-semibold text-foreground">
+          <div className="text-sm font-semibold text-foreground sm:text-base">
             {lang === "en" ? "Explore" : "Explorer"}
           </div>
           <div className="w-9" />
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 pb-10 pt-4 space-y-6">
-        {/* View mode */}
-        <div className="flex items-center justify-between gap-2">
+      <main className="mx-auto max-w-6xl px-4 pb-12 pt-5 space-y-6 sm:px-6 lg:px-8">
+        <section className="space-y-4 border-b border-border/70 pb-6">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="space-y-2">
+              <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                {lang === "en" ? "Explore" : "Explorer"}
+              </div>
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                {lang === "en" ? "Profiles available now" : "Profils disponibles maintenant"}
+              </h1>
+              <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
+                {lang === "en"
+                  ? "A clean list, direct filters, and a more professional reading of each profile."
+                  : "Une lecture simple, des filtres directs, et une présentation plus professionnelle de chaque profil."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="rounded-full border border-border px-3 py-1.5">
+                {filtered.length} {lang === "en" ? "profiles" : "profils"}
+              </span>
+              <span className="rounded-full border border-border px-3 py-1.5">
+                {zone === "__all__" ? (lang === "en" ? "All zones" : "Toutes zones") : zone}
+              </span>
+              <span className="rounded-full border border-border px-3 py-1.5">
+                {scope === "nearby" ? `${settings.maxDistanceKm} km` : (lang === "en" ? "Unlimited" : "Sans limite")}
+              </span>
+            </div>
+          </div>
+
+          {vipFiltered.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-3">
+              {vipFiltered.slice(0, 3).map((profile) => (
+                <button
+                  key={profile.id}
+                  type="button"
+                  onClick={() => openProfile(profile.id)}
+                  className="overflow-hidden rounded-[24px] border border-border bg-card text-left transition hover:border-foreground/20"
+                >
+                  <div className="relative h-44 overflow-hidden border-b border-border bg-muted/20">
+                    <img
+                      src={profile.photoUrl || avatarUrl}
+                      alt={profile.pseudo}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        const img = e.currentTarget;
+                        img.onerror = null;
+                        img.src = avatarUrl;
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+                    <div className="absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-[10px] text-white">
+                      VIP
+                    </div>
+                    <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2 text-white">
+                      <div>
+                        <div className="text-sm font-semibold">{profile.pseudo}</div>
+                        <div className="text-[11px] text-white/75">{profile.ville}</div>
+                      </div>
+                      {profile.tarif ? <div className="text-[11px] font-medium">{profile.tarif}</div> : null}
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                      {lang === "en" ? "VIP selection" : "Sélection VIP"}
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-muted-foreground line-clamp-2">
+                      {profile.description ?? (lang === "en" ? "Priority profile with premium visibility." : "Profil prioritaire avec visibilité premium.")}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-4">
           <div className="text-xs text-muted-foreground">
             {lang === "en" ? "View" : "Affichage"}
           </div>
-          <div className="inline-flex items-center rounded-full border border-border bg-card/60 p-1">
+          <div className="inline-flex items-center rounded-full border border-border bg-card/40 p-1">
             <button
               type="button"
               onClick={() => setViewMode("list")}
@@ -675,17 +792,29 @@ export default function Explore() {
           </div>
         </div>
 
-        {/* Filters (collapsed bar + full-screen sheet) */}
-        <div className="rounded-3xl border border-border bg-card/60 p-4 flex items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground truncate">
-            {lang === "en"
-              ? `Age ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "All zones" : zone}`
-              : `Âge ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "Toutes zones" : zone}`}
-            {accountType !== "__all__" ? (lang === "en" ? ` • Type ${accountType}` : ` • Type ${accountType}`) : ""}
+        <div className="flex flex-col gap-4 border-b border-border/70 pb-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-2">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+              {lang === "en" ? "Active filters" : "Filtres actifs"}
+            </div>
+            <div className="text-sm text-foreground">
+              {lang === "en"
+                ? `Age ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "All zones" : zone}`
+                : `Âge ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "Toutes zones" : zone}`}
+              {accountType !== "__all__" ? (lang === "en" ? ` • Type ${accountType}` : ` • Type ${accountType}`) : ""}
+              {quartier ? ` • ${quartier}` : ""}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {scope === "nearby" && !coords && (
+              <Button variant="outline" size="sm" className="rounded-full" onClick={requestLocation}>
+                {lang === "en" ? "Use my location" : "Utiliser ma position"}
+              </Button>
+            )}
           </div>
           <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
             <SheetTrigger asChild>
-              <Button variant="outline" size="sm" className="rounded-2xl">
+              <Button variant="outline" size="sm" className="rounded-full">
                 <SlidersHorizontal className="w-4 h-4 mr-2" />
                 {lang === "en" ? "Filters" : "Filtres"}
               </Button>
@@ -720,12 +849,6 @@ export default function Explore() {
                     {lang === "en" ? "Anywhere search" : "Recherche partout"}
                   </button>
                 </div>
-
-                {scope === "nearby" && !coords && (
-                  <Button variant="outline" className="w-full rounded-2xl" onClick={requestLocation}>
-                    {lang === "en" ? "Use my location" : "Utiliser ma position"}
-                  </Button>
-                )}
 
                 {scope === "nearby" && !coords && (
                   <Button variant="outline" className="w-full rounded-2xl" onClick={requestLocation}>
@@ -898,15 +1021,14 @@ export default function Explore() {
           </Sheet>
         </div>
 
-        {/* Results list */}
-        <div className="space-y-2">
+        <div className="space-y-4">
           <div className="flex items-end justify-between">
             <div>
-              <div className="text-sm font-semibold text-foreground">
+              <div className="text-sm font-semibold text-foreground sm:text-base">
                 {lang === "en" ? "Results" : "Résultats"}
               </div>
               <div className="text-xs text-muted-foreground">
-                {lang === "en" ? "List view (no swipe)." : "Affichage en liste (sans swipe)."}
+                {lang === "en" ? "Professional cards with essential information first." : "Des fiches pro avec les informations essentielles en premier."}
               </div>
             </div>
             <div className="text-xs text-muted-foreground">
@@ -914,15 +1036,15 @@ export default function Explore() {
             </div>
           </div>
           {viewMode === "list" ? (
-            <div className="grid gap-2">
+            <div className="grid gap-4 lg:grid-cols-2">
               {isLoading ? (
                 <>
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
+                  <div className="h-56 rounded-[30px] border border-border bg-muted/40" />
+                  <div className="h-56 rounded-[30px] border border-border bg-muted/40" />
+                  <div className="h-56 rounded-[30px] border border-border bg-muted/40" />
                 </>
               ) : filtered.length === 0 ? (
-                <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <div className="rounded-[28px] border border-border bg-muted/30 p-5 text-sm text-muted-foreground lg:col-span-2">
                   {lang === "en"
                     ? "No profiles found. Try widening filters."
                     : "Aucun profil trouvé. Essaie d’élargir les filtres."}

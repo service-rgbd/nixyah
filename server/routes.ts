@@ -402,6 +402,46 @@ export async function registerRoutes(
     });
   }
 
+  function regenerateSession(req: any): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!req.session) return resolve();
+      req.session.regenerate((err: unknown) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+  }
+
+  function getSessionCookieOptions() {
+    const isProd = process.env.NODE_ENV === "production";
+    const sameSite = ((process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax")) as
+      | "lax"
+      | "strict"
+      | "none";
+    const domain = (process.env.SESSION_COOKIE_DOMAIN || "").trim() || deriveCookieDomainFromAppBase();
+
+    return {
+      path: "/",
+      httpOnly: true,
+      sameSite,
+      secure: isProd,
+      ...(domain ? { domain } : {}),
+    };
+  }
+
+  function clearSessionCookie(res: any) {
+    res.clearCookie("connect.sid", getSessionCookieOptions());
+    res.clearCookie("connect.sid", { path: "/" });
+  }
+
+  async function establishAuthenticatedSession(req: any, auth: { userId: string; profileId: string }) {
+    await regenerateSession(req);
+    req.session.userId = auth.userId;
+    req.session.profileId = auth.profileId;
+    req.session.csrfToken = generateToken();
+    await saveSession(req);
+  }
+
   function ensureCsrfToken(req: any): string {
     if (!req.session?.csrfToken) {
       req.session.csrfToken = generateToken();
@@ -1139,13 +1179,15 @@ export async function registerRoutes(
         return res.redirect(appUrl(`/login?oauth=no_profile`));
       }
 
-      req.session.userId = (u as any).id;
-      req.session.profileId = p.id;
+      await establishAuthenticatedSession(req, {
+        userId: (u as any).id,
+        profileId: p.id,
+      });
 
       await logIpEvent({ req, kind: "login_success_google", userId: (u as any).id });
 
       // If state points to signup (common mistake), prefer dashboard for existing users.
-      return await redirectAfterSessionSave(req, res, appUrl(state));
+      return res.redirect(appUrl(state));
       } catch (e) {
         console.error("Google OAuth callback crashed", e);
         return res.redirect(appUrl(`/login?oauth=server_error`));
@@ -2036,12 +2078,8 @@ export async function registerRoutes(
 
   app.post("/api/logout", (req, res) => {
     req.session?.destroy(() => {
-      // Best-effort cookie clear (default cookie name used by express-session)
-      res.clearCookie("connect.sid");
-      const domain = deriveCookieDomainFromAppBase();
-      if (domain) {
-        res.clearCookie("connect.sid", { path: "/", domain });
-      }
+      clearSessionCookie(res);
+      res.setHeader("Cache-Control", "no-store");
       res.json({ ok: true });
     });
   });
@@ -2230,12 +2268,12 @@ export async function registerRoutes(
 
       if (!p) return res.status(404).json({ message: "Profil introuvable" });
 
-      req.session.userId = u.id;
-      req.session.profileId = p.id;
+      await establishAuthenticatedSession(req, { userId: u.id, profileId: p.id });
 
       await logIpEvent({ req, kind: "login_success", userId: u.id });
 
-      res.json({ userId: u.id, profileId: p.id });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ userId: u.id, profileId: p.id, csrfToken: req.session.csrfToken });
     }),
   );
 
@@ -2352,12 +2390,10 @@ export async function registerRoutes(
         return { userId: u.id, userEmail: (u as any).email as string | null, profile: p };
       });
 
-      req.session.userId = created.userId;
-      req.session.profileId = created.profile.id;
-      // Clear pending OAuth if we just created a profile (avoid reusing on next signup).
-      if ((req.session as any)?.oauthPending) {
-        (req.session as any).oauthPending = null;
-      }
+      await establishAuthenticatedSession(req, {
+        userId: created.userId,
+        profileId: created.profile.id,
+      });
 
       await logIpEvent({ req, kind: "signup_success", userId: created.userId });
 
