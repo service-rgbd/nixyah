@@ -4284,9 +4284,11 @@ export async function registerRoutes(
         .innerJoin(profiles, eq(stories.profileId, profiles.id))
         .where(
           and(
-            eq(stories.visibility, "public"),
             eq(stories.active, true),
-            or(gt(stories.expiresAt, new Date()), isNull(stories.expiresAt)),
+            or(
+              and(eq(stories.visibility, "public"), or(gt(stories.expiresAt, new Date()), isNull(stories.expiresAt))),
+              eq(stories.visibility, "private"),
+            ),
           ),
         )
         .orderBy(desc(stories.createdAt))
@@ -4311,7 +4313,9 @@ export async function registerRoutes(
         const entry = grouped.get(row.profileId);
         entry.items.push({
           id: row.id,
-          mediaUrl: resolveStoryMedia(req, row),
+          mediaUrl: row.visibility === "private" ? null : resolveStoryMedia(req, row),
+          visibility: row.visibility,
+          isLocked: row.visibility === "private",
           durationSeconds: Number(row.durationSeconds ?? 0),
           caption: row.caption ?? null,
           createdAt: row.createdAt,
