@@ -295,7 +295,7 @@ export const signupSchema = z.object({
   // Pseudo public
   pseudo: z.string().min(2).max(64),
   password: z.string().min(6).max(200),
-  email: z.string().email().max(160).optional(),
+  email: z.string().email("Email invalide").max(160),
   // optional: can be sent after R2 upload later
   photoUrl: z.string().url().optional(),
   photoKey: z.string().min(1).optional(),

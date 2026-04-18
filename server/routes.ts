@@ -485,10 +485,6 @@ export async function registerRoutes(
 
   function isCsrfExemptPath(path: string): boolean {
     return [
-      "/login",
-      "/signup",
-      "/password/forgot",
-      "/password/reset",
       "/api/login",
       "/api/signup",
       "/api/password/forgot",
@@ -730,18 +726,18 @@ export async function registerRoutes(
     const button = opts.buttonLabel && opts.buttonUrl
       ? `
         <tr>
-          <td align="center" style="padding: 24px 24px 8px 24px;">
+          <td align="left" style="padding: 8px 32px 0 32px;">
             <a href="${opts.buttonUrl}" target="_blank" rel="noopener"
               style="
                 display: inline-block;
-                padding: 12px 24px;
-                border-radius: 999px;
-                background: linear-gradient(135deg,#ec4899,#8b5cf6);
+                padding: 12px 20px;
+                border-radius: 14px;
+                background: #111827;
                 color: #ffffff;
                 font-size: 14px;
                 font-weight: 600;
                 text-decoration: none;
-                letter-spacing: 0.02em;
+                letter-spacing: 0.01em;
               "
             >
               ${opts.buttonLabel}
@@ -761,32 +757,29 @@ export async function registerRoutes(
 
     const footer = opts.footer
       ? `<tr>
-            <td style="padding: 16px 24px 0 24px; font-size: 11px; line-height: 1.5; color: #9ca3af;">
+            <td style="padding: 18px 32px 0 32px; font-size: 12px; line-height: 1.6; color: #6b7280;">
               ${opts.footer}
             </td>
           </tr>`
       : "";
 
     return `
-      <div style="background-color:#0b0b10;padding:32px 16px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;background-color:#0f172a;border-radius:24px;border:1px solid rgba(148,163,184,0.35);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <div style="background-color:#f3f4f6;padding:32px 16px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto;background-color:#ffffff;border-radius:24px;border:1px solid #e5e7eb;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
           <tr>
-            <td style="padding:20px 24px 8px 24px;border-bottom:1px solid rgba(148,163,184,0.25);">
-              <div style="display:flex;align-items:center;gap:8px;">
-                <div style="width:32px;height:32px;border-radius:999px;background:linear-gradient(135deg,#ec4899,#8b5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">N</div>
-                <div style="font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9ca3af;">NIXYAH</div>
-              </div>
+            <td style="padding:24px 32px 18px 32px;border-bottom:1px solid #f3f4f6;">
+              <div style="font-size:12px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#6b7280;">Confirmation</div>
             </td>
           </tr>
           <tr>
-            <td style="padding:20px 24px 4px 24px;">
-              <h1 style="margin:0;font-size:18px;line-height:1.4;font-weight:600;color:#e5e7eb;">
+            <td style="padding:28px 32px 6px 32px;">
+              <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:600;color:#111827;">
                 ${opts.title}
               </h1>
             </td>
           </tr>
           <tr>
-            <td style="padding:0 24px 8px 24px;font-size:14px;line-height:1.6;color:#9ca3af;">
+            <td style="padding:0 32px 12px 32px;font-size:15px;line-height:1.7;color:#374151;">
               ${opts.intro}
             </td>
           </tr>
@@ -794,8 +787,8 @@ export async function registerRoutes(
           ${button}
           ${footer}
           <tr>
-            <td style="padding:24px 24px 24px 24px;font-size:11px;line-height:1.6;color:#6b7280;border-top:1px solid rgba(31,41,55,0.8);">
-              Cet email est envoyé automatiquement par la plateforme NIXYAH. Merci de ne pas y répondre directement.
+            <td style="padding:24px 32px 28px 32px;font-size:11px;line-height:1.7;color:#9ca3af;border-top:1px solid #f3f4f6;">
+              Message automatique. Si tu n’es pas à l’origine de cette demande, tu peux simplement ignorer cet email.
             </td>
           </tr>
         </table>
@@ -830,23 +823,23 @@ export async function registerRoutes(
 
     try {
       const html = renderEmailLayout({
-        title: "Confirme ton email pour activer ton espace",
+        title: "Confirme ton adresse email",
         intro:
-          "Merci d'avoir créé un compte sur <strong>NIXYAH</strong>. Nous te demandons de confirmer ton adresse email pour sécuriser ton espace et activer la publication d'annonces.",
+          "Ton inscription est presque terminée. Confirme simplement ton adresse email pour sécuriser ton accès et activer la suite.",
         body:
-          "Clique sur le bouton ci‑dessous pour confirmer ton email. Si tu n'es pas à l'origine de cette demande, tu peux ignorer ce message.",
-        buttonLabel: "Confirmer mon email",
+          "Clique sur le bouton ci-dessous pour valider ton email. Le lien reste disponible pendant quelques jours.",
+        buttonLabel: "Confirmer l’adresse email",
         buttonUrl: verifyLink,
         footer:
-          "Après confirmation, tu pourras publier des annonces, gérer ta visibilité et mettre à jour tes informations en quelques clics.",
+          "Si le bouton ne fonctionne pas, ouvre ce lien dans ton navigateur :<br /><a href=\"${verifyLink}\" target=\"_blank\" rel=\"noopener\" style=\"color:#111827;word-break:break-all;\">${verifyLink}</a>",
       });
 
       const result = await resend.emails.send({
         from: resendFrom,
         to: email,
-        subject: "Confirme ton email – NIXYAH",
+        subject: "Confirme ton adresse email",
         html,
-        text: `Merci d'avoir créé un compte sur NIXYAH.\n\nClique sur ce lien pour confirmer ton email : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
+        text: `Ton inscription est presque terminée.\n\nConfirme ton adresse email via ce lien : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore simplement ce message.`,
       });
 
       return { sent: true, token, messageId: (result as any)?.id };
@@ -893,23 +886,23 @@ export async function registerRoutes(
     const resetLink = appUrl(`/password/reset?token=${encodeURIComponent(token)}`);
 
     const html = renderEmailLayout({
-      title: "Réinitialise ton mot de passe",
+      title: "Réinitialisation du mot de passe",
       intro:
-        "Tu as demandé à réinitialiser ton mot de passe sur <strong>NIXYAH</strong>.",
+        "Une demande de réinitialisation de mot de passe a été reçue pour cette adresse email.",
       body:
-        "Pour choisir un nouveau mot de passe, clique sur le bouton ci‑dessous. Ce lien est valable pendant <strong>1 heure</strong> pour des raisons de sécurité.",
-      buttonLabel: "Choisir un nouveau mot de passe",
+        "Pour définir un nouveau mot de passe, clique sur le bouton ci-dessous. Ce lien reste valable pendant <strong>1 heure</strong>.",
+      buttonLabel: "Définir un nouveau mot de passe",
       buttonUrl: resetLink,
       footer:
-        "Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email. Ton mot de passe actuel restera valide.",
+        `Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.<br /><br />Lien direct : <a href="${resetLink}" target="_blank" rel="noopener" style="color:#111827;word-break:break-all;">${resetLink}</a>`,
     });
 
     await resend.emails.send({
       from: resendFrom,
       to: email,
-      subject: "Réinitialise ton mot de passe – NIXYAH",
+      subject: "Réinitialisation du mot de passe",
       html,
-      text: `Tu as demandé à réinitialiser ton mot de passe sur NIXYAH.\n\nLien (valable 1h) : ${resetLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
+      text: `Une demande de réinitialisation de mot de passe a été reçue.\n\nLien valable 1h : ${resetLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore simplement ce message.`,
     });
   }
 
@@ -1088,8 +1081,7 @@ export async function registerRoutes(
 
   app.use("/api", (req, res, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
-    const mountedPath = `${String(req.baseUrl ?? "")}${String(req.path ?? "")}`;
-    if (isCsrfExemptPath(req.path) || isCsrfExemptPath(mountedPath)) return next();
+    if (isCsrfExemptPath(req.path)) return next();
 
     const expected = String(req.session?.csrfToken ?? "").trim();
     const provided = String(req.get("x-csrf-token") ?? "").trim();
@@ -2047,12 +2039,22 @@ export async function registerRoutes(
     }),
   );
 
-  app.get("/api/me", (req, res) => {
-    res.json({
-      userId: req.session?.userId ?? null,
-      profileId: req.session?.profileId ?? null,
-    });
-  });
+  app.get(
+    "/api/me",
+    asyncHandler(async (req, res) => {
+      const hasAuthenticatedSession = Boolean(req.session?.userId && req.session?.profileId);
+      const csrfToken = hasAuthenticatedSession ? ensureCsrfToken(req) : null;
+      if (hasAuthenticatedSession) {
+        await saveSession(req);
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        userId: req.session?.userId ?? null,
+        profileId: req.session?.profileId ?? null,
+        csrfToken,
+      });
+    }),
+  );
 
   app.patch(
     "/api/me/profile",
@@ -2356,11 +2358,22 @@ export async function registerRoutes(
         | undefined;
       const pendingEmail = pending?.provider === "google" ? pending.email : null;
       const requestedEmail = hasUsersEmail
-        ? payload.email?.trim()
+        ? payload.email.trim()
           ? payload.email.trim().toLowerCase()
           : null
         : null;
       const emailToUse = requestedEmail ?? pendingEmail;
+
+      if (hasUsersEmail && !emailToUse) {
+        return res.status(400).json({ message: "Email requis pour créer un compte" });
+      }
+
+      const isGoogleVerifiedSignup = Boolean(pendingEmail && emailToUse && emailToUse === pendingEmail);
+      if (hasUsersEmail && hasUsersEmailVerified && !isGoogleVerifiedSignup && !env.RESEND_API_KEY) {
+        return res.status(503).json({
+          message: "Inscription indisponible pour le moment: la validation email n'est pas configurée.",
+        });
+      }
 
       // Basic uniqueness check (we also have DB uniques)
       const existing = await db
@@ -2411,7 +2424,7 @@ export async function registerRoutes(
           if (hasUsersEmail && emailToUse) {
             userValues.email = emailToUse;
             // If coming from verified Google OAuth, mark email as verified immediately.
-            if (hasUsersEmailVerified && pendingEmail && emailToUse === pendingEmail) {
+            if (hasUsersEmailVerified && isGoogleVerifiedSignup) {
               userValues.emailVerified = true;
               userValues.emailVerificationToken = null;
               userValues.emailVerificationSentAt = null;
@@ -2498,8 +2511,7 @@ export async function registerRoutes(
                 "Emails indisponibles (RESEND_API_KEY manquante). Contacte l’administrateur.";
             } else {
               // If user was created via Google verified email, do not send verification email.
-              const wasGoogleVerified = Boolean(pendingEmail && email.toLowerCase() === pendingEmail.toLowerCase());
-              if (wasGoogleVerified) {
+              if (isGoogleVerifiedSignup) {
                 verificationEmailSent = null;
               } else {
                 const r = await sendVerificationEmail(created.userId, email);
@@ -2519,6 +2531,7 @@ export async function registerRoutes(
       invalidateProfilesCache();
       return res.json({
         ...created,
+        csrfToken: req.session.csrfToken,
         verificationEmailSent,
         verificationEmailError,
       });
@@ -4352,6 +4365,11 @@ export async function registerRoutes(
           profilePhotoUrl: profiles.photoUrl,
           accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
           visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+          phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+          showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+          telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+          showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
+          contactPreference: hasContactPref ? profiles.contactPreference : (sql<string | null>`null` as any),
         })
         .from(stories)
         .innerJoin(profiles, eq(stories.profileId, profiles.id))
@@ -4379,6 +4397,11 @@ export async function registerRoutes(
                 ville: profiles.ville,
                 profilePhotoUrl: profiles.photoUrl,
                 accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+                phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+                showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+                telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+                showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
+                contactPreference: hasContactPref ? profiles.contactPreference : (sql<string | null>`null` as any),
               })
               .from(profileMedia)
               .innerJoin(profiles, eq(profileMedia.profileId, profiles.id))
@@ -4397,6 +4420,11 @@ export async function registerRoutes(
               ville: row.ville,
               accountType: row.accountType,
               photoUrl: sanitizeUrl(row.profilePhotoUrl ?? null),
+              contact: {
+                phone: row.showPhone ? row.phone ?? null : null,
+                telegram: row.showTelegram ? row.telegram ?? null : null,
+                preference: row.contactPreference ?? null,
+              },
             },
             items: [],
             latestCreatedAt: row.createdAt,
@@ -4425,6 +4453,11 @@ export async function registerRoutes(
             ville: row.ville,
             accountType: row.accountType,
             photoUrl: sanitizeUrl(row.profilePhotoUrl ?? null),
+            contact: {
+              phone: row.showPhone ? row.phone ?? null : null,
+              telegram: row.showTelegram ? row.telegram ?? null : null,
+              preference: row.contactPreference ?? null,
+            },
           },
           items: [
             {
