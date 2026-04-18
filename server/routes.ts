@@ -4287,7 +4287,6 @@ export async function registerRoutes(
             eq(stories.visibility, "public"),
             eq(stories.active, true),
             or(gt(stories.expiresAt, new Date()), isNull(stories.expiresAt)),
-            hasProfilesVisibility ? eq(profiles.visible, true) : undefined,
           ),
         )
         .orderBy(desc(stories.createdAt))
