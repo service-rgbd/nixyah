@@ -2344,9 +2344,9 @@ export async function registerRoutes(
     asyncHandler(async (req, res) => {
       await ensureIpNotBanned(req);
       if (!(await requireTurnstile(req, res, (req.body as any)?.turnstileToken))) return;
-      // User can only create one profile per session
-      if (req.session?.profileId) {
-        return res.status(409).json({ message: "Profil déjà créé" });
+      // Never let signup continue on top of an already-linked session.
+      if (req.session?.userId || req.session?.profileId) {
+        return res.status(409).json({ message: "Une session est déjà active. Déconnecte-toi d'abord." });
       }
       const payload = signupSchema.parse(req.body);
 
@@ -2355,6 +2355,12 @@ export async function registerRoutes(
         | { provider: "google"; email: string }
         | undefined;
       const pendingEmail = pending?.provider === "google" ? pending.email : null;
+      const requestedEmail = hasUsersEmail
+        ? payload.email?.trim()
+          ? payload.email.trim().toLowerCase()
+          : null
+        : null;
+      const emailToUse = requestedEmail ?? pendingEmail;
 
       // Basic uniqueness check (we also have DB uniques)
       const existing = await db
@@ -2364,6 +2370,17 @@ export async function registerRoutes(
         .limit(1);
       if (existing.length) {
         return res.status(409).json({ message: "Identifiant déjà utilisé" });
+      }
+
+      if (hasUsersEmail && emailToUse) {
+        const existingEmail = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(sql`lower(${(users as any).email}) = ${emailToUse}`)
+          .limit(1);
+        if (existingEmail.length) {
+          return res.status(409).json({ message: "Email déjà utilisé" });
+        }
       }
 
       const passwordHash = hashPassword(payload.password);
@@ -2386,13 +2403,12 @@ export async function registerRoutes(
         }
       }
 
-      const created = await db.transaction(async (tx) => {
-        const accountType = payload.accountType ?? "profile";
-        const userValues: any = { username, passwordHash };
-        if (hasUsersEmail) {
-          const rawEmail = payload.email?.trim() ? payload.email.trim().toLowerCase() : null;
-          const emailToUse = rawEmail ?? pendingEmail;
-          if (emailToUse) {
+      let created;
+      try {
+        created = await db.transaction(async (tx) => {
+          const accountType = payload.accountType ?? "profile";
+          const userValues: any = { username, passwordHash };
+          if (hasUsersEmail && emailToUse) {
             userValues.email = emailToUse;
             // If coming from verified Google OAuth, mark email as verified immediately.
             if (hasUsersEmailVerified && pendingEmail && emailToUse === pendingEmail) {
@@ -2401,56 +2417,67 @@ export async function registerRoutes(
               userValues.emailVerificationSentAt = null;
             }
           }
+
+          const [u] = await tx
+            .insert(users)
+            .values(userValues)
+            .returning({ id: users.id, createdAt: users.createdAt, email: (users as any).email });
+
+          const [p] = await tx
+            .insert(profiles)
+            .values({
+              userId: u.id,
+              pseudo: payload.pseudo.trim(),
+              gender: payload.gender,
+              age: payload.age,
+              ville: payload.ville.trim(),
+              ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
+              photoUrl: payload.photoUrl,
+              photoKey: payload.photoKey,
+              ...(hasProfilesVisibility ? { visible: true } : {}),
+              ...(hasProfilesPro ? { isPro: accountType !== "profile" } : {}),
+              ...(hasAccountType ? { accountType } : {}),
+              // default availability shown in UI
+              ...(hasProfilesPro
+                ? { disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" } }
+                : {}),
+            })
+            .returning({
+              id: profiles.id,
+              pseudo: profiles.pseudo,
+              age: profiles.age,
+              ville: profiles.ville,
+              verified: profiles.verified,
+              photoUrl: profiles.photoUrl,
+              isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
+              visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+            });
+
+          // Optional: seed first photo into media table (for gallery)
+          if (hasProfileMedia && payload.photoUrl) {
+            await tx.insert(profileMedia).values({
+              profileId: p.id,
+              type: "photo",
+              url: payload.photoUrl,
+              key: payload.photoKey,
+              sortOrder: 0,
+            });
+          }
+
+          return { userId: u.id, userEmail: (u as any).email as string | null, profile: p };
+        });
+      } catch (error: any) {
+        if (String(error?.code ?? "") === "23505") {
+          const detail = String(error?.detail ?? "");
+          if (detail.includes("(email)=")) {
+            return res.status(409).json({ message: "Email déjà utilisé" });
+          }
+          if (detail.includes("(username)=")) {
+            return res.status(409).json({ message: "Identifiant déjà utilisé" });
+          }
         }
-
-        const [u] = await tx
-          .insert(users)
-          .values(userValues)
-          .returning({ id: users.id, createdAt: users.createdAt, email: (users as any).email });
-
-        const [p] = await tx
-          .insert(profiles)
-          .values({
-            userId: u.id,
-            pseudo: payload.pseudo.trim(),
-            gender: payload.gender,
-            age: payload.age,
-            ville: payload.ville.trim(),
-            ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
-            photoUrl: payload.photoUrl,
-            photoKey: payload.photoKey,
-            ...(hasProfilesVisibility ? { visible: true } : {}),
-            ...(hasProfilesPro ? { isPro: accountType !== "profile" } : {}),
-            ...(hasAccountType ? { accountType } : {}),
-            // default availability shown in UI
-            ...(hasProfilesPro
-              ? { disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" } }
-              : {}),
-          })
-          .returning({
-            id: profiles.id,
-            pseudo: profiles.pseudo,
-            age: profiles.age,
-            ville: profiles.ville,
-            verified: profiles.verified,
-            photoUrl: profiles.photoUrl,
-            isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
-            visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
-          });
-
-        // Optional: seed first photo into media table (for gallery)
-        if (hasProfileMedia && payload.photoUrl) {
-          await tx.insert(profileMedia).values({
-            profileId: p.id,
-            type: "photo",
-            url: payload.photoUrl,
-            key: payload.photoKey,
-            sortOrder: 0,
-          });
-        }
-
-        return { userId: u.id, userEmail: (u as any).email as string | null, profile: p };
-      });
+        throw error;
+      }
 
       await establishAuthenticatedSession(req, {
         userId: created.userId,
