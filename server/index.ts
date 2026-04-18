@@ -53,40 +53,14 @@ app.use(
 
 // CORS (needed when frontend is on Cloudflare Pages and API is on Render)
 const allowedOrigins = new Set<string>();
-function addAllowedOrigin(origin: string) {
-  const normalized = origin.replace(/\/+$/, "");
-  if (!normalized) return;
-  allowedOrigins.add(normalized);
-
-  try {
-    const url = new URL(normalized);
-    const { protocol, hostname } = url;
-    if (hostname === "localhost" || hostname === "127.0.0.1") return;
-    if (hostname.startsWith("www.")) {
-      allowedOrigins.add(`${protocol}//${hostname.replace(/^www\./i, "")}`);
-      return;
-    }
-    if (hostname.split(".").length === 2) {
-      allowedOrigins.add(`${protocol}//www.${hostname}`);
-    }
-  } catch {
-    // Ignore malformed origins; env validation handles the main path.
-  }
-}
-
 for (const origin of ["http://localhost:5000", "http://127.0.0.1:5000"]) {
-  addAllowedOrigin(origin);
+  allowedOrigins.add(origin);
 }
-if (isProd) {
-  for (const origin of ["https://www.nixyah.com", "https://nixyah.com"]) {
-    addAllowedOrigin(origin);
-  }
-}
-if (env.APP_BASE_URL) addAllowedOrigin(env.APP_BASE_URL);
+if (env.APP_BASE_URL) allowedOrigins.add(env.APP_BASE_URL.replace(/\/+$/, ""));
 if (env.CORS_ORIGINS) {
   for (const o of env.CORS_ORIGINS.split(",")) {
     const v = o.trim();
-    if (v) addAllowedOrigin(v);
+    if (v) allowedOrigins.add(v.replace(/\/+$/, ""));
   }
 }
 const corsOrigin: CorsOptionsDelegate<Request> = (origin, cb) => {

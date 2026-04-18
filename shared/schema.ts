@@ -18,6 +18,8 @@ export const genderEnum = pgEnum("gender", ["homme", "femme"]);
 export const mediaTypeEnum = pgEnum("media_type", ["photo", "video"]);
 export const contactPreferenceEnum = pgEnum("contact_preference", ["whatsapp", "telegram"]);
 export const salonTypeEnum = pgEnum("salon_type", ["spa", "private_massage", "residence", "adult_shop"]);
+export const storyVisibilityEnum = pgEnum("story_visibility", ["public", "private"]);
+export const storySaleKindEnum = pgEnum("story_sale_kind", ["none", "video", "product"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -190,6 +192,25 @@ export const adultProductsTable = pgTable("adult_products", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const stories = pgTable("stories", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  profileId: uuid("profile_id")
+    .notNull()
+    .references(() => profiles.id, { onDelete: "cascade" }),
+  visibility: storyVisibilityEnum("visibility").notNull().default("public"),
+  mediaUrl: text("media_url").notNull(),
+  mediaKey: text("media_key"),
+  durationSeconds: integer("duration_seconds").notNull(),
+  caption: varchar("caption", { length: 280 }),
+  saleKind: storySaleKindEnum("sale_kind").notNull().default("none"),
+  saleTitle: varchar("sale_title", { length: 160 }),
+  salePrice: varchar("sale_price", { length: 64 }),
+  saleDescription: text("sale_description"),
+  active: boolean("active").notNull().default(true),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const ipLogs = pgTable("ip_logs", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   ip: varchar("ip", { length: 64 }).notNull(),
@@ -282,6 +303,7 @@ export const signupSchema = z.object({
 
 export const annonceCreateSchema = z.object({
   profileId: z.string().uuid(),
+  forceNew: z.boolean().optional(),
   title: z.string().min(2).max(120),
   body: z.string().max(5000).optional(),
   tarif: z.string().min(1).max(32).optional(),
@@ -371,6 +393,47 @@ export const insertAdultProductSchema = createInsertSchema(adultProductsTable).p
   active: true,
 });
 
+export const storyCreateSchema = z
+  .object({
+    mediaUrl: z.string().url(),
+    mediaKey: z.string().min(1).optional(),
+    durationSeconds: z.coerce.number().int().min(1).max(300),
+    caption: z.string().max(280).optional(),
+    visibility: z.enum(["public", "private"]),
+    saleKind: z.enum(["none", "video", "product"]).optional(),
+    saleTitle: z.string().max(160).optional(),
+    salePrice: z.string().max(64).optional(),
+    saleDescription: z.string().max(2000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const isPrivate = value.visibility === "private";
+    const saleKind = value.saleKind ?? "none";
+
+    if (!isPrivate && saleKind !== "none") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Une story publique ne peut pas être monétisée.",
+        path: ["saleKind"],
+      });
+    }
+
+    if (isPrivate && saleKind !== "none" && !value.salePrice?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un prix pour cette vidéo privée.",
+        path: ["salePrice"],
+      });
+    }
+
+    if (isPrivate && saleKind !== "none" && !value.saleTitle?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un titre pour cette vente privée.",
+        path: ["saleTitle"],
+      });
+    }
+  });
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
@@ -385,4 +448,7 @@ export type TokenTransaction = typeof tokenTransactions.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type Salon = typeof salons.$inferSelect;
 export type AdultProduct = typeof adultProductsTable.$inferSelect;
+export type Story = typeof stories.$inferSelect;
 export type IpLog = typeof ipLogs.$inferSelect;
+
+export type StoryCreatePayload = z.infer<typeof storyCreateSchema>;

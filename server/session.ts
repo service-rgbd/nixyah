@@ -43,36 +43,12 @@ export function sessionMiddleware() {
     }
   }
 
-  // When frontend and API are on different origins,
-  // cookies can be rejected or not sent depending on SameSite/Domain rules and browser policies.
-  // We default to a robust production setup:
-  // - SameSite=None (allows credentialed cross-origin XHR)
-  // - Secure=true (required by browsers when SameSite=None)
-  // - Domain=.nixyah.com (share cookie across subdomains) derived from APP_BASE_URL when possible.
+  // SameSite=None + Secure keeps credentialed requests working when needed.
+  // Cookie domain should stay host-only unless explicitly configured,
+  // otherwise browsers can reject the cookie when frontend and backend hosts differ.
   const sameSite =
     (process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax");
-
-  let derivedDomain: string | undefined = undefined;
-  try {
-    const raw = String(process.env.APP_BASE_URL || "").trim();
-    if (raw) {
-      const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-      const host = new URL(withScheme).hostname.replace(/^www\./i, "");
-      if (host && host.includes(".") && host !== "localhost" && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
-        derivedDomain = `.${host}`;
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  if (isProd && (!derivedDomain || /\.onrender\.com$/i.test(derivedDomain))) {
-    derivedDomain = ".nixyah.com";
-  }
-
-  const cookieDomain =
-    (process.env.SESSION_COOKIE_DOMAIN || "").trim() ||
-    (isProd ? derivedDomain : undefined);
+  const cookieDomain = (process.env.SESSION_COOKIE_DOMAIN || "").trim() || undefined;
 
   return session({
     store,
