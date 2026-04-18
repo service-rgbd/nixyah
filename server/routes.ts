@@ -4294,6 +4294,31 @@ export async function registerRoutes(
         .orderBy(desc(stories.createdAt))
         .limit(80);
 
+      const fallbackVideoRows =
+        hasProfileMedia && rows.length < 20
+          ? await db
+              .select({
+                profileId: profileMedia.profileId,
+                mediaUrl: profileMedia.url,
+                mediaKey: profileMedia.key,
+                createdAt: profileMedia.createdAt,
+                pseudo: profiles.pseudo,
+                ville: profiles.ville,
+                profilePhotoUrl: profiles.photoUrl,
+                accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+              })
+              .from(profileMedia)
+              .innerJoin(profiles, eq(profileMedia.profileId, profiles.id))
+              .where(
+                and(
+                  eq(profileMedia.type, "video"),
+                  hasProfilesVisibility ? eq(profiles.visible, true) : undefined,
+                ),
+              )
+              .orderBy(desc(profileMedia.createdAt))
+              .limit(80)
+          : [];
+
       const grouped = new Map<string, any>();
       for (const row of rows) {
         if (!grouped.has(row.profileId)) {
@@ -4320,6 +4345,31 @@ export async function registerRoutes(
           caption: row.caption ?? null,
           createdAt: row.createdAt,
           expiresAt: row.expiresAt,
+        });
+      }
+
+      for (const row of fallbackVideoRows) {
+        if (grouped.has(row.profileId)) continue;
+        grouped.set(row.profileId, {
+          profile: {
+            id: row.profileId,
+            pseudo: row.pseudo,
+            ville: row.ville,
+            accountType: row.accountType,
+            photoUrl: sanitizeUrl(row.profilePhotoUrl ?? null),
+          },
+          items: [
+            {
+              id: `profile-video-${row.profileId}`,
+              mediaUrl: null,
+              visibility: "private",
+              isLocked: true,
+              durationSeconds: 0,
+              caption: "Vidéo privée",
+              createdAt: row.createdAt,
+            },
+          ],
+          latestCreatedAt: row.createdAt,
         });
       }
 
