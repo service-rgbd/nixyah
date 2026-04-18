@@ -23,6 +23,7 @@ import {
 } from "@shared/schema";
 import { PUBLISHING_CONFIG } from "@shared/publishing-config";
 import {
+  STORY_FREE_STORY_LIMIT,
   STORY_PRIVATE_MAX_SECONDS,
   STORY_PUBLIC_MAX_SECONDS,
   STORY_PUBLIC_TTL_HOURS,
@@ -4356,27 +4357,55 @@ export async function registerRoutes(
           throw Object.assign(new Error("Forbidden"), { status: 403 });
         }
 
-        const updated = await tx
-          .update(users)
-          .set({ tokensBalance: sql`${users.tokensBalance} - ${STORY_PUBLISH_TOKEN_COST}` } as any)
-          .where(and(eq(users.id, userId), sql`${users.tokensBalance} >= ${STORY_PUBLISH_TOKEN_COST}`))
-          .returning({ tokensBalance: users.tokensBalance });
+        const [{ count: storiesCountRaw }] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(stories)
+          .where(eq(stories.profileId, profileId));
 
-        if (!updated.length) {
-          throw Object.assign(new Error("Crédit insuffisant, veuillez recharger vos jetons."), { status: 403 });
+        const storiesCount = Number(storiesCountRaw ?? 0);
+        const isFirstFreeStory =
+          storiesCount < STORY_FREE_STORY_LIMIT &&
+          effectiveVisibility === "public" &&
+          payload.durationSeconds <= STORY_PUBLIC_MAX_SECONDS;
+
+        if (isFirstFreeStory) {
+          await tx.insert(tokenTransactions).values({
+            userId,
+            delta: 0,
+            reason: "story_publish_free",
+            meta: {
+              profileId,
+              visibility: effectiveVisibility,
+              durationSeconds: payload.durationSeconds,
+              saleKind,
+              freeStory: true,
+            } as any,
+          } as any);
+        } else {
+          const updated = await tx
+            .update(users)
+            .set({ tokensBalance: sql`${users.tokensBalance} - ${STORY_PUBLISH_TOKEN_COST}` } as any)
+            .where(and(eq(users.id, userId), sql`${users.tokensBalance} >= ${STORY_PUBLISH_TOKEN_COST}`))
+            .returning({ tokensBalance: users.tokensBalance });
+
+          if (!updated.length) {
+            throw Object.assign(new Error("Crédit insuffisant, veuillez recharger vos jetons."), {
+              status: 403,
+            });
+          }
+
+          await tx.insert(tokenTransactions).values({
+            userId,
+            delta: -STORY_PUBLISH_TOKEN_COST,
+            reason: "story_publish",
+            meta: {
+              profileId,
+              visibility: effectiveVisibility,
+              durationSeconds: payload.durationSeconds,
+              saleKind,
+            } as any,
+          } as any);
         }
-
-        await tx.insert(tokenTransactions).values({
-          userId,
-          delta: -STORY_PUBLISH_TOKEN_COST,
-          reason: "story_publish",
-          meta: {
-            profileId,
-            visibility: effectiveVisibility,
-            durationSeconds: payload.durationSeconds,
-            saleKind,
-          } as any,
-        } as any);
 
         const expiresAt =
           effectiveVisibility === "public"
