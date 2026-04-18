@@ -335,6 +335,39 @@ export async function registerRoutes(
     return undefined;
   }
 
+  function extractOrigin(value: string | undefined | null): string | null {
+    const raw = String(value ?? "")
+      .split(",")[0]
+      .trim();
+    if (!raw) return null;
+    try {
+      return new URL(raw).origin.replace(/\/+$/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  function allowedCsrfOrigins(req: any): Set<string> {
+    const origins = new Set<string>(["http://localhost:5000", "http://127.0.0.1:5000"]);
+
+    const envOrigins = [env.APP_BASE_URL, ...(env.CORS_ORIGINS ? env.CORS_ORIGINS.split(",") : [])];
+    for (const value of envOrigins) {
+      const origin = extractOrigin(value);
+      if (origin) origins.add(origin);
+    }
+
+    const derivedOrigin = extractOrigin(frontendBaseFromRequest(req));
+    if (derivedOrigin) origins.add(derivedOrigin);
+
+    return origins;
+  }
+
+  function hasTrustedCsrfOrigin(req: any): boolean {
+    const requestOrigin = extractOrigin(req.get?.("origin")) || extractOrigin(req.get?.("referer"));
+    if (!requestOrigin) return false;
+    return allowedCsrfOrigins(req).has(requestOrigin);
+  }
+
   function appUrl(path: string, req?: any): string {
     let base = String(env.APP_BASE_URL || "").trim();
     if ((!base || isLocalFrontend(base)) && req) {
@@ -1060,6 +1093,14 @@ export async function registerRoutes(
 
     const expected = String(req.session?.csrfToken ?? "").trim();
     const provided = String(req.get("x-csrf-token") ?? "").trim();
+
+    if (expected && provided && expected === provided) {
+      return next();
+    }
+
+    if (hasTrustedCsrfOrigin(req)) {
+      return next();
+    }
 
     if (!expected || !provided || expected !== provided) {
       return res.status(419).json({ message: "Jeton CSRF manquant ou invalide." });
