@@ -124,6 +124,24 @@ app.use(
 // Sessions (used to ensure one profile per user/session + logout)
 app.use(sessionMiddleware());
 
+// Cloudflare Workers do not reliably expose upstream Set-Cookie headers from proxied
+// responses. Mirror them into a readable header just before headers are sent so the
+// Worker can restore real Set-Cookie on the edge response.
+app.use((req, res, next) => {
+  const originalWriteHead = res.writeHead.bind(res);
+  res.writeHead = ((...args: any[]) => {
+    const setCookieHeader = res.getHeader("Set-Cookie");
+    if (setCookieHeader) {
+      const values = Array.isArray(setCookieHeader)
+        ? setCookieHeader.map((value) => String(value))
+        : [String(setCookieHeader)];
+      res.setHeader("x-proxy-set-cookies", JSON.stringify(values));
+    }
+    return originalWriteHead(...args);
+  }) as typeof res.writeHead;
+  next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
