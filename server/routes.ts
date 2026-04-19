@@ -536,7 +536,7 @@ export async function registerRoutes(
 
   function mirrorSetCookies(res: any, cookieStrings: string[]) {
     if (cookieStrings.length === 0) return;
-    res.setHeader("x-proxy-set-cookies", JSON.stringify(cookieStrings));
+    res.setHeader("x-session-bridge", Buffer.from(JSON.stringify(cookieStrings), "utf8").toString("base64"));
   }
 
   function mirrorSessionCookie(res: any, sessionId: string) {

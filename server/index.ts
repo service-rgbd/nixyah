@@ -135,7 +135,7 @@ app.use((req, res, next) => {
       const values = Array.isArray(setCookieHeader)
         ? setCookieHeader.map((value) => String(value))
         : [String(setCookieHeader)];
-      res.setHeader("x-proxy-set-cookies", JSON.stringify(values));
+      res.setHeader("x-session-bridge", Buffer.from(JSON.stringify(values), "utf8").toString("base64"));
     }
     return originalWriteHead(...args);
   }) as typeof res.writeHead;
