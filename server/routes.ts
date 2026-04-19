@@ -1281,6 +1281,117 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  function xmlEscape(value: string): string {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  app.get("/robots.txt", (req, res) => {
+    const sitemapUrl = appUrl("/sitemap.xml", req);
+    res.type("text/plain");
+    res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+    res.send(
+      [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /api/",
+        "Disallow: /dashboard",
+        "Disallow: /stories/new",
+        "Disallow: /signup",
+        "Disallow: /login",
+        "Disallow: /password/forgot",
+        "Disallow: /password/reset",
+        "Disallow: /email/verify",
+        "Disallow: /settings",
+        "Disallow: /post-intent",
+        "Disallow: /annonce/new",
+        "Disallow: /admin",
+        "Disallow: /loader",
+        "",
+        `Sitemap: ${sitemapUrl}`,
+        "",
+      ].join("\n"),
+    );
+  });
+
+  app.get(
+    "/sitemap.xml",
+    asyncHandler(async (req, res) => {
+      const staticEntries = [
+        { path: "/", lastmod: null, changefreq: "weekly", priority: "1.0" },
+        { path: "/start", lastmod: null, changefreq: "daily", priority: "0.95" },
+        { path: "/explore", lastmod: null, changefreq: "daily", priority: "0.9" },
+        { path: "/annonces", lastmod: null, changefreq: "daily", priority: "0.9" },
+        { path: "/vip", lastmod: null, changefreq: "daily", priority: "0.8" },
+        { path: "/events", lastmod: null, changefreq: "weekly", priority: "0.75" },
+        { path: "/adult-products", lastmod: null, changefreq: "daily", priority: "0.8" },
+        { path: "/conditions", lastmod: null, changefreq: "monthly", priority: "0.3" },
+        { path: "/privacy", lastmod: null, changefreq: "monthly", priority: "0.3" },
+        { path: "/cookies", lastmod: null, changefreq: "monthly", priority: "0.3" },
+      ];
+
+      const profileRows = await db
+        .select({
+          id: profiles.id,
+          updatedAt: profiles.updatedAt,
+          createdAt: profiles.createdAt,
+        })
+        .from(profiles)
+        .where(hasProfilesVisibility ? eq(profiles.visible, true) : undefined)
+        .orderBy(desc(profiles.updatedAt))
+        .limit(5000);
+
+      const productRows = await db
+        .select({
+          id: adultProductsTable.id,
+          updatedAt: (adultProductsTable as any).updatedAt,
+          createdAt: adultProductsTable.createdAt,
+        })
+        .from(adultProductsTable)
+        .where(eq(adultProductsTable.active, true))
+        .orderBy(desc((adultProductsTable as any).updatedAt))
+        .limit(5000);
+
+      const urls = [
+        ...staticEntries.map((entry) => ({
+          loc: appUrl(entry.path, req),
+          lastmod: entry.lastmod,
+          changefreq: entry.changefreq,
+          priority: entry.priority,
+        })),
+        ...profileRows.map((row) => ({
+          loc: appUrl(`/profile/${row.id}`, req),
+          lastmod: new Date(row.updatedAt ?? row.createdAt).toISOString(),
+          changefreq: "daily",
+          priority: "0.7",
+        })),
+        ...productRows.map((row) => ({
+          loc: appUrl(`/adult-products/${row.id}`, req),
+          lastmod: new Date((row as any).updatedAt ?? row.createdAt).toISOString(),
+          changefreq: "weekly",
+          priority: "0.65",
+        })),
+      ];
+
+      const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+        .map(
+          (url) =>
+            `  <url>\n    <loc>${xmlEscape(url.loc)}</loc>\n${
+              url.lastmod ? `    <lastmod>${xmlEscape(url.lastmod)}</lastmod>\n` : ""
+            }    <changefreq>${url.changefreq}</changefreq>\n    <priority>${url.priority}</priority>\n  </url>`,
+        )
+        .join("\n")}\n</urlset>`;
+
+      res.type("application/xml");
+      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+      res.send(body);
+    }),
+  );
+
   app.get(
     "/api/csrf-token",
     asyncHandler(async (req, res) => {
@@ -1290,7 +1401,13 @@ export async function registerRoutes(
         mirrorSessionCookie(res, String(req.sessionID));
       }
       res.setHeader("Cache-Control", "no-store");
-      res.json({ csrfToken });
+      res.json({
+        csrfToken,
+        sessionToken:
+          req.session?.userId && req.session?.profileId
+            ? createSessionToken({ userId: String(req.session.userId), profileId: String(req.session.profileId) })
+            : null,
+      });
     }),
   );
 
