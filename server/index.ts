@@ -14,6 +14,10 @@ const httpServer = createServer(app);
 const env = getEnv();
 const isProd = process.env.NODE_ENV === "production";
 
+// API responses are session-specific in many places. Disable ETag so the browser
+// never reuses a prior user's 304-backed response for a different authenticated session.
+app.disable("etag");
+
 if (isProd) {
   // Render/Cloudflare sit behind proxies (needed for secure cookies + correct client IP)
   app.set("trust proxy", 1);
@@ -42,6 +46,13 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, private, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
 
 // Basic security headers (disable CSP here because Vite/Cloudflare pages handle frontend)
 app.use(
