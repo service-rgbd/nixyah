@@ -484,6 +484,7 @@ export async function registerRoutes(
   }
 
   const SESSION_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  const SESSION_TOKEN_TTL_MS = SESSION_COOKIE_MAX_AGE_MS;
 
   function getSessionSecret(): string {
     return process.env.SECRET_TOKEN || process.env.SESSION_SECRET || "dev-secret";
@@ -542,6 +543,48 @@ export async function registerRoutes(
   function mirrorSessionCookie(res: any, sessionId: string) {
     const configuredDomain = getConfiguredCookieDomain();
     mirrorSetCookies(res, [buildSessionCookieString(sessionId, configuredDomain)]);
+  }
+
+  function createSessionToken(auth: { userId: string; profileId: string }): string {
+    const payload = Buffer.from(
+      JSON.stringify({
+        userId: auth.userId,
+        profileId: auth.profileId,
+        exp: Date.now() + SESSION_TOKEN_TTL_MS,
+      }),
+      "utf8",
+    ).toString("base64url");
+    const signature = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+    return `${payload}.${signature}`;
+  }
+
+  function readSessionToken(token: string | null | undefined): { userId: string; profileId: string } | null {
+    const raw = String(token ?? "").trim();
+    if (!raw) return null;
+    const [payload, signature] = raw.split(".");
+    if (!payload || !signature) return null;
+    const expected = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+    const left = Buffer.from(signature);
+    const right = Buffer.from(expected);
+    if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+      return null;
+    }
+    try {
+      const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+        userId?: string;
+        profileId?: string;
+        exp?: number;
+      };
+      if (!decoded?.userId || !decoded?.profileId || !decoded?.exp) return null;
+      if (Number(decoded.exp) <= Date.now()) return null;
+      return { userId: String(decoded.userId), profileId: String(decoded.profileId) };
+    } catch {
+      return null;
+    }
+  }
+
+  function csrfTokenFromSessionToken(token: string): string {
+    return crypto.createHmac("sha256", getSessionSecret()).update(`csrf:${token}`).digest("hex");
   }
 
   function clearSessionCookie(res: any) {
@@ -603,6 +646,17 @@ export async function registerRoutes(
     await saveSession(req);
     res.redirect(url);
   }
+
+  app.use((req, _res, next) => {
+    if (req.session?.userId && req.session?.profileId) return next();
+    const token = String(req.get?.("x-session-token") ?? "").trim();
+    const auth = readSessionToken(token);
+    if (!auth || !req.session) return next();
+    req.session.userId = auth.userId;
+    req.session.profileId = auth.profileId;
+    req.session.csrfToken = csrfTokenFromSessionToken(token);
+    next();
+  });
 
   async function requireTurnstile(req: any, res: any, token: unknown): Promise<boolean> {
     const secret = (env as any).TURNSTILE_SECRET_KEY as string | undefined;
@@ -2215,6 +2269,10 @@ export async function registerRoutes(
         userId: req.session?.userId ?? null,
         profileId: req.session?.profileId ?? null,
         csrfToken,
+        sessionToken:
+          req.session?.userId && req.session?.profileId
+            ? createSessionToken({ userId: String(req.session.userId), profileId: String(req.session.profileId) })
+            : null,
       });
     }),
   );
@@ -2500,7 +2558,12 @@ export async function registerRoutes(
       await logIpEvent({ req, kind: "login_success", userId: u.id });
 
       res.setHeader("Cache-Control", "no-store");
-      res.json({ userId: u.id, profileId: p.id, csrfToken: req.session.csrfToken });
+      res.json({
+        userId: u.id,
+        profileId: p.id,
+        csrfToken: req.session.csrfToken,
+        sessionToken: createSessionToken({ userId: u.id, profileId: p.id }),
+      });
     }),
   );
 
@@ -2696,6 +2759,7 @@ export async function registerRoutes(
       return res.json({
         ...created,
         csrfToken: req.session.csrfToken,
+        sessionToken: createSessionToken({ userId: created.userId, profileId: created.profile.id }),
         verificationEmailSent,
         verificationEmailError,
       });
