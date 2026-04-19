@@ -380,6 +380,22 @@ export async function registerRoutes(
     return `${finalBase}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
+  function getDefaultProfilePhotoUrl(
+    accountType: "profile" | "residence" | "salon" | "adult_shop",
+    req?: any,
+  ): string | undefined {
+    if (accountType === "residence") {
+      return appUrl("/default-avatars/residence.png", req);
+    }
+    if (accountType === "salon") {
+      return appUrl("/default-avatars/salon.png", req);
+    }
+    if (accountType === "adult_shop") {
+      return appUrl("/default-avatars/adult-shop.png", req);
+    }
+    return undefined;
+  }
+
   function apiBaseUrl(req: any): string {
     const forwardedProto = String(req.get?.("x-forwarded-proto") ?? "")
       .split(",")[0]
@@ -415,7 +431,7 @@ export async function registerRoutes(
     });
   }
 
-  function deriveCookieDomainFromAppBase(): string | undefined {
+  function getLegacyDerivedCookieDomain(): string | undefined {
     try {
       const raw = String(env.APP_BASE_URL || "").trim();
       if (!raw) return undefined;
@@ -427,6 +443,11 @@ export async function registerRoutes(
     } catch {
       return undefined;
     }
+  }
+
+  function getConfiguredCookieDomain(): string | undefined {
+    const domain = String(process.env.SESSION_COOKIE_DOMAIN || "").trim();
+    return domain || undefined;
   }
 
   function saveSession(req: any): Promise<void> {
@@ -446,13 +467,12 @@ export async function registerRoutes(
     });
   }
 
-  function getSessionCookieOptions() {
+  function getSessionCookieOptions(domain?: string) {
     const isProd = process.env.NODE_ENV === "production";
     const sameSite = ((process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax")) as
       | "lax"
       | "strict"
       | "none";
-    const domain = (process.env.SESSION_COOKIE_DOMAIN || "").trim() || deriveCookieDomainFromAppBase();
 
     return {
       path: "/",
@@ -464,11 +484,25 @@ export async function registerRoutes(
   }
 
   function clearSessionCookie(res: any) {
+    const configuredDomain = getConfiguredCookieDomain();
+    const legacyDomain = getLegacyDerivedCookieDomain();
+
     res.clearCookie("connect.sid", getSessionCookieOptions());
+    if (configuredDomain) {
+      res.clearCookie("connect.sid", getSessionCookieOptions(configuredDomain));
+    }
+    if (legacyDomain && legacyDomain !== configuredDomain) {
+      res.clearCookie("connect.sid", getSessionCookieOptions(legacyDomain));
+    }
     res.clearCookie("connect.sid", { path: "/" });
   }
 
-  async function establishAuthenticatedSession(req: any, auth: { userId: string; profileId: string }) {
+  async function establishAuthenticatedSession(
+    req: any,
+    res: any,
+    auth: { userId: string; profileId: string },
+  ) {
+    clearSessionCookie(res);
     await regenerateSession(req);
     req.session.userId = auth.userId;
     req.session.profileId = auth.profileId;
@@ -722,26 +756,44 @@ export async function registerRoutes(
     buttonLabel?: string;
     buttonUrl?: string;
     footer?: string;
+    logoUrl?: string;
   }): string {
+    const logo = opts.logoUrl
+      ? `
+        <div style="margin:0 auto 10px auto;width:52px;height:52px;border-radius:16px;background:#fff5f6;border:1px solid #fecdd3;display:flex;align-items:center;justify-content:center;">
+          <img src="${opts.logoUrl}" alt="NIXYAH" width="32" height="32" style="display:block;width:32px;height:32px;border:0;outline:none;" />
+        </div>
+      `
+      : "";
+
     const button = opts.buttonLabel && opts.buttonUrl
       ? `
         <tr>
-          <td align="left" style="padding: 8px 32px 0 32px;">
-            <a href="${opts.buttonUrl}" target="_blank" rel="noopener"
-              style="
-                display: inline-block;
-                padding: 12px 20px;
-                border-radius: 14px;
-                background: #111827;
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: 600;
-                text-decoration: none;
-                letter-spacing: 0.01em;
-              "
-            >
-              ${opts.buttonLabel}
-            </a>
+          <td style="padding: 8px 32px 0 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate;border-spacing:0;">
+              <tr>
+                <td style="padding:20px 22px;border:1px solid #e5e7eb;border-radius:18px;background:#f8fafc;">
+                  <div style="font-size:13px;line-height:1.6;color:#475467;margin:0 0 14px 0;">
+                    Utilise le bouton ci-dessous pour continuer en toute sécurité.
+                  </div>
+                  <a href="${opts.buttonUrl}" target="_blank" rel="noopener"
+                    style="
+                      display:inline-block;
+                      padding:14px 22px;
+                      border-radius:14px;
+                      background:#d61f45;
+                      color:#ffffff;
+                      font-size:14px;
+                      font-weight:600;
+                      text-decoration:none;
+                      letter-spacing:0.01em;
+                    "
+                  >
+                    ${opts.buttonLabel}
+                  </a>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
       `
@@ -749,7 +801,7 @@ export async function registerRoutes(
 
     const body = opts.body
       ? `<tr>
-            <td style="padding: 0 24px 8px 24px; font-size: 14px; line-height: 1.6; color: #4b5563;">
+            <td style="padding: 0 32px 8px 32px; font-size: 15px; line-height: 1.75; color: #475467;">
               ${opts.body}
             </td>
           </tr>`
@@ -757,38 +809,68 @@ export async function registerRoutes(
 
     const footer = opts.footer
       ? `<tr>
-            <td style="padding: 18px 32px 0 32px; font-size: 12px; line-height: 1.6; color: #6b7280;">
-              ${opts.footer}
+            <td style="padding: 18px 32px 0 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate;border-spacing:0;">
+                <tr>
+                  <td style="padding:16px 18px;border-radius:16px;background:#f8fafc;border:1px solid #e5e7eb;font-size:12px;line-height:1.7;color:#667085;">
+                    ${opts.footer}
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>`
       : "";
 
     return `
-      <div style="background-color:#f3f4f6;padding:32px 16px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;margin:0 auto;background-color:#ffffff;border-radius:24px;border:1px solid #e5e7eb;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <div style="margin:0;padding:32px 16px;background-color:#f4f6f8;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto;border-collapse:separate;border-spacing:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
           <tr>
-            <td style="padding:24px 32px 18px 32px;border-bottom:1px solid #f3f4f6;">
-              <div style="font-size:12px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#6b7280;">Confirmation</div>
+            <td style="padding:0 0 14px 0;">
+              ${logo}
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#111827;text-align:center;">
+                NIXYAH
+              </div>
+              <div style="margin-top:8px;font-size:12px;line-height:1.5;color:#667085;text-align:center;">
+                Notification de compte
+              </div>
             </td>
           </tr>
           <tr>
-            <td style="padding:28px 32px 6px 32px;">
-              <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:600;color:#111827;">
-                ${opts.title}
-              </h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 32px 12px 32px;font-size:15px;line-height:1.7;color:#374151;">
-              ${opts.intro}
-            </td>
-          </tr>
-          ${body}
-          ${button}
-          ${footer}
-          <tr>
-            <td style="padding:24px 32px 28px 32px;font-size:11px;line-height:1.7;color:#9ca3af;border-top:1px solid #f3f4f6;">
-              Message automatique. Si tu n’es pas à l’origine de cette demande, tu peux simplement ignorer cet email.
+            <td style="background-color:#ffffff;border:1px solid #e5e7eb;border-radius:24px;overflow:hidden;box-shadow:0 10px 30px rgba(17,24,39,0.05);">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate;border-spacing:0;">
+                <tr>
+                  <td style="padding:28px 32px 10px 32px;">
+                    <div style="display:inline-block;padding:6px 10px;border-radius:999px;background:#f3f4f6;color:#344054;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">
+                      Acces securise
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 32px 8px 32px;">
+                    <h1 style="margin:0;font-size:28px;line-height:1.25;font-weight:700;color:#101828;">
+                      ${opts.title}
+                    </h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 32px 14px 32px;font-size:15px;line-height:1.75;color:#344054;">
+                    ${opts.intro}
+                  </td>
+                </tr>
+                ${body}
+                ${button}
+                ${footer}
+                <tr>
+                  <td style="padding:22px 32px 0 32px;">
+                    <div style="height:1px;background:#eaecf0;"></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:18px 32px 30px 32px;font-size:12px;line-height:1.75;color:#667085;">
+                    Message automatique. Si tu n'es pas a l'origine de cette demande, tu peux simplement ignorer cet email.
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
         </table>
@@ -820,6 +902,7 @@ export async function registerRoutes(
       .where(eq(users.id, userId));
 
     const verifyLink = appUrl(`/email/verify?token=${encodeURIComponent(token)}`);
+    const logoUrl = appUrl("/favicon.png");
 
     try {
       const html = renderEmailLayout({
@@ -830,6 +913,7 @@ export async function registerRoutes(
           "Clique sur le bouton ci-dessous pour valider ton email. Le lien reste disponible pendant quelques jours.",
         buttonLabel: "Confirmer l’adresse email",
         buttonUrl: verifyLink,
+        logoUrl,
         footer:
           "Si le bouton ne fonctionne pas, ouvre ce lien dans ton navigateur :<br /><a href=\"${verifyLink}\" target=\"_blank\" rel=\"noopener\" style=\"color:#111827;word-break:break-all;\">${verifyLink}</a>",
       });
@@ -884,6 +968,7 @@ export async function registerRoutes(
       .where(eq(users.id, userId));
 
     const resetLink = appUrl(`/password/reset?token=${encodeURIComponent(token)}`);
+    const logoUrl = appUrl("/favicon.png");
 
     const html = renderEmailLayout({
       title: "Réinitialisation du mot de passe",
@@ -893,6 +978,7 @@ export async function registerRoutes(
         "Pour définir un nouveau mot de passe, clique sur le bouton ci-dessous. Ce lien reste valable pendant <strong>1 heure</strong>.",
       buttonLabel: "Définir un nouveau mot de passe",
       buttonUrl: resetLink,
+      logoUrl,
       footer:
         `Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.<br /><br />Lien direct : <a href="${resetLink}" target="_blank" rel="noopener" style="color:#111827;word-break:break-all;">${resetLink}</a>`,
     });
@@ -1233,7 +1319,7 @@ export async function registerRoutes(
         return res.redirect(appUrl(`/login?oauth=no_profile`));
       }
 
-      await establishAuthenticatedSession(req, {
+      await establishAuthenticatedSession(req, res, {
         userId: (u as any).id,
         profileId: p.id,
       });
@@ -2046,6 +2132,8 @@ export async function registerRoutes(
       const csrfToken = hasAuthenticatedSession ? ensureCsrfToken(req) : null;
       if (hasAuthenticatedSession) {
         await saveSession(req);
+      } else {
+        clearSessionCookie(res);
       }
       res.setHeader("Cache-Control", "no-store");
       res.json({
@@ -2332,7 +2420,7 @@ export async function registerRoutes(
 
       if (!p) return res.status(404).json({ message: "Profil introuvable" });
 
-      await establishAuthenticatedSession(req, { userId: u.id, profileId: p.id });
+      await establishAuthenticatedSession(req, res, { userId: u.id, profileId: p.id });
 
       await logIpEvent({ req, kind: "login_success", userId: u.id });
 
@@ -2420,6 +2508,7 @@ export async function registerRoutes(
       try {
         created = await db.transaction(async (tx) => {
           const accountType = payload.accountType ?? "profile";
+          const defaultPhotoUrl = payload.photoUrl ?? getDefaultProfilePhotoUrl(accountType, req);
           const userValues: any = { username, passwordHash };
           if (hasUsersEmail && emailToUse) {
             userValues.email = emailToUse;
@@ -2445,7 +2534,7 @@ export async function registerRoutes(
               age: payload.age,
               ville: payload.ville.trim(),
               ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
-              photoUrl: payload.photoUrl,
+              photoUrl: defaultPhotoUrl,
               photoKey: payload.photoKey,
               ...(hasProfilesVisibility ? { visible: true } : {}),
               ...(hasProfilesPro ? { isPro: accountType !== "profile" } : {}),
@@ -2467,11 +2556,11 @@ export async function registerRoutes(
             });
 
           // Optional: seed first photo into media table (for gallery)
-          if (hasProfileMedia && payload.photoUrl) {
+          if (hasProfileMedia && defaultPhotoUrl) {
             await tx.insert(profileMedia).values({
               profileId: p.id,
               type: "photo",
-              url: payload.photoUrl,
+              url: defaultPhotoUrl,
               key: payload.photoKey,
               sortOrder: 0,
             });
@@ -2492,7 +2581,7 @@ export async function registerRoutes(
         throw error;
       }
 
-      await establishAuthenticatedSession(req, {
+      await establishAuthenticatedSession(req, res, {
         userId: created.userId,
         profileId: created.profile.id,
       });
