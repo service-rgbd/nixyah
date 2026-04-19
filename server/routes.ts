@@ -3348,6 +3348,7 @@ export async function registerRoutes(
           tarif: hasProfilesPro ? profiles.tarif : (sql<string | null>`null` as any),
           lieu: hasProfilesPro ? profiles.lieu : (sql<string | null>`null` as any),
           services: hasProfilesPro ? profiles.services : (sql<any>`null` as any),
+          disponibilite: hasProfilesPro ? profiles.disponibilite : (sql<any>`null` as any),
           description: hasProfilesPro ? profiles.description : (sql<string | null>`null` as any),
           ...(hasProfileAttrs
             ? {
@@ -3468,10 +3469,12 @@ export async function registerRoutes(
               ville: a.ville,
               verified: a.verified,
               isPro: a.isPro,
+              accountType: a.accountType,
               ...(hasVip ? { isVip: (a as any).isVip } : {}),
               tarif: a.tarif,
               lieu: a.lieu,
               services: a.services,
+              disponibilite: (a as any).disponibilite ?? null,
               description: a.description,
               ...(hasProfileAttrs
                 ? ({
