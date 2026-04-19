@@ -1281,6 +1281,10 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  app.get("/api/healthz", (_req, res) => {
+    res.json({ ok: true });
+  });
+
   function xmlEscape(value: string): string {
     return String(value)
       .replace(/&/g, "&amp;")
