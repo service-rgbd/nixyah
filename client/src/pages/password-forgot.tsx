@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Mail, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/lib/i18n";
 import { apiGetJson, apiRequest } from "@/lib/queryClient";
@@ -69,103 +68,99 @@ export default function PasswordForgot() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] flex items-center justify-between">
+      <header className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] flex items-center justify-between sm:px-6">
         <button
           onClick={() => setLocation("/login")}
           className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="font-display text-xl font-semibold text-gradient tracking-tight">NIXYAH</h1>
+        <div className="text-sm font-medium text-foreground">{lang === "en" ? "Password" : "Mot de passe"}</div>
         <div className="w-9" />
       </header>
 
-      <main className="flex-1 flex flex-col px-4 pb-8">
+      <main className="flex-1 px-4 pb-10 pt-4 sm:px-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex-1 flex items-center justify-center"
+          className="mx-auto flex w-full max-w-md flex-col"
         >
-          <div className="w-full max-w-md">
-            <Card className="rounded-3xl shadow-lg border-border bg-card/95">
-              <CardHeader className="text-center space-y-1">
-                <CardTitle className="text-lg font-semibold flex items-center justify-center gap-2">
-                  <Lock className="w-4 h-4 text-primary" />
-                  {lang === "en" ? "Forgot your password?" : "Mot de passe oublié ?"}
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  {lang === "en"
-                    ? "Enter your username or email. If an account exists, you will receive a reset link."
-                    : "Entre ton identifiant ou ton email. Si un compte existe, tu recevras un lien de réinitialisation."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-2">
-                {error && (
-                  <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
-                    {error}
-                  </div>
-                )}
+          <section className="space-y-2 border-b border-border/70 pb-6 text-center sm:text-left">
+            <h1 className="text-3xl font-semibold text-foreground">
+              {lang === "en" ? "Forgot your password?" : "Mot de passe oublié ?"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {lang === "en"
+                ? "Enter your username or email. If an account exists, you will receive a reset link."
+                : "Entre ton identifiant ou ton email. Si un compte existe, tu recevras un lien de réinitialisation."}
+            </p>
+          </section>
 
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground flex items-center gap-2">
-                    <Mail className="w-4 h-4" />
-                    {lang === "en" ? "Username or email" : "Identifiant ou email"}
-                  </label>
-                  <Input
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder={
-                      lang === "en" ? "Your username or email" : "Ton identifiant de connexion ou ton email"
-                    }
-                    className="h-11"
-                  />
-                </div>
+          <div className="space-y-5 pt-6">
+            {error && (
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+                {error}
+              </div>
+            )}
 
-                {turnstileRequired && (
-                  <>
-                    {!hasSiteKey ? (
-                      <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive">
-                        {lang === "en"
-                          ? "Turnstile is required but VITE_TURNSTILE_SITE_KEY is missing on the frontend build."
-                          : "Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare."}
-                      </div>
-                    ) : (
-                      <Turnstile
-                        action="password_forgot"
-                        className="pt-1 flex justify-center"
-                        onToken={(tok) => setTurnstileToken(tok)}
-                      />
-                    )}
-                  </>
-                )}
+            <div className="space-y-2 border-b border-border/70 pb-6">
+              <label className="text-xs text-muted-foreground flex items-center gap-2">
+                <Mail className="w-4 h-4" />
+                {lang === "en" ? "Username or email" : "Identifiant ou email"}
+              </label>
+              <Input
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder={
+                  lang === "en" ? "Your username or email" : "Ton identifiant de connexion ou ton email"
+                }
+                className="h-11 rounded-full"
+              />
+            </div>
 
-                <Button
-                  className="w-full h-11 mt-1"
-                  disabled={loading || identifier.trim().length === 0 || done}
-                  onClick={handleSubmit}
-                >
-                  {done
-                    ? lang === "en"
-                      ? "Email sent (if account exists)"
-                      : "Email envoyé (si le compte existe)"
-                    : loading
-                      ? lang === "en"
-                        ? "Sending…"
-                        : "Envoi…"
-                      : lang === "en"
-                        ? "Send reset link"
-                        : "Envoyer le lien"}
-                </Button>
-
-                {done && (
-                  <p className="text-[11px] text-muted-foreground text-center pt-1">
+            {turnstileRequired && (
+              <>
+                {!hasSiteKey ? (
+                  <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive">
                     {lang === "en"
-                      ? "Check your inbox and follow the link. Also look in your spam folder."
-                      : "Vérifie ta boîte mail et clique sur le lien. Pense aussi au dossier spam / courrier indésirable."}
-                  </p>
+                      ? "Turnstile is required but VITE_TURNSTILE_SITE_KEY is missing on the frontend build."
+                      : "Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare."}
+                  </div>
+                ) : (
+                  <Turnstile
+                    action="password_forgot"
+                    className="pt-1 flex justify-center"
+                    onToken={(tok) => setTurnstileToken(tok)}
+                  />
                 )}
-              </CardContent>
-            </Card>
+              </>
+            )}
+
+            <Button
+              className="w-full h-11 rounded-full"
+              disabled={loading || identifier.trim().length === 0 || done}
+              onClick={handleSubmit}
+            >
+              {done
+                ? lang === "en"
+                  ? "Email sent (if account exists)"
+                  : "Email envoyé (si le compte existe)"
+                : loading
+                  ? lang === "en"
+                    ? "Sending…"
+                    : "Envoi…"
+                  : lang === "en"
+                    ? "Send reset link"
+                    : "Envoyer le lien"}
+            </Button>
+
+            {done && (
+              <p className="text-[11px] text-muted-foreground text-center pt-1">
+                {lang === "en"
+                  ? "Check your inbox and follow the link. Also look in your spam folder."
+                  : "Vérifie ta boîte mail et clique sur le lien. Pense aussi au dossier spam / courrier indésirable."}
+              </p>
+            )}
           </div>
         </motion.div>
       </main>

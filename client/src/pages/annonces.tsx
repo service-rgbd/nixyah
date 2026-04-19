@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, MapPin, SlidersHorizontal, Crown } from "lucide-react";
+import { ArrowLeft, MapPin, SlidersHorizontal, Crown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
@@ -19,8 +19,9 @@ import {
 } from "@/components/ui/sheet";
 import { useAppSettings } from "@/lib/appSettings";
 import { useI18n } from "@/lib/i18n";
-import avatarUrl from "@assets/avatar.png";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
+import { getStoredBrowserCoords } from "@/lib/browserLocation";
+import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
 
 type AnnonceItem = {
   id: string;
@@ -43,12 +44,14 @@ type AnnonceItem = {
     verified: boolean;
     isPro?: boolean;
     isVip?: boolean;
+    accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
     photoUrl: string | null;
     photos: string[];
     videoUrl: string | null;
     tarif: string | null;
     lieu: string | null;
     services: string[] | null;
+    disponibilite?: { date?: string; heureDebut?: string; duree?: string } | null;
     description: string | null;
     corpulence?: string | null;
     poids?: number | null;
@@ -63,19 +66,6 @@ type AnnonceItem = {
   };
 };
 
-const timeAgo = (iso: string) => {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return "";
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return `il y a ${s} secondes`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `il y a ${m} mins`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `il y a ${h} h`;
-  const d = Math.floor(h / 24);
-  return `il y a ${d} j`;
-};
-
 export default function AnnoncesPage() {
   const [, setLocation] = useLocation();
   const { lang, t } = useI18n();
@@ -83,13 +73,24 @@ export default function AnnoncesPage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: false, timeout: 6000 },
-    );
+    setCoords(getStoredBrowserCoords());
   }, []);
+
+  const getAccountTypeLabel = (accountType: AnnonceItem["profile"]["accountType"]) => {
+    if (accountType === "residence") return lang === "en" ? "Residence" : "Résidence";
+    if (accountType === "salon") return "Salon / SPA";
+    if (accountType === "adult_shop") return lang === "en" ? "Adult shop" : "Boutique adulte";
+    return lang === "en" ? "Escort profile" : "Profil escorte";
+  };
+
+  const getAvailabilityMeta = (disponibilite?: AnnonceItem["profile"]["disponibilite"]) => {
+    const date = String(disponibilite?.date ?? "").trim();
+    if (!date) return null;
+    const lowered = date.toLowerCase();
+    if (lowered.includes("occup")) return { label: lang === "en" ? "Busy" : "Occupé", className: "bg-rose-500/10 text-rose-300" };
+    if (lowered.startsWith("dans")) return { label: lang === "en" ? "Available soon" : "Disponible bientôt", className: "bg-amber-500/10 text-amber-300" };
+    return { label: lang === "en" ? "Available" : "Disponible", className: "bg-emerald-500/10 text-emerald-300" };
+  };
 
   const query = useMemo(() => {
     const selectedServices = settings.selectedServices ?? [];
@@ -270,71 +271,96 @@ export default function AnnoncesPage() {
                 key={a.id}
                 type="button"
                 onClick={() => setLocation(`/profile/${a.profile.id}`)}
-                className="w-full text-left rounded-2xl border border-border bg-card/70 overflow-hidden hover:bg-card/90 transition-colors"
+                className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
               >
-                <div className="flex">
-                  <div className="relative w-28 h-24 shrink-0 bg-muted overflow-hidden">
+                <div className="grid items-start gap-4 md:grid-cols-[156px_minmax(0,1fr)]">
+                  <div className="relative h-[132px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[170px]">
                     <img
-                      src={a.profile.photoUrl || avatarUrl}
+                      src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
                       alt={a.profile.pseudo}
-                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute inset-0 h-full w-full object-cover"
                       onError={(e) => {
                         const img = e.currentTarget;
                         img.onerror = null;
-                        img.src = avatarUrl;
+                        img.src = getDefaultProfilePhoto(a.profile.accountType);
                       }}
                     />
-                    <div className="absolute top-2 left-2 flex flex-col gap-1">
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
+                    <div className="absolute left-3 top-3 flex flex-wrap gap-2">
                       {a.profile.isVip ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/90 text-white font-semibold">
+                        <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] text-white">
                           VIP
                         </span>
                       ) : null}
+                      <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white">
+                        {getAccountTypeLabel(a.profile.accountType)}
+                      </span>
+                    </div>
+                    <div className="absolute bottom-3 left-3 right-3 flex items-end justify-end gap-2">
                       {(a.promotionMeta?.badges ?? []).includes("URGENT") ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-500/90 text-white font-semibold">
+                        <span className="rounded-full bg-red-500/85 px-2.5 py-1 text-[10px] text-white">
                           Urgent
                         </span>
                       ) : null}
                     </div>
                   </div>
 
-                  <div className="flex-1 p-3 min-w-0">
+                  <div className="min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground line-clamp-2">{a.title}</div>
-                        <div className="text-xs text-muted-foreground mt-1 truncate">
-                          Publié par{" "}
-                          <span className="text-foreground/90 font-medium">{a.profile.pseudo}</span>{" "}
-                          {a.profile.isPro ? <span className="text-muted-foreground">(pro)</span> : null}
+                        <div className="text-base font-semibold text-foreground line-clamp-2 md:text-[1.2rem]">
+                          {a.title}
                         </div>
-                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                          <span className="rounded-full bg-muted/40 px-2.5 py-1">
+                            {a.profile.pseudo}
+                          </span>
+                          {a.profile.isPro ? (
+                            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
+                              pro
+                            </span>
+                          ) : null}
+                          {a.profile.tarif ? (
+                            <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
+                              {a.profile.tarif}
+                            </span>
+                          ) : null}
+                          {getAvailabilityMeta(a.profile.disponibilite) ? (
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
+                              {getAvailabilityMeta(a.profile.disponibilite)?.label}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                           <MapPin className="w-3.5 h-3.5" />
-                          <span className="truncate">{a.profile.ville}</span>
+                          <span className="truncate">
+                            {a.profile.ville}
+                            {a.profile.lieu ? ` • ${a.profile.lieu}` : ""}
+                            {typeof a.distanceKm === "number" ? ` • ${a.distanceKm.toFixed(1)} km` : ""}
+                          </span>
+                        </div>
+                        <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
+                          {a.profile.description ?? "—"}
                         </div>
                       </div>
-                      <div className="shrink-0 text-[11px] text-muted-foreground">
-                        {timeAgo(a.createdAt)}
-                      </div>
+                      <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
                     </div>
 
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <div className="text-[11px] text-muted-foreground">
-                        {(a.profile.photos?.length ?? 0) > 0 ? `${a.profile.photos.length} photos` : "—"}
-                        {typeof a.distanceKm === "number" ? ` • ${a.distanceKm.toFixed(1)} km` : ""}
-                      </div>
-                      <div className="flex gap-1.5 flex-wrap justify-end">
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <div className="flex gap-1.5 flex-wrap">
                         {(a.promotionMeta?.badges ?? []).filter((b) => b !== "URGENT").slice(0, 3).map((b) => (
-                          <span key={b} className="px-2 py-0.5 rounded-full text-[10px] bg-muted/40 border border-border text-foreground/80">
+                          <span key={b} className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-foreground/80">
                             {b === "PROLONGATION" ? "Prolong." : b}
                           </span>
                         ))}
-                        {a.profile.isVip ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-400/15 border border-amber-400/25 text-amber-200 flex items-center gap-1">
-                            <Crown className="w-3 h-3" />
-                            VIP
-                          </span>
-                        ) : null}
                       </div>
+                      {(a.profile.services ?? []).slice(0, 3).map((s) => (
+                        <span key={s} className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground">
+                          {s}
+                        </span>
+                      ))}
                     </div>
                   </div>
                 </div>

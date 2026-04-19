@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, MapPin, Tag, Wand2, Plus, Minus, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,6 +28,10 @@ export default function AnnonceNew() {
   const profileId = getProfileId();
   const [prefilled, setPrefilled] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  const createNewAnnonce = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    return new URLSearchParams(window.location.search).get("mode") !== "edit";
+  }, []);
 
   const { data: profileDetail, isLoading } = useQuery<any>({
     queryKey: profileId ? [`/api/profiles/${profileId}`] : ["__no_profile__"],
@@ -263,7 +266,7 @@ export default function AnnonceNew() {
   useEffect(() => {
     if (!profileDetail || prefilled) return;
     // Edit mode: prefill from existing profile fields + annonce title
-    if (profileDetail?.annonce?.title) setTitle(profileDetail.annonce.title);
+    if (!createNewAnnonce && profileDetail?.annonce?.title) setTitle(profileDetail.annonce.title);
     if (typeof profileDetail?.lieu === "string" && profileDetail.lieu) setLieu(profileDetail.lieu);
     if (Array.isArray(profileDetail?.services) && profileDetail.services.length) setServices(profileDetail.services);
     if (typeof profileDetail?.description === "string") setDescription(profileDetail.description ?? "");
@@ -300,7 +303,7 @@ export default function AnnonceNew() {
     }
 
     setPrefilled(true);
-  }, [profileDetail, prefilled]);
+  }, [profileDetail, prefilled, createNewAnnonce]);
 
   useEffect(() => {
     if (accountType === "salon" && spaOffers.length === 0) {
@@ -379,11 +382,7 @@ export default function AnnonceNew() {
       return;
     }
     if (!tokenSummary.allowed) {
-      setError(
-        `Solde de jetons insuffisant. Requis: ${tokenSummary.totalTokens} — Solde: ${tokenSummary.balance}.`,
-      );
-      // No purchase page yet; redirect to dashboard (as per config intent).
-      setLocation("/dashboard");
+      setError("Crédit insuffisant, veuillez recharger vos jetons.");
       return;
     }
     setError(null);
@@ -440,6 +439,7 @@ export default function AnnonceNew() {
 
       await apiRequest("POST", "/api/annonces", {
         profileId,
+        forceNew: createNewAnnonce,
         title,
         tarif: computedTarif,
         lieu: lieu || undefined,
@@ -482,7 +482,7 @@ export default function AnnonceNew() {
           <ArrowLeft className="w-5 h-5 text-foreground" />
         </button>
         <h1 className="text-xl font-semibold text-foreground">
-          {profileDetail?.annonce
+          {!createNewAnnonce && profileDetail?.annonce
             ? "Modifier l'annonce"
             : accountType === "profile"
             ? "Nouvelle annonce"
@@ -500,17 +500,17 @@ export default function AnnonceNew() {
           <p className="text-sm text-muted-foreground mt-6">Chargement du formulaire…</p>
         ) : (
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-          <Card className="border-border">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
+          <section className="rounded-[28px] border border-border/70 bg-background px-4 py-5 shadow-sm sm:px-6">
+            <div className="mb-5 border-b border-border/70 pb-4">
+              <div className="flex items-center gap-2 text-base">
                 <Wand2 className="w-4 h-4 text-primary" />
                 <span className="text-xs text-muted-foreground">Étape {step}/3</span>
                 <span className="text-foreground">
                   {step === 1 ? "Contenu" : step === 2 ? "Visibilité" : "Validation"}
                 </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
+              </div>
+            </div>
+            <div className="space-y-5">
               {account && (!account.email || account.emailVerified === false) && (
                 <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-foreground">
                   <div className="flex items-start gap-2">
@@ -547,7 +547,7 @@ export default function AnnonceNew() {
               )}
 
               {step === 2 && (
-                <div className="space-y-3 rounded-2xl border border-border bg-card p-4">
+                <div className="space-y-3 rounded-2xl border border-border/70 bg-background p-4">
                   <div className="space-y-1">
                     <div className="text-sm font-semibold text-foreground">Visibilité & jetons</div>
                     <p className="text-xs text-muted-foreground">
@@ -558,8 +558,15 @@ export default function AnnonceNew() {
                     </p>
                     {!tokenSummary.allowed && (
                       <p className="text-xs text-destructive">
-                        Solde insuffisant — la publication sera refusée.
+                        Crédit insuffisant, veuillez recharger vos jetons.
                       </p>
+                    )}
+                    {!tokenSummary.allowed && (
+                      <div className="pt-1">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setLocation("/dashboard")}>
+                          Recharger mes jetons
+                        </Button>
+                      </div>
                     )}
                   </div>
 
@@ -577,7 +584,7 @@ export default function AnnonceNew() {
                             "min-w-[160px] text-left rounded-2xl border p-3 " +
                             (extendedOptionId === "none"
                               ? "border-primary/40 bg-primary/10"
-                              : "border-border bg-background/40 hover:bg-background/60")
+                              : "border-border/70 bg-background hover:bg-muted/40")
                           }
                         >
                           <div className="text-sm font-semibold text-foreground">Aucune</div>
@@ -594,7 +601,7 @@ export default function AnnonceNew() {
                                 "min-w-[200px] text-left rounded-2xl border p-3 " +
                                 (selected
                                   ? "border-primary/40 bg-primary/10"
-                                  : "border-border bg-background/40 hover:bg-background/60")
+                                  : "border-border/70 bg-background hover:bg-muted/40")
                               }
                             >
                               <div className="flex items-center justify-between gap-2">
@@ -631,7 +638,7 @@ export default function AnnonceNew() {
                             "min-w-[160px] text-left rounded-2xl border p-3 " +
                             (featuredOptionId === "none"
                               ? "border-primary/40 bg-primary/10"
-                              : "border-border bg-background/40 hover:bg-background/60")
+                              : "border-border/70 bg-background hover:bg-muted/40")
                           }
                         >
                           <div className="text-sm font-semibold text-foreground">Aucun</div>
@@ -648,7 +655,7 @@ export default function AnnonceNew() {
                                 "min-w-[180px] text-left rounded-2xl border p-3 " +
                                 (selected
                                   ? "border-emerald-500/40 bg-emerald-500/10"
-                                  : "border-border bg-background/40 hover:bg-background/60")
+                                  : "border-border/70 bg-background hover:bg-muted/40")
                               }
                             >
                               <div className="text-sm font-semibold text-foreground">PREMIUM</div>
@@ -676,7 +683,7 @@ export default function AnnonceNew() {
                             "min-w-[160px] text-left rounded-2xl border p-3 " +
                             (autorenewOptionId === "none"
                               ? "border-primary/40 bg-primary/10"
-                              : "border-border bg-background/40 hover:bg-background/60")
+                              : "border-border/70 bg-background hover:bg-muted/40")
                           }
                         >
                           <div className="text-sm font-semibold text-foreground">Aucun</div>
@@ -693,7 +700,7 @@ export default function AnnonceNew() {
                                 "min-w-[220px] text-left rounded-2xl border p-3 " +
                                 (selected
                                   ? "border-sky-500/40 bg-sky-500/10"
-                                  : "border-border bg-background/40 hover:bg-background/60")
+                                  : "border-border/70 bg-background hover:bg-muted/40")
                               }
                             >
                               <div className="text-sm font-semibold text-foreground">TOP</div>
@@ -721,7 +728,7 @@ export default function AnnonceNew() {
                             "min-w-[160px] text-left rounded-2xl border p-3 " +
                             (urgentOptionId === "none"
                               ? "border-primary/40 bg-primary/10"
-                              : "border-border bg-background/40 hover:bg-background/60")
+                              : "border-border/70 bg-background hover:bg-muted/40")
                           }
                         >
                           <div className="text-sm font-semibold text-foreground">Aucun</div>
@@ -738,7 +745,7 @@ export default function AnnonceNew() {
                                 "min-w-[180px] text-left rounded-2xl border p-3 " +
                                 (selected
                                   ? "border-red-500/40 bg-red-500/10"
-                                  : "border-border bg-background/40 hover:bg-background/60")
+                                  : "border-border/70 bg-background hover:bg-muted/40")
                               }
                             >
                               <div className="text-sm font-semibold text-foreground">URGENT</div>
@@ -961,7 +968,7 @@ export default function AnnonceNew() {
                   {serviceOptions.map((s) => (
                     <label
                       key={s}
-                      className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card cursor-pointer"
+                      className="flex items-center gap-3 rounded-xl border border-border/70 bg-background p-3 cursor-pointer"
                     >
                       <Checkbox
                         checked={services.includes(s)}
@@ -980,7 +987,7 @@ export default function AnnonceNew() {
               </div>
 
               {accountType === "profile" && (
-                <details className="rounded-2xl border border-border bg-card">
+                <details className="rounded-2xl border border-border/70 bg-background">
                   <summary className="px-4 py-4 cursor-pointer select-none">
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-semibold text-foreground">
@@ -1124,7 +1131,7 @@ export default function AnnonceNew() {
                       {traitOptions.map((s) => (
                         <label
                           key={s}
-                          className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card cursor-pointer"
+                          className="flex items-center gap-3 rounded-xl border border-border/70 bg-background p-3 cursor-pointer"
                         >
                           <Checkbox
                             checked={traits.includes(s)}
@@ -1147,7 +1154,7 @@ export default function AnnonceNew() {
                       {positionOptions.map((s) => (
                         <label
                           key={s}
-                          className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card cursor-pointer"
+                          className="flex items-center gap-3 rounded-xl border border-border/70 bg-background p-3 cursor-pointer"
                         >
                           <Checkbox
                             checked={positions.includes(s)}
@@ -1170,7 +1177,7 @@ export default function AnnonceNew() {
                       {selfDescriptionOptions.map((s) => (
                         <label
                           key={s}
-                          className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card cursor-pointer"
+                          className="flex items-center gap-3 rounded-xl border border-border/70 bg-background p-3 cursor-pointer"
                         >
                           <Checkbox
                             checked={selfDescriptions.includes(s)}
@@ -1328,7 +1335,7 @@ export default function AnnonceNew() {
               )}
 
               {step === 3 && (
-                <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+                <div className="rounded-2xl border border-border/70 bg-background p-4 space-y-3">
                   <div className="text-sm font-semibold text-foreground">Récapitulatif</div>
                   <div className="space-y-2">
                     {recap.map((it, idx) => (
@@ -1394,7 +1401,7 @@ export default function AnnonceNew() {
                 )}
               </div>
 
-              {profileDetail?.annonce?.id && step === 3 && (
+              {profileDetail?.annonce?.id && step === 3 && !createNewAnnonce && (
                 <Button
                   variant="outline"
                   className="w-full h-12"
@@ -1407,8 +1414,8 @@ export default function AnnonceNew() {
                   Dépublier
                 </Button>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </motion.div>
         )}
       </main>

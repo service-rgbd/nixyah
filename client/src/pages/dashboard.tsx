@@ -2,18 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings2, Megaphone, UserCircle2, Compass, Menu, LogOut, Phone, MapPin, AlertCircle, HelpCircle, Info, Mail, Coins, Rocket, Eye, Plus } from "lucide-react";
+import { Settings2, Megaphone, UserCircle2, Compass, Menu, LogOut, Phone, MapPin, AlertCircle, HelpCircle, Info, Mail, Coins, Rocket, Eye, Plus, Clapperboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { clearSession, getProfileId } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
-import avatarUrl from "@assets/avatar.png";
-import { apiFetch, apiGetJson, apiRequest } from "@/lib/queryClient";
+import logoTitle from "@assets/logo-titre.png";
+import { apiGetJson, apiRequest } from "@/lib/queryClient";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { STORY_PUBLIC_MAX_SECONDS } from "@shared/story-config";
+import { setStoredBrowserCoords } from "@/lib/browserLocation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,6 +23,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { getProfilePhoto } from "@/lib/profile-photo";
 
 type ApiProfileDetail = {
   id: string;
@@ -58,6 +60,29 @@ type ApiProfileDetail = {
     | null;
 };
 
+type DashboardAnnonce = {
+  id: string;
+  title: string;
+  body: string | null;
+  active: boolean;
+  createdAt?: string;
+  promotion?: any;
+};
+
+type DashboardStory = {
+  id: string;
+  visibility: "public" | "private";
+  mediaUrl: string | null;
+  durationSeconds: number;
+  caption: string | null;
+  saleKind?: "none" | "video" | "product";
+  saleTitle?: string | null;
+  salePrice?: string | null;
+  active: boolean;
+  expiresAt?: string | null;
+  createdAt?: string;
+};
+
 type TokenPackagesResponse = {
   packages: Array<{ id: string; label: string; tokens: number; currency: string; amount: number }>;
   providers?: Array<"paystack" | "mobile_money">;
@@ -82,9 +107,8 @@ export default function Dashboard() {
   const [contactPreference, setContactPreference] = useState<"whatsapp" | "telegram">("whatsapp");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [showLocation, setShowLocation] = useState(false);
-  const [accountEmail, setAccountEmail] = useState("");
-  const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showTokensDialog, setShowTokensDialog] = useState(false);
+  const [pendingStoryToggle, setPendingStoryToggle] = useState<DashboardStory | null>(null);
   const [tokenPackages, setTokenPackages] = useState<Array<{ id: string; label: string; tokens: number; currency: string; amount: number }> | null>(null);
   const [buyingTokens, setBuyingTokens] = useState(false);
 
@@ -126,6 +150,16 @@ export default function Dashboard() {
     enabled: Boolean(profileId),
   });
 
+  const { data: myAnnonces } = useQuery<DashboardAnnonce[]>({
+    queryKey: ["/api/me/annonces"],
+    enabled: Boolean(profileId),
+  });
+
+  const { data: myStories } = useQuery<DashboardStory[]>({
+    queryKey: ["/api/me/stories"],
+    enabled: Boolean(profileId),
+  });
+
   const { data: publishingConfig } = useQuery<any>({
     queryKey: ["/api/publishing/config"],
     retry: false,
@@ -144,18 +178,6 @@ export default function Dashboard() {
     queryKey: ["/api/support"],
   });
 
-  const { data: adminMe } = useQuery<{ ok: boolean } | null>({
-    queryKey: ["/api/admin/me"],
-    enabled: Boolean(profileId),
-    retry: false,
-    queryFn: async () => {
-      const res = await apiFetch("/api/admin/me");
-      if (res.status === 401 || res.status === 403) return null;
-      if (!res.ok) throw new Error("Unable to check admin access");
-      return (await res.json()) as { ok: boolean };
-    },
-  });
-
   useEffect(() => {
     if (!data) return;
     setPhone(data.contact?.phone ?? "");
@@ -166,31 +188,88 @@ export default function Dashboard() {
     setShowLocation(Boolean(data.showLocation));
   }, [data]);
 
-  useEffect(() => {
-    if (!account) return;
-    setAccountEmail(account.email ?? "");
-    if (!account.email) {
-      setShowEmailDialog(true);
+  const persistBrowserLocation = async () => {
+    if (!navigator.geolocation) {
+      toast({ title: lang === "en" ? "Geolocation unavailable" : "Géolocalisation indisponible" });
+      return false;
     }
-  }, [account]);
 
-  const annonceBadges = useMemo(() => {
-    const promo = data?.annonce?.promotion ?? null;
+    return await new Promise<boolean>((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          setStoredBrowserCoords({ lat, lng });
+          setCoords({ lat, lng });
+          let ville: string | undefined;
+          let lieu: string | undefined;
+
+          try {
+            const response = await apiFetch(
+              `/api/geo/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
+            );
+            if (response.ok) {
+              const geo = (await response.json()) as {
+                city?: string | null;
+                district?: string | null;
+                road?: string | null;
+              };
+              ville = geo.city?.trim() || undefined;
+              lieu = [geo.district, geo.road]
+                .map((value) => value?.trim())
+                .filter(Boolean)
+                .join(" • ") || undefined;
+            }
+          } catch {
+            // keep coords even if reverse lookup fails
+          }
+
+          await apiRequest("PATCH", "/api/me/profile", {
+            lat,
+            lng,
+            ...(ville ? { ville } : {}),
+            ...(lieu ? { lieu } : {}),
+          });
+          await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+          toast({
+            title: lang === "en" ? "Location saved" : "Position enregistrée",
+            description:
+              ville || lieu
+                ? [ville, lieu].filter(Boolean).join(" • ")
+                : lang === "en"
+                  ? "GPS coordinates saved."
+                  : "Coordonnées GPS enregistrées.",
+          });
+          resolve(true);
+        },
+        () => {
+          toast({
+            title: lang === "en" ? "Permission denied" : "Permission refusée",
+          });
+          resolve(false);
+        },
+        { enableHighAccuracy: false, timeout: 8000 },
+      );
+    });
+  };
+
+  const getAnnonceBadges = (promotion: any) => {
+    const promo = promotion ?? null;
     const badges: Array<{ label: string; tone: "green" | "red" | "blue" | "neutral" }> = [];
     if (promo?.featured?.optionId) badges.push({ label: "PREMIUM", tone: "green" });
     if (promo?.autorenew?.optionId) badges.push({ label: "TOP", tone: "blue" });
     if (promo?.urgent?.optionId) badges.push({ label: "URGENT", tone: "red" });
     if (promo?.extended?.optionId) badges.push({ label: "PROLONGATION", tone: "neutral" });
     return badges;
-  }, [data?.annonce?.promotion]);
+  };
 
-  const annonceExpiry = useMemo(() => {
-    if (!data?.annonce?.createdAt) return null;
+  const getAnnonceExpiry = (annonce: { createdAt?: string; promotion?: any } | null | undefined) => {
+    if (!annonce?.createdAt) return null;
     if (!publishingConfig?.promote) return null;
-    const start = new Date(data.annonce.createdAt);
+    const start = new Date(annonce.createdAt);
     if (Number.isNaN(start.getTime())) return null;
 
-    const promo = data.annonce.promotion ?? {};
+    const promo = annonce.promotion ?? {};
     const promoteCfg = publishingConfig.promote ?? {};
     const findDays = (arr: any[], id: number) => {
       const o = Array.isArray(arr) ? arr.find((x) => Number(x.id) === Number(id)) : null;
@@ -211,24 +290,47 @@ export default function Dashboard() {
       end,
       remainingDays,
     };
-  }, [data?.annonce?.createdAt, data?.annonce?.promotion, publishingConfig?.promote]);
+  };
+
+  const annoncesList = useMemo(
+    () => (myAnnonces?.length ? myAnnonces : data?.annonce ? [{ ...data.annonce, active: true }] : []),
+    [myAnnonces, data?.annonce],
+  );
+  const activeAnnoncesCount = annoncesList.filter((annonce) => annonce.active).length;
+  const storyList = myStories ?? [];
+  const activeStoriesCount = storyList.filter((story) => story.active).length;
 
   const tokenBalance = Number(account?.tokensBalance ?? 0);
+  const applyStoryToggle = async (story: DashboardStory, nextActive: boolean) => {
+    await apiRequest("PATCH", `/api/me/stories/${story.id}`, { active: nextActive });
+    await queryClient.invalidateQueries({ queryKey: ["/api/me/stories"] });
+    await queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+    await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+  };
+
+  const handleStoryToggle = async (story: DashboardStory) => {
+    if (story.active && story.visibility === "public" && story.durationSeconds <= STORY_PUBLIC_MAX_SECONDS) {
+      setPendingStoryToggle(story);
+      return;
+    }
+    await applyStoryToggle(story, !story.active);
+  };
+
   const ensureEmailVerifiedForPublishing = (): boolean => {
     if (!account?.email) {
       toast({
-        title: "Ajoute un email d’abord",
-        description: "C’est requis pour publier une annonce (confirmation email).",
+        title: "Email requis",
+        description: "L’adresse email doit être définie et validée dès l’inscription.",
       });
-      scrollToId("section-account-email");
+      setLocation("/email/verify");
       return false;
     }
     if (account?.emailVerified === false) {
       toast({
         title: "Confirme ton email avant de publier",
-        description: "Va dans “Email du compte” puis renvoie l’email de confirmation.",
+        description: "Ouvre l’écran de vérification email puis confirme ton adresse.",
       });
-      scrollToId("section-account-email");
+      setLocation("/email/verify");
       return false;
     }
     return true;
@@ -273,87 +375,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-      <Dialog open={showEmailDialog} onOpenChange={setShowEmailDialog}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="text-base">
-              {lang === "en" ? "Add a recovery email" : "Ajoute un email de récupération"}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              {lang === "en"
-                ? "Optional but recommended. This email will only be used if you lose your password."
-                : "Optionnel mais recommandé. Cet email servira uniquement si tu perds ton mot de passe."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 pt-2">
-            <Input
-              type="email"
-              value={accountEmail}
-              onChange={(e) => setAccountEmail(e.target.value)}
-              placeholder={lang === "en" ? "your@email.com" : "ton.email@example.com"}
-              className="h-11"
-            />
-          </div>
-          <DialogFooter className="pt-3">
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => setShowEmailDialog(false)}
-            >
-              {lang === "en" ? "Later" : "Plus tard"}
-            </Button>
-            <Button
-              type="button"
-              onClick={async () => {
-                const trimmed = accountEmail.trim();
-                if (!trimmed) {
-                  toast({
-                    title: lang === "en" ? "Add an email first" : "Ajoute d’abord un email",
-                  });
-                  return;
-                }
-                const res = await apiRequest("PATCH", "/api/me/account", { email: trimmed });
-                if (!res.ok) {
-                  toast({
-                    title: lang === "en" ? "Unable to save email" : "Impossible d’enregistrer l’email",
-                  });
-                  return;
-                }
-                const json = await res.json().catch(() => null);
-                toast({
-                  title: lang === "en" ? "Email saved" : "Email enregistré",
-                });
-                if (json?.verificationEmailSent === true) {
-                  toast({
-                    title: lang === "en" ? "Verification email sent" : "Email de confirmation envoyé",
-                    description:
-                      lang === "en"
-                        ? "Check your inbox (and spam) then click the link."
-                        : "Vérifie ta boîte mail (et les spams) puis clique sur le lien.",
-                  });
-                } else if (json?.verificationEmailSent === false) {
-                  toast({
-                    title:
-                      lang === "en"
-                        ? "Unable to send verification email"
-                        : "Impossible d’envoyer l’email de confirmation",
-                    description:
-                      json?.verificationEmailError ??
-                      (lang === "en"
-                        ? "You can retry later from your dashboard."
-                        : "Tu pourras réessayer plus tard depuis ton dashboard."),
-                  });
-                }
-                setShowEmailDialog(false);
-                await queryClient.invalidateQueries({ queryKey: ["/api/me/account"] });
-              }}
-            >
-              {lang === "en" ? "Save" : "Enregistrer"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={showTokensDialog} onOpenChange={setShowTokensDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -442,20 +463,48 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <main className="px-4 pb-10 space-y-4 pt-4">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-md space-y-4">
-          {/* Top bar */}
-          <div className="flex items-center justify-between">
-            <div className="leading-tight">
-              <div className="text-2xl font-bold text-gradient tracking-tight">NIXYAH</div>
+      <Dialog open={Boolean(pendingStoryToggle)} onOpenChange={(open) => !open && setPendingStoryToggle(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">Masquer cette story ?</DialogTitle>
+            <DialogDescription className="text-xs">
+              Si cette publication correspond a ta story gratuite, la republier ensuite pourra demander des jetons.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Avant de continuer, l'utilisateur doit savoir qu'il pourra avoir besoin de recharger ses jetons avant de publier a nouveau.
+          </div>
+          <DialogFooter className="pt-2">
+            <Button variant="ghost" type="button" onClick={() => setPendingStoryToggle(null)}>
+              Annuler
+            </Button>
+            <Button
+              type="button"
+              onClick={async () => {
+                if (!pendingStoryToggle) return;
+                const story = pendingStoryToggle;
+                setPendingStoryToggle(null);
+                await applyStoryToggle(story, false);
+              }}
+            >
+              Masquer quand meme
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <main className="px-4 pb-10 space-y-5 pt-4">
+        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-md space-y-5">
+          <div className="flex items-center justify-between border-b border-border/70 pb-4">
+            <div className="space-y-1 leading-tight">
+              <img src={logoTitle} alt="NIXYAH" className="h-10 w-auto object-contain" draggable={false} />
               <div className="text-xs text-muted-foreground">{lang === "en" ? "Dashboard" : "Dashboard"}</div>
             </div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="rounded-full bg-gradient-to-r from-pink-500/90 via-fuchsia-500/90 to-purple-500/90 text-white shadow-lg px-3 h-9 gap-2"
+                  className="rounded-full px-3 h-9 gap-2"
                   data-testid="button-dashboard-menu"
                 >
                   <Menu className="w-4 h-4" />
@@ -464,7 +513,7 @@ export default function Dashboard() {
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className="w-64 glass border border-white/10 bg-background/80 backdrop-blur-xl"
+                className="w-64 border border-border bg-background"
               >
                 <DropdownMenuLabel className="text-xs uppercase tracking-wide text-muted-foreground">
                   {lang === "en" ? "Navigation" : "Navigation"}
@@ -489,12 +538,6 @@ export default function Dashboard() {
                   <Settings2 className="w-4 h-4" />
                   {t("settings")}
                 </DropdownMenuItem>
-                {adminMe?.ok ? (
-                  <DropdownMenuItem onClick={() => setLocation("/admin")}>
-                    <Settings2 className="w-4 h-4" />
-                    Admin
-                  </DropdownMenuItem>
-                ) : null}
                 <DropdownMenuItem
                   onClick={handleLogout}
                   disabled={loggingOut}
@@ -507,195 +550,293 @@ export default function Dashboard() {
             </DropdownMenu>
           </div>
 
-          {/* Hero card */}
-          <Card className="border-border overflow-hidden">
-            <CardContent className="p-4 space-y-4">
-              {isLoading ? (
-                <p className="text-sm text-muted-foreground">Chargement…</p>
-              ) : data ? (
-                <>
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={data.photoUrl || avatarUrl}
-                      alt={data.pseudo}
-                      className="w-16 h-16 rounded-2xl object-cover border border-border"
-                    />
-                    <div className="flex-1">
-                      <div className="text-base font-semibold text-foreground">{data.pseudo}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                        {account?.email && account?.emailVerified ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            <Mail className="w-3.5 h-3.5" />
-                            {lang === "en" ? "Email verified" : "Email vérifié"}
-                          </span>
-                        ) : account?.email ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                            <Mail className="w-3.5 h-3.5" />
-                            {lang === "en" ? "Email pending" : "Email à confirmer"}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/5 text-muted-foreground border border-border">
-                            <Mail className="w-3.5 h-3.5" />
-                            {lang === "en" ? "No email" : "Aucun email"}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {data.ville} • {data.age} ans
-                      </div>
-                      <div className="text-[11px] text-muted-foreground uppercase tracking-wide mt-1">
-                        {Boolean(data.visible ?? true) ? (lang === "en" ? "Visible" : "Visible") : (lang === "en" ? "Hidden" : "Invisible")}
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <div className="text-xs text-muted-foreground">{lang === "en" ? "Visibility" : "Visibilité"}</div>
-                      <Switch
-                        checked={Boolean(data.visible ?? true)}
-                        onCheckedChange={async (checked) => {
-                          await apiRequest("PATCH", "/api/me/profile", { visible: Boolean(checked) });
-                          await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
-                        }}
-                        data-testid="switch-profile-visible"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-border bg-card p-3">
-                      <div className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Coins className="w-4 h-4" /> {lang === "en" ? "Tokens" : "Jetons"}
-                      </div>
-                      <div className="text-xl font-bold text-foreground mt-1">{tokenBalance}</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
-                        {lang === "en" ? "Available balance" : "Solde disponible"}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-border bg-card p-3">
-                      <div className="text-xs text-muted-foreground flex items-center gap-2">
-                        <Megaphone className="w-4 h-4" /> {lang === "en" ? "Ad" : "Annonce"}
-                      </div>
-                      <div className="text-sm font-semibold text-foreground mt-1">
-                        {data.annonce ? (lang === "en" ? "Active" : "Active") : (lang === "en" ? "None" : "Aucune")}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
-                        {data.annonce ? data.annonce.title : (lang === "en" ? "Create your first ad" : "Publie ta première annonce")}
-                      </div>
-                    </div>
-                  </div>
-
-                  <Button
-                    className="w-full h-12 gap-2"
-                    onClick={() => {
-                      if (!ensureEmailVerifiedForPublishing()) return;
-                      setLocation("/annonce/new");
-                    }}
-                    data-testid="button-dashboard-primary-annonce"
-                  >
-                    <Plus className="w-5 h-5" />
-                    {data.annonce ? (lang === "en" ? "Update my ad" : "Mettre à jour mon annonce") : (lang === "en" ? "New ad" : "Nouvelle annonce")}
-                  </Button>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">Profil introuvable.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Mes annonces */}
-          <Card className="border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{lang === "en" ? "My ads" : "Mes annonces"}</CardTitle>
-              <CardDescription>
-                {lang === "en" ? "Visibility & boosters" : "Visibilité & boosters"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {data?.annonce ? (
-                <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-foreground">{data.annonce.title}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {annonceExpiry?.remainingDays !== null && annonceExpiry?.remainingDays !== undefined
-                          ? annonceExpiry.remainingDays > 0
-                            ? `Expire dans ${annonceExpiry.remainingDays} jour(s)`
-                            : "Expirée (estimation)"
-                          : "—"}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
-                      {annonceBadges.map((b) => (
-                        <span
-                          key={b.label}
-                          className={
-                            "px-2 py-1 rounded-full text-[11px] font-semibold border " +
-                            (b.tone === "green"
-                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              : b.tone === "red"
-                              ? "bg-red-500/10 text-red-400 border-red-500/20"
-                              : b.tone === "blue"
-                              ? "bg-sky-500/10 text-sky-400 border-sky-500/20"
-                              : "bg-white/5 text-muted-foreground border-white/10")
-                          }
-                        >
-                          {b.label}
+          <section className="space-y-4 border-b border-border/70 pb-5">
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">Chargement…</p>
+            ) : data ? (
+              <>
+                <div className="flex items-center gap-4">
+                  <img
+                    src={getProfilePhoto(data.photoUrl, data.accountType)}
+                    alt={data.pseudo}
+                    className="w-16 h-16 rounded-2xl object-cover border border-border"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-base font-semibold text-foreground">{data.pseudo}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      {account?.email && account?.emailVerified ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 px-2 py-0.5 text-emerald-400">
+                          <Mail className="w-3.5 h-3.5" />
+                          {lang === "en" ? "Email verified" : "Email vérifié"}
                         </span>
-                      ))}
+                      ) : account?.email ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 px-2 py-0.5 text-amber-400">
+                          <Mail className="w-3.5 h-3.5" />
+                          {lang === "en" ? "Email pending" : "Email à confirmer"}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+                          <Mail className="w-3.5 h-3.5" />
+                          {lang === "en" ? "No email" : "Aucun email"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {data.ville} • {data.age} ans
+                    </div>
+                    <div className="text-[11px] text-muted-foreground uppercase tracking-wide mt-1">
+                      {Boolean(data.visible ?? true) ? (lang === "en" ? "Visible" : "Visible") : (lang === "en" ? "Hidden" : "Invisible")}
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      className="h-11"
-                      onClick={() => {
-                        if (!ensureEmailVerifiedForPublishing()) return;
-                        setLocation("/annonce/new");
+                  <div className="flex flex-col items-end gap-1">
+                    <div className="text-xs text-muted-foreground">{lang === "en" ? "Visibility" : "Visibilité"}</div>
+                    <Switch
+                      checked={Boolean(data.visible ?? true)}
+                      onCheckedChange={async (checked) => {
+                        await apiRequest("PATCH", "/api/me/profile", { visible: Boolean(checked) });
+                        await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
                       }}
-                    >
-                      {lang === "en" ? "Manage" : "Gérer"}
-                    </Button>
-                    <Button
-                      className="h-11 gap-2"
-                      onClick={() => {
-                        if (!ensureEmailVerifiedForPublishing()) return;
-                        setLocation("/annonce/new");
-                      }}
-                    >
-                      <Rocket className="w-4 h-4" />
-                      {lang === "en" ? "Boost" : "Booster"}
-                    </Button>
+                      data-testid="switch-profile-visible"
+                    />
                   </div>
                 </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <div className="rounded-full bg-muted/30 px-3 py-2">
+                    <div className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Coins className="w-4 h-4" /> {lang === "en" ? "Tokens" : "Jetons"}
+                    </div>
+                    <div className="mt-1 text-base font-semibold text-foreground">{tokenBalance}</div>
+                  </div>
+                  <div className="rounded-full bg-muted/30 px-3 py-2">
+                    <div className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Megaphone className="w-4 h-4" /> {lang === "en" ? "Ad" : "Annonce"}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-foreground">
+                      {annoncesList.length
+                        ? `${activeAnnoncesCount} ${lang === "en" ? "active" : "active"}${activeAnnoncesCount > 1 ? "s" : ""}`
+                        : (lang === "en" ? "None" : "Aucune")}
+                    </div>
+                  </div>
+                </div>
+
+                <Button
+                  className="w-full h-12 gap-2 rounded-2xl"
+                  onClick={() => {
+                    if (!ensureEmailVerifiedForPublishing()) return;
+                    setLocation("/annonce/new?mode=new");
+                  }}
+                  data-testid="button-dashboard-primary-annonce"
+                >
+                  <Plus className="w-5 h-5" />
+                  {data.annonce ? (lang === "en" ? "Post another ad" : "Publier une autre annonce") : (lang === "en" ? "New ad" : "Nouvelle annonce")}
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Profil introuvable.</p>
+            )}
+          </section>
+
+          <section className="space-y-3 border-b border-border/70 pb-5">
+            <div>
+              <div className="text-base font-semibold text-foreground">{lang === "en" ? "My ads" : "Mes annonces"}</div>
+              <div className="text-sm text-muted-foreground">
+                {lang === "en" ? "Visibility & boosters" : "Visibilité & boosters"}
+              </div>
+            </div>
+              {annoncesList.length ? (
+                <div className="space-y-1">
+                  {annoncesList.map((annonce) => {
+                    const badges = getAnnonceBadges(annonce.promotion);
+                    const expiry = getAnnonceExpiry(annonce);
+                    const isVisibleOnProfile = data?.annonce?.id === annonce.id;
+
+                    return (
+                      <div key={annonce.id} className="space-y-3 border-b border-border/70 py-4 last:border-b-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-semibold text-foreground">{annonce.title}</div>
+                              <span className={`rounded-full border px-2 py-0.5 text-[10px] ${annonce.active ? "border-emerald-500/20 text-emerald-400" : "border-border text-muted-foreground"}`}>
+                                {annonce.active ? (lang === "en" ? "Active" : "Active") : (lang === "en" ? "Hidden" : "Masquée")}
+                              </span>
+                              {isVisibleOnProfile ? (
+                                <span className="rounded-full border border-primary/20 px-2 py-0.5 text-[10px] text-primary">
+                                  {lang === "en" ? "Shown on profile" : "Visible sur le profil"}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {expiry?.remainingDays !== null && expiry?.remainingDays !== undefined
+                                ? expiry.remainingDays > 0
+                                  ? `Expire dans ${expiry.remainingDays} jour(s)`
+                                  : "Expirée (estimation)"
+                                : annonce.createdAt
+                                ? new Date(annonce.createdAt).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR")
+                                : "—"}
+                            </div>
+                            {annonce.body ? (
+                              <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">{annonce.body}</div>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            {badges.map((b) => (
+                              <span
+                                key={`${annonce.id}-${b.label}`}
+                                className={
+                                  "px-2 py-1 rounded-full text-[11px] font-semibold border " +
+                                  (b.tone === "green"
+                                    ? "text-emerald-400 border-emerald-500/20"
+                                    : b.tone === "red"
+                                    ? "text-red-400 border-red-500/20"
+                                    : b.tone === "blue"
+                                    ? "text-sky-400 border-sky-500/20"
+                                    : "text-muted-foreground border-border")
+                                }
+                              >
+                                {b.label}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {isVisibleOnProfile ? (
+                            <Button
+                              variant="outline"
+                              className="h-11 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                              onClick={() => {
+                                if (!ensureEmailVerifiedForPublishing()) return;
+                                setLocation("/annonce/new?mode=edit");
+                              }}
+                            >
+                              {lang === "en" ? "Manage current ad" : "Gérer l’annonce visible"}
+                            </Button>
+                          ) : (
+                            <div className="hidden sm:block" />
+                          )}
+                          <Button
+                            variant={annonce.active ? "outline" : "default"}
+                            className={annonce.active ? "h-11 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" : "h-11 rounded-2xl"}
+                            onClick={async () => {
+                              await apiRequest("PATCH", `/api/annonces/${annonce.id}`, { active: !annonce.active });
+                              await queryClient.invalidateQueries({ queryKey: ["/api/me/annonces"] });
+                              await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+                            }}
+                          >
+                            {annonce.active ? (lang === "en" ? "Unpublish" : "Dépublier") : (lang === "en" ? "Republish" : "Republier")}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
-                <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+                <div className="rounded-2xl bg-muted/20 p-4 space-y-3">
                   <div className="text-sm font-semibold text-foreground">
                     {lang === "en" ? "No active ad" : "Aucune annonce active"}
                   </div>
                   <Button
-                    className="h-11 w-full"
+                    className="h-11 w-full rounded-2xl"
                     onClick={() => {
                       if (!ensureEmailVerifiedForPublishing()) return;
-                      setLocation("/annonce/new");
+                      setLocation("/annonce/new?mode=new");
                     }}
                   >
                     {lang === "en" ? "Publish now" : "Publier maintenant"}
                   </Button>
                 </div>
               )}
-            </CardContent>
-          </Card>
+          </section>
 
-          {/* Quick actions */}
-          <Card className="border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">{lang === "en" ? "Quick actions" : "Actions rapides"}</CardTitle>
-              <CardDescription>{lang === "en" ? "Do the essentials fast" : "L’essentiel, en 1 clic"}</CardDescription>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-2">
+          <section className="space-y-3 border-b border-border/70 pb-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-foreground">{lang === "en" ? "Stories & private videos" : "Stories & vidéos privées"}</div>
+                <div className="text-sm text-muted-foreground">
+                  {storyList.length
+                    ? `${activeStoriesCount} ${lang === "en" ? "active publication(s)" : "publication(s) active(s)"}`
+                    : (lang === "en" ? "Publish short stories or private videos" : "Publie des stories courtes ou des vidéos privées")}
+                </div>
+              </div>
+              <Button className="rounded-2xl" onClick={() => setLocation("/stories/new")}>
+                <Clapperboard className="mr-2 h-4 w-4" />
+                {lang === "en" ? "Publish" : "Publier"}
+              </Button>
+            </div>
+
+            {storyList.length ? (
+              <div className="space-y-1">
+                {storyList.slice(0, 5).map((story) => (
+                  <div key={story.id} className="space-y-3 border-b border-border/70 py-4 last:border-b-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${story.visibility === "public" ? "border-primary/20 text-primary" : "border-amber-500/20 text-amber-400"}`}>
+                            {story.visibility === "public" ? "Story 24h" : "Privée"}
+                          </span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${story.active ? "border-emerald-500/20 text-emerald-400" : "border-border text-muted-foreground"}`}>
+                            {story.active ? (lang === "en" ? "Active" : "Active") : (lang === "en" ? "Hidden" : "Masquée")}
+                          </span>
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {story.durationSeconds}s
+                          </span>
+                        </div>
+                        <div className="mt-2 text-sm font-semibold text-foreground">
+                          {story.saleTitle || story.caption || (story.visibility === "public" ? "Story publiée" : "Vidéo privée")}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {story.visibility === "public"
+                            ? story.expiresAt
+                              ? `Expire le ${new Date(story.expiresAt).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR")}`
+                              : "Visible pendant 24h"
+                            : story.salePrice
+                              ? `${story.salePrice}${story.saleKind === "product" ? " • Produit" : " • Vidéo"}`
+                              : "Vidéo privée simple"}
+                        </div>
+                      </div>
+                      <Button
+                        variant={story.active ? "outline" : "default"}
+                        className={story.active ? "h-10 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" : "h-10 rounded-2xl"}
+                        onClick={() => handleStoryToggle(story)}
+                      >
+                        {story.active ? (lang === "en" ? "Hide" : "Masquer") : (lang === "en" ? "Republish" : "Réactiver")}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-muted/20 p-4 space-y-3">
+                <div className="text-sm font-semibold text-foreground">
+                  {lang === "en" ? "No story yet" : "Aucune story pour le moment"}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {lang === "en"
+                    ? "Short clips stay public for 24h. Longer videos become private offers."
+                    : "Les clips courts restent publics 24h. Les vidéos plus longues deviennent des offres privées."}
+                </div>
+                <div className="text-xs text-emerald-600">
+                  {lang === "en"
+                    ? "Your first public story up to 10 seconds is free."
+                    : "Ta première story publique jusqu'à 10 secondes est offerte."}
+                </div>
+                <Button className="h-11 w-full rounded-2xl" onClick={() => setLocation("/stories/new")}>
+                  {lang === "en" ? "Create my first story" : "Créer ma première story"}
+                </Button>
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-3 border-b border-border/70 pb-5">
+            <div>
+              <div className="text-base font-semibold text-foreground">{lang === "en" ? "Quick actions" : "Actions rapides"}</div>
+              <div className="text-sm text-muted-foreground">{lang === "en" ? "Do the essentials fast" : "L’essentiel, en 1 clic"}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2"
+                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                 onClick={() => {
                   setShowTokensDialog(true);
                 }}
@@ -705,10 +846,10 @@ export default function Dashboard() {
               </Button>
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2"
+                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                 onClick={() => {
                   if (!ensureEmailVerifiedForPublishing()) return;
-                  setLocation("/annonce/new");
+                  setLocation("/annonce/new?mode=edit");
                 }}
               >
                 <Rocket className="w-4 h-4" />
@@ -716,7 +857,15 @@ export default function Dashboard() {
               </Button>
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2"
+                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                onClick={() => setLocation("/stories/new")}
+              >
+                <Clapperboard className="w-4 h-4" />
+                {lang === "en" ? "Post a story" : "Poster une story"}
+              </Button>
+              <Button
+                variant="outline"
+                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                 onClick={() => scrollToId("section-advanced")}
               >
                 <Eye className="w-4 h-4" />
@@ -724,18 +873,17 @@ export default function Dashboard() {
               </Button>
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2"
+                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                 onClick={() => setLocation("/settings")}
               >
                 <Settings2 className="w-4 h-4" />
                 {lang === "en" ? "Settings" : "Paramètres"}
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          {/* Advanced settings (kept, but not the main dashboard feel) */}
-          <details id="section-advanced" className="rounded-2xl border border-border bg-card">
-            <summary className="px-4 py-4 cursor-pointer select-none">
+          <details id="section-advanced" className="border-b border-border/70 pb-4">
+            <summary className="cursor-pointer select-none py-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold text-foreground">
                   {lang === "en" ? "Advanced" : "Avancé"}
@@ -743,7 +891,7 @@ export default function Dashboard() {
                 <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
               </div>
             </summary>
-            <div className="px-4 pb-4 space-y-3">
+            <div className="space-y-4 pb-4">
               <div className="flex items-center justify-between gap-4">
                 <Label className="text-sm text-foreground">{t("showProfile")}</Label>
                 <Switch
@@ -755,8 +903,8 @@ export default function Dashboard() {
                 />
               </div>
 
-              <details id="section-contact" className="rounded-2xl border border-border bg-background/40">
-                <summary className="px-4 py-4 cursor-pointer select-none">
+              <details id="section-contact" className="border-b border-border/70 pb-4">
+                <summary className="cursor-pointer select-none py-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       <Phone className="w-4 h-4 text-muted-foreground" />
@@ -765,7 +913,7 @@ export default function Dashboard() {
                     <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
                   </div>
                 </summary>
-                <div className="px-4 pb-4 space-y-4">
+                <div className="space-y-4 pb-1">
                   <div className="space-y-2">
                     <Label>{lang === "en" ? "Preferred method" : "Méthode mise en avant"}</Label>
                     <div className="grid grid-cols-2 gap-3">
@@ -773,6 +921,7 @@ export default function Dashboard() {
                         variant={contactPreference === "whatsapp" ? "default" : "outline"}
                         onClick={() => setContactPreference("whatsapp")}
                         type="button"
+                        className={contactPreference === "whatsapp" ? "rounded-2xl" : "rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"}
                       >
                         WhatsApp
                       </Button>
@@ -780,6 +929,7 @@ export default function Dashboard() {
                         variant={contactPreference === "telegram" ? "default" : "outline"}
                         onClick={() => setContactPreference("telegram")}
                         type="button"
+                        className={contactPreference === "telegram" ? "rounded-2xl" : "rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"}
                       >
                         Telegram
                       </Button>
@@ -817,7 +967,7 @@ export default function Dashboard() {
                   </div>
                   <Button
                     variant="outline"
-                    className="w-full h-12"
+                    className="w-full h-12 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                     onClick={async () => {
                       await apiRequest("PATCH", "/api/me/profile", {
                         phone: phone.trim() ? phone.trim() : null,
@@ -834,8 +984,8 @@ export default function Dashboard() {
                 </div>
               </details>
 
-              <details id="section-location" className="rounded-2xl border border-border bg-background/40">
-                <summary className="px-4 py-4 cursor-pointer select-none">
+              <details id="section-location" className="pb-1">
+                <summary className="cursor-pointer select-none py-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       <MapPin className="w-4 h-4 text-muted-foreground" />
@@ -844,31 +994,11 @@ export default function Dashboard() {
                     <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
                   </div>
                 </summary>
-                <div className="px-4 pb-4 space-y-3">
+                <div className="space-y-3 pb-1">
                   <Button
                     variant="secondary"
-                    className="w-full h-12"
-                    onClick={async () => {
-                      if (!navigator.geolocation) {
-                        toast({ title: lang === "en" ? "Geolocation unavailable" : "Géolocalisation indisponible" });
-                        return;
-                      }
-                      navigator.geolocation.getCurrentPosition(
-                        async (pos) => {
-                          const lat = pos.coords.latitude;
-                          const lng = pos.coords.longitude;
-                          setCoords({ lat, lng });
-                          await apiRequest("PATCH", "/api/me/profile", { lat, lng });
-                          toast({ title: lang === "en" ? "Location saved" : "Position enregistrée" });
-                        },
-                        () => {
-                          toast({
-                            title: lang === "en" ? "Permission denied" : "Permission refusée",
-                          });
-                        },
-                        { enableHighAccuracy: false, timeout: 8000 },
-                      );
-                    }}
+                    className="h-12 w-full rounded-2xl"
+                    onClick={persistBrowserLocation}
                   >
                     {lang === "en" ? "Use my location" : "Utiliser ma position"}
                   </Button>
@@ -880,6 +1010,11 @@ export default function Dashboard() {
                       </span>
                     </p>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    {lang === "en"
+                      ? "When the address is detected, your city and district are saved automatically."
+                      : "Quand l’adresse est détectée, la ville et le quartier sont enregistrés automatiquement."}
+                  </p>
                   <div className="flex items-center justify-between pt-2">
                     <div className="text-sm text-muted-foreground">
                       {lang === "en"
@@ -890,6 +1025,13 @@ export default function Dashboard() {
                       checked={showLocation}
                       onCheckedChange={async (v) => {
                         const value = Boolean(v);
+                        if (value && !coords) {
+                          const saved = await persistBrowserLocation();
+                          if (!saved) {
+                            setShowLocation(false);
+                            return;
+                          }
+                        }
                         setShowLocation(value);
                         await apiRequest("PATCH", "/api/me/profile", { showLocation: value });
                         await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
@@ -903,22 +1045,20 @@ export default function Dashboard() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="mx-auto max-w-md">
-          <Card className="border-border">
-            <CardHeader className="space-y-1">
-              <CardTitle className="text-base flex items-center gap-2">
+          <section className="space-y-3 border-b border-border/70 pb-5">
+              <div className="text-base font-semibold text-foreground flex items-center gap-2">
                 <HelpCircle className="w-4 h-4 text-primary" />
                 {lang === "en" ? "Help & support" : "Aide & support"}
-              </CardTitle>
-              <CardDescription>
+              </div>
+              <div className="text-sm text-muted-foreground">
                 {lang === "en"
                   ? "Find answers, report an issue or reach the NIXYAH team."
                   : "Trouve des réponses, signale un bug ou contacte l’équipe NIXYAH."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+              </div>
+            <div className="space-y-3">
               <Button
                 variant="outline"
-                className="w-full h-11 justify-between"
+                className="h-11 w-full justify-between rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                 onClick={() => {
                   const email = support?.resetEmail;
                   if (!email) {
@@ -939,7 +1079,7 @@ export default function Dashboard() {
 
               <Button
                 variant="outline"
-                className="w-full h-11 justify-between"
+                className="h-11 w-full justify-between rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
                 onClick={() => {
                   const telegram = support?.telegramUrl;
                   if (telegram) {
@@ -966,23 +1106,22 @@ export default function Dashboard() {
               </Button>
 
               <div className="grid grid-cols-2 gap-2 pt-1">
-                <Button variant="outline" className="h-10 justify-start gap-2" onClick={() => setLocation("/conditions")}>
+                <Button variant="outline" className="h-10 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" onClick={() => setLocation("/conditions")}>
                   <HelpCircle className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs">{lang === "en" ? "FAQ / Help" : "FAQ / Aide"}</span>
+                  <span className="text-xs">{lang === "en" ? "Terms of use" : "Conditions d'utilisation"}</span>
                 </Button>
-                <Button variant="outline" className="h-10 justify-start gap-2" onClick={() => setLocation("/conditions")}>
+                <Button variant="outline" className="h-10 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" onClick={() => setLocation("/privacy")}>
                   <Info className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs">{lang === "en" ? "Terms & privacy" : "Conditions & confidentialité"}</span>
+                  <span className="text-xs">{lang === "en" ? "Privacy & cookies" : "Confidentialité & cookies"}</span>
                 </Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </motion.div>
 
-        {/* Keep account email editor accessible (optional) */}
         <div className="mx-auto max-w-md">
-              <details id="section-account-email" className="rounded-2xl border border-border bg-card">
-                <summary className="px-4 py-4 cursor-pointer select-none">
+              <details id="section-account-email" className="border-b border-border/70 pb-4">
+                <summary className="cursor-pointer select-none py-4">
                   <div className="flex items-center justify-between">
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2 text-base font-semibold text-foreground">
@@ -1000,8 +1139,8 @@ export default function Dashboard() {
                     <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
                   </div>
                 </summary>
-                <div className="px-4 pb-4 space-y-3">
-                  <div className="rounded-2xl border border-border bg-background/40 p-3">
+                <div className="space-y-3 pb-4">
+                  <div className="rounded-2xl bg-muted/20 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-xs font-semibold text-foreground">
@@ -1017,10 +1156,10 @@ export default function Dashboard() {
                         className={
                           "px-2 py-1 rounded-full text-[11px] font-semibold border " +
                           (account?.email && account?.emailVerified
-                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                            ? "text-emerald-400 border-emerald-500/20"
                             : account?.email
-                              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                              : "bg-white/5 text-muted-foreground border-white/10")
+                              ? "text-amber-400 border-amber-500/20"
+                              : "text-muted-foreground border-border")
                         }
                       >
                         {account?.email && account?.emailVerified
@@ -1045,102 +1184,21 @@ export default function Dashboard() {
                       </div>
                     )}
                   </div>
-
-                  <Input
-                    type="email"
-                    value={accountEmail}
-                    onChange={(e) => setAccountEmail(e.target.value)}
-                    placeholder={lang === "en" ? "your@email.com" : "ton.email@example.com"}
-                    className="h-11"
-                  />
+                  <div className="rounded-2xl border border-border/70 bg-background px-4 py-3 text-sm text-foreground">
+                    {account?.email ?? (lang === "en" ? "Email missing on this account" : "Email absent sur ce compte")}
+                  </div>
                   <p className="text-[11px] text-muted-foreground">
                     {lang === "en"
-                      ? "This email is not shown on your profile. It only helps you reset your password."
-                      : "Cet email n’est pas affiché sur ton profil. Il sert uniquement à t’aider à récupérer ton mot de passe."}
+                      ? "Email setup now happens during registration. If confirmation is still pending, continue from the dedicated verification screen."
+                      : "L’email est désormais saisi à l’inscription. Si la confirmation est encore en attente, poursuis depuis l’écran dédié à la vérification."}
                   </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      className="h-11"
-                      disabled={!account?.email || Boolean(account?.emailVerified)}
-                      onClick={async () => {
-                        const res = await apiRequest("POST", "/api/email/resend");
-                        const json = await res.json().catch(() => ({}));
-                        if (!res.ok) {
-                          toast({
-                            title:
-                              lang === "en"
-                                ? "Unable to resend verification"
-                                : "Impossible de renvoyer l’email",
-                            description: json?.message ?? (lang === "en" ? "Try again later." : "Réessaie plus tard."),
-                          });
-                          return;
-                        }
-                        toast({
-                          title:
-                            json?.alreadyVerified
-                              ? lang === "en"
-                                ? "Already verified"
-                                : "Déjà vérifié"
-                              : lang === "en"
-                                ? "Verification email sent"
-                                : "Email de confirmation envoyé",
-                          description:
-                            lang === "en"
-                              ? "Check your inbox (and spam) then click the link."
-                              : "Vérifie ta boîte mail (et les spams) puis clique sur le lien.",
-                        });
-                      }}
-                    >
-                      {lang === "en" ? "Resend" : "Renvoyer"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="h-11"
-                      onClick={async () => {
-                        const trimmed = accountEmail.trim();
-                        const body =
-                          trimmed.length === 0
-                            ? { email: null as string | null }
-                            : { email: trimmed };
-                        const res = await apiRequest("PATCH", "/api/me/account", body);
-                        if (!res.ok) {
-                          toast({
-                            title: lang === "en" ? "Unable to save email" : "Impossible d’enregistrer l’email",
-                          });
-                          return;
-                        }
-                        const json = await res.json().catch(() => null);
-                        toast({
-                          title: lang === "en" ? "Email saved" : "Email enregistré",
-                        });
-                        if (json?.verificationEmailSent === true) {
-                          toast({
-                            title: lang === "en" ? "Verification email sent" : "Email de confirmation envoyé",
-                            description:
-                              lang === "en"
-                                ? "Check your inbox (and spam) then click the link."
-                                : "Vérifie ta boîte mail (et les spams) puis clique sur le lien.",
-                          });
-                        } else if (json?.verificationEmailSent === false) {
-                          toast({
-                            title:
-                              lang === "en"
-                                ? "Unable to send verification email"
-                                : "Impossible d’envoyer l’email de confirmation",
-                            description:
-                              json?.verificationEmailError ??
-                              (lang === "en"
-                                ? "You can retry later from your dashboard."
-                                : "Tu pourras réessayer plus tard depuis ton dashboard."),
-                          });
-                        }
-                        await queryClient.invalidateQueries({ queryKey: ["/api/me/account"] });
-                      }}
-                    >
-                      {lang === "en" ? "Save" : "Enregistrer"}
-                    </Button>
-                  </div>
+                  <Button
+                    variant="outline"
+                    className="h-11 w-full rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                    onClick={() => setLocation("/email/verify")}
+                  >
+                    {lang === "en" ? "Open email verification" : "Ouvrir la vérification email"}
+                  </Button>
                 </div>
               </details>
         </div>

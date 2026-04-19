@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, BadgeCheck, Crown, MapPin, Play, Sparkles } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Calendar, Crown, MapPin, Play, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
-import avatarUrl from "@assets/avatar.png";
+import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
 
 type ApiProfile = {
   id: string;
@@ -24,6 +24,7 @@ type ApiProfile = {
   distanceKm?: number | null;
   accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
   latestAnnonce?: { id: string; title: string; createdAt: string; badges?: string[] } | null;
+  disponibilite?: { date: string; heureDebut: string; duree: string } | null;
 };
 
 function scoreProfile(p: ApiProfile): number {
@@ -55,6 +56,17 @@ function formatRelativeTime(iso: string, lang: "fr" | "en") {
   if (diffH < 24) return lang === "en" ? `${diffH}h ago` : `il y a ${diffH}h`;
   const diffD = Math.round(diffH / 24);
   return lang === "en" ? `${diffD}d ago` : `il y a ${diffD}j`;
+}
+
+function formatAvailability(
+  disponibilite: ApiProfile["disponibilite"],
+  lang: "fr" | "en",
+) {
+  if (!disponibilite?.date) {
+    return lang === "en" ? "Availability on request" : "Disponibilite sur demande";
+  }
+  const parts = [disponibilite.date, disponibilite.heureDebut, disponibilite.duree].filter(Boolean);
+  return parts.join(" • ");
 }
 
 function VipHero({
@@ -102,9 +114,10 @@ function VipHero({
   const top = badges.includes("TOP");
   const urgent = badges.includes("URGENT");
   const title = p.latestAnnonce?.title?.trim() ? p.latestAnnonce.title : `${p.pseudo} • ${p.age}`;
+  const availability = formatAvailability(p.disponibilite, lang);
 
   return (
-    <div className="relative rounded-3xl overflow-hidden border border-amber-500/20 bg-gradient-to-b from-amber-500/10 via-card/60 to-card shadow-[0_18px_60px_-35px_rgba(245,158,11,0.65)]">
+    <div className="relative overflow-hidden rounded-3xl border border-amber-500/20 bg-[linear-gradient(180deg,rgba(41,30,13,0.98),rgba(23,20,16,0.98))] shadow-[0_20px_70px_-35px_rgba(245,158,11,0.55)]">
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute -top-24 -right-24 w-56 h-56 rounded-full bg-amber-500/20 blur-3xl" />
         <div className="absolute -bottom-28 -left-28 w-64 h-64 rounded-full bg-fuchsia-500/10 blur-3xl" />
@@ -112,11 +125,11 @@ function VipHero({
 
       <div className="p-4 sm:p-5">
         <div className="flex items-center justify-between gap-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/30 text-white px-3 py-1 text-xs backdrop-blur">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white backdrop-blur">
             <Crown className="w-4 h-4 text-amber-300" />
             {lang === "en" ? "VIP selection" : "Sélection VIP"}
           </div>
-          <div className="text-[11px] text-muted-foreground">
+          <div className="text-[11px] text-white/55">
             {assets.length ? `${index + 1}/${assets.length}` : "—"}
           </div>
         </div>
@@ -126,10 +139,10 @@ function VipHero({
           onClick={() => onOpen(p.id)}
           className="mt-3 block w-full text-left"
         >
-          <div className="text-lg font-semibold text-foreground leading-snug">
+          <div className="text-lg font-semibold leading-snug text-white">
             {title}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-white/70">
             <span className="inline-flex items-center gap-1">
               <MapPin className="w-3.5 h-3.5" /> {p.ville}
               {p.lieu ? ` • ${p.lieu}` : ""}
@@ -157,24 +170,28 @@ function VipHero({
               </span>
             ) : null}
           </div>
+          <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-white/6 px-3 py-1 text-[11px] text-white/75 ring-1 ring-white/10">
+            <Calendar className="h-3.5 w-3.5 text-amber-300" />
+            {availability}
+          </div>
         </button>
 
         <div
           ref={trackRef}
           onScroll={onScroll}
-          className="mt-4 flex overflow-x-auto snap-x snap-mandatory scroll-smooth rounded-2xl border border-border bg-muted/20"
+          className="mt-4 flex overflow-x-auto snap-x snap-mandatory scroll-smooth rounded-2xl border border-white/10 bg-black/20"
         >
           {assets.length ? (
             assets.map((a, i) => (
               <div key={`${a.type}-${a.url}-${i}`} className="relative snap-start shrink-0 w-full aspect-[4/3]">
                 <img
-                  src={a.type === "photo" ? a.url : (p.photoUrl || avatarUrl)}
+                  src={a.type === "photo" ? a.url : getProfilePhoto(p.photoUrl, p.accountType)}
                   alt={`${p.pseudo} ${i + 1}`}
                   className="absolute inset-0 w-full h-full object-cover"
                   onError={(e) => {
                     const img = e.currentTarget;
                     img.onerror = null;
-                    img.src = avatarUrl;
+                    img.src = getDefaultProfilePhoto(p.accountType);
                   }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
@@ -204,10 +221,10 @@ function VipHero({
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-2">
-          <div className="text-[11px] text-muted-foreground line-clamp-1">
+          <div className="text-[11px] text-white/60 line-clamp-1">
             {p.description ?? "—"}
           </div>
-          <Button size="sm" className="rounded-full" onClick={() => onOpen(p.id)}>
+          <Button size="sm" className="rounded-full bg-white text-black hover:bg-white/90" onClick={() => onOpen(p.id)}>
             {lang === "en" ? "View" : "Voir"}
           </Button>
         </div>
@@ -222,22 +239,23 @@ function VipMiniCard({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; l
   const top = badges.includes("TOP");
   const urgent = badges.includes("URGENT");
   const photoCount = Array.isArray(p.photos) ? p.photos.length : 0;
+  const availability = formatAvailability(p.disponibilite, lang);
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="shrink-0 w-[230px] rounded-3xl overflow-hidden border border-amber-500/20 bg-gradient-to-b from-amber-500/10 via-card/60 to-card shadow-[0_18px_60px_-45px_rgba(245,158,11,0.55)]"
+      className="shrink-0 w-[250px] overflow-hidden rounded-[28px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(41,30,13,0.96),rgba(23,20,16,0.98))] shadow-[0_18px_60px_-45px_rgba(245,158,11,0.45)]"
     >
       <div className="relative h-[150px]">
         <img
-          src={p.photoUrl || avatarUrl}
+          src={getProfilePhoto(p.photoUrl, p.accountType)}
           alt={p.pseudo}
           className="absolute inset-0 w-full h-full object-cover"
           onError={(e) => {
             const img = e.currentTarget;
             img.onerror = null;
-            img.src = avatarUrl;
+            img.src = getDefaultProfilePhoto(p.accountType);
           }}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
@@ -264,6 +282,7 @@ function VipMiniCard({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; l
       </div>
 
       <div className="p-3 text-left">
+        <div className="text-[11px] text-white/65 line-clamp-1">{availability}</div>
         <div className="flex flex-wrap gap-1.5">
           {p.verified ? (
             <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
@@ -287,7 +306,7 @@ function VipMiniCard({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; l
             </span>
           ) : null}
         </div>
-        <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">{p.description ?? "—"}</div>
+        <div className="mt-2 text-[11px] text-white/60 line-clamp-2">{p.description ?? "—"}</div>
       </div>
     </button>
   );
@@ -300,23 +319,24 @@ function RegularRow({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; la
   const top = badges.includes("TOP");
   const photoCount = Array.isArray(p.photos) ? p.photos.length : 0;
   const title = p.latestAnnonce?.title?.trim() ? p.latestAnnonce.title : `${p.pseudo} • ${p.age}`;
+  const availability = formatAvailability(p.disponibilite, lang);
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group w-full text-left rounded-3xl border border-border bg-card/70 hover:bg-card transition-colors overflow-hidden shadow-sm hover:shadow-md"
+      className="group w-full overflow-hidden border-b border-border/70 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/10"
     >
-      <div className="flex gap-3 p-3">
-        <div className="relative w-[92px] h-[112px] rounded-2xl overflow-hidden border border-border shrink-0 bg-muted/30">
+      <div className="flex gap-3">
+        <div className="relative h-[112px] w-[92px] shrink-0 overflow-hidden rounded-2xl bg-muted/30">
           <img
-            src={p.photoUrl || avatarUrl}
+            src={getProfilePhoto(p.photoUrl, p.accountType)}
             alt={p.pseudo}
             className="absolute inset-0 w-full h-full object-cover"
             onError={(e) => {
               const img = e.currentTarget;
               img.onerror = null;
-              img.src = avatarUrl;
+              img.src = getDefaultProfilePhoto(p.accountType);
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
@@ -364,10 +384,14 @@ function RegularRow({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; la
               </span>
             ) : null}
             {(p.services ?? []).slice(0, 2).map((s) => (
-              <span key={s} className="px-2 py-0.5 rounded-full text-[10px] bg-muted/30 text-muted-foreground border border-border">
+              <span key={s} className="px-2 py-0.5 rounded-full text-[10px] bg-muted/30 text-muted-foreground">
                 {s}
               </span>
             ))}
+          </div>
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted/35 px-2.5 py-1 text-[10px] text-foreground/80">
+            <Calendar className="h-3 w-3 text-muted-foreground" />
+            {availability}
           </div>
           <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">{p.description ?? "—"}</div>
         </div>
@@ -437,7 +461,7 @@ export default function Vip() {
   return (
     <div className="min-h-screen bg-background">
       <div className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
-        <div className="mx-auto max-w-md flex items-center justify-between gap-2">
+        <div className="mx-auto flex max-w-[980px] items-center justify-between gap-2">
           <Button
             variant="secondary"
             size="icon"
@@ -447,14 +471,14 @@ export default function Vip() {
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <div className="text-center flex-1">
-            <div className="text-sm font-semibold text-foreground">
+          <div className="flex-1 text-center">
+            <div className="text-sm font-semibold tracking-tight text-foreground">
               {lang === "en" ? "VIP Escorts & VIP Masseuses" : "Escortes VIP & Masseuses VIP"}
             </div>
             <div className="text-[11px] text-muted-foreground">
               {lang === "en"
-                ? "Premium profiles stay on top."
-                : "Les profils premium restent en premier."}
+                ? "Priority profiles with premium visibility."
+                : "Profils prioritaires a visibilite premium."}
             </div>
           </div>
           <Button
@@ -470,10 +494,10 @@ export default function Vip() {
       </div>
 
       <main className="px-4 pb-10 pt-4">
-        <div className="mx-auto max-w-md space-y-4">
+        <div className="mx-auto max-w-[980px] space-y-5">
           <VipHero p={selectedVip} lang={lang} onOpen={openProfile} />
 
-          <div className="sticky top-[calc(env(safe-area-inset-top)+4.25rem)] z-20 -mx-4 px-4 py-3 bg-background/85 backdrop-blur border-y border-border">
+          <div className="sticky top-[calc(env(safe-area-inset-top)+4.25rem)] z-20 -mx-4 border-y border-border bg-background/85 px-4 py-3 backdrop-blur">
             <div className="flex items-center justify-between gap-2">
               <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                 <Crown className="w-4 h-4 text-amber-400" />
@@ -494,7 +518,7 @@ export default function Vip() {
                 <div className="text-xs text-muted-foreground">{lang === "en" ? "Loading VIP…" : "Chargement VIP…"}</div>
               ) : vip.length ? (
                 vip.map((p) => (
-                  <div key={p.id} onClick={() => setSelectedVipId(p.id)}>
+                  <div key={p.id} onClick={() => setSelectedVipId(p.id)} className={selectedVipId === p.id ? "scale-[1.01]" : ""}>
                     <VipMiniCard p={p} lang={lang} onOpen={() => openProfile(p.id)} />
                   </div>
                 ))

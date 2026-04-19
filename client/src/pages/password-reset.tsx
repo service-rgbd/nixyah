@@ -3,7 +3,6 @@ import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/lib/i18n";
 import { apiRequest } from "@/lib/queryClient";
@@ -68,99 +67,93 @@ export default function PasswordReset() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] flex items-center justify-between">
+      <header className="px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] flex items-center justify-between sm:px-6">
         <button
           onClick={() => setLocation("/login")}
           className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="font-display text-xl font-semibold text-gradient tracking-tight">NIXYAH</h1>
+        <div className="text-sm font-medium text-foreground">{lang === "en" ? "Reset" : "Réinitialisation"}</div>
         <div className="w-9" />
       </header>
 
-      <main className="flex-1 flex flex-col px-4 pb-8">
+      <main className="flex-1 px-4 pb-10 pt-4 sm:px-6">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex-1 flex items-center justify-center"
+          className="mx-auto flex w-full max-w-md flex-col"
         >
-          <div className="w-full max-w-md">
-            <Card className="rounded-3xl shadow-lg border-border bg-card/95">
-              <CardHeader className="text-center space-y-1">
-                <CardTitle className="text-lg font-semibold flex items-center justify-center gap-2">
-                  <Lock className="w-4 h-4 text-primary" />
-                  {lang === "en" ? "Choose a new password" : "Choisis un nouveau mot de passe"}
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  {lang === "en"
-                    ? "Enter your new password below."
-                    : "Entre ton nouveau mot de passe ci-dessous."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-2">
-                {error && (
-                  <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
-                    {error}
-                  </div>
-                )}
+          <section className="space-y-2 border-b border-border/70 pb-6 text-center sm:text-left">
+            <h1 className="text-3xl font-semibold text-foreground">
+              {lang === "en" ? "Choose a new password" : "Choisis un nouveau mot de passe"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {lang === "en" ? "Enter your new password below." : "Entre ton nouveau mot de passe ci-dessous."}
+            </p>
+          </section>
 
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground flex items-center gap-2">
-                    {lang === "en" ? "New password" : "Nouveau mot de passe"}
-                  </label>
-                  <Input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={
-                      lang === "en" ? "At least 6 characters" : "Au moins 6 caractères (garde-le secret)"
-                    }
-                    className="h-11"
-                  />
-                </div>
+          <div className="space-y-5 pt-6">
+            {error && (
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+                {error}
+              </div>
+            )}
 
-                <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground flex items-center gap-2">
-                    {lang === "en" ? "Confirm password" : "Confirme le mot de passe"}
-                  </label>
-                  <Input
-                    type="password"
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    className="h-11"
-                  />
-                </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground flex items-center gap-2">
+                {lang === "en" ? "New password" : "Nouveau mot de passe"}
+              </label>
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={
+                  lang === "en" ? "At least 6 characters" : "Au moins 6 caractères (garde-le secret)"
+                }
+                className="h-11 rounded-full"
+              />
+            </div>
 
-                <Button
-                  className="w-full h-11 mt-1"
-                  disabled={loading || done}
-                  onClick={handleSubmit}
-                >
-                  {done
-                    ? lang === "en"
-                      ? "Password updated"
-                      : "Mot de passe mis à jour"
-                    : loading
-                      ? lang === "en"
-                        ? "Saving…"
-                        : "Enregistrement…"
-                      : lang === "en"
-                        ? "Save new password"
-                        : "Enregistrer le nouveau mot de passe"}
-                </Button>
+            <div className="space-y-2 border-b border-border/70 pb-6">
+              <label className="text-xs text-muted-foreground flex items-center gap-2">
+                {lang === "en" ? "Confirm password" : "Confirme le mot de passe"}
+              </label>
+              <Input
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                className="h-11 rounded-full"
+              />
+            </div>
 
-                {done && (
-                  <Button
-                    variant="outline"
-                    className="w-full h-10 mt-2"
-                    onClick={() => setLocation("/login")}
-                  >
-                    {lang === "en" ? "Back to login" : "Retour à la connexion"}
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
+            <Button
+              className="w-full h-11 rounded-full"
+              disabled={loading || done}
+              onClick={handleSubmit}
+            >
+              {done
+                ? lang === "en"
+                  ? "Password updated"
+                  : "Mot de passe mis à jour"
+                : loading
+                  ? lang === "en"
+                    ? "Saving…"
+                    : "Enregistrement…"
+                  : lang === "en"
+                    ? "Save new password"
+                    : "Enregistrer le nouveau mot de passe"}
+            </Button>
+
+            {done && (
+              <Button
+                variant="outline"
+                className="w-full h-10 rounded-full"
+                onClick={() => setLocation("/login")}
+              >
+                {lang === "en" ? "Back to login" : "Retour à la connexion"}
+              </Button>
+            )}
           </div>
         </motion.div>
       </main>

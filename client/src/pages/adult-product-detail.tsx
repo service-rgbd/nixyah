@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { ArrowLeft, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { adultProducts as staticAdultProducts } from "@/lib/maleProducts";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/queryClient";
+import { SeoHead, buildBreadcrumbJsonLd } from "@/components/seo-head";
 
 type PaymentMethod = "delivery" | "direct";
 
@@ -135,6 +136,44 @@ export default function AdultProductDetailPage() {
     };
   }, [product?.ownerProfileId, product?.id]);
 
+  const productStructuredData = useMemo(() => {
+    if (!product) return null;
+    const origin = typeof window !== "undefined" ? window.location.origin : "https://www.nixyah.com";
+    const numericPrice = Number(String(product.price).replace(/[^\d.,]/g, "").replace(",", "."));
+    return [
+      buildBreadcrumbJsonLd(
+        [
+          { name: "Accueil", path: "/start" },
+          { name: "Boutique adulte", path: "/adult-products" },
+          { name: product.name, path: `/adult-products/${product.id}` },
+        ],
+        origin,
+      ),
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: product.name,
+        description: product.description || product.subtitle || undefined,
+        image: product.imageUrl || undefined,
+        sku: product.id,
+        brand: {
+          "@type": "Brand",
+          name: "NIXYAH",
+        },
+        offers: {
+          "@type": "Offer",
+          priceCurrency: "XOF",
+          price: Number.isFinite(numericPrice) ? numericPrice : undefined,
+          availability:
+            typeof product.stockQty === "number" && product.stockQty <= 0
+              ? "https://schema.org/OutOfStock"
+              : "https://schema.org/InStock",
+          url: `${origin}/adult-products/${product.id}`,
+        },
+      },
+    ];
+  }, [product]);
+
   async function submitOrder() {
     if (!product) return;
     if (!phone || !address || !deliveryTime) {
@@ -211,10 +250,30 @@ export default function AdultProductDetailPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="relative h-[55vh] overflow-hidden">
+      <SeoHead
+        title={product ? `${product.name} - boutique intime premium` : "Produit intime premium"}
+        description={
+          product?.description ||
+          product?.subtitle ||
+          "Découvre les détails d’un produit intime premium, ses caractéristiques, son prix et ses options de commande."
+        }
+        canonicalPath={product ? `/adult-products/${product.id}` : "/adult-products"}
+        image={product?.imageUrl || undefined}
+        keywords={[
+          product?.name || "produit intime premium",
+          "détail produit adulte",
+          "achat accessoire intime",
+          "boutique adulte premium",
+        ]}
+        type="product"
+        structuredData={productStructuredData}
+      />
+      <div className="relative h-[50vh] overflow-hidden">
         <img
           src={product.imageUrl}
           alt={product.name}
+          fetchPriority="high"
+          decoding="async"
           className="absolute inset-0 w-full h-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
@@ -225,8 +284,8 @@ export default function AdultProductDetailPage() {
           <ArrowLeft className="w-5 h-5 text-white" />
         </button>
         <div className="absolute bottom-6 left-6 right-6 space-y-2">
-          <div className="text-xs text-white/70 uppercase tracking-wide">Produit adulte</div>
-          <h1 className="text-2xl font-semibold text-white">{product.name}</h1>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-white/70">Produit adulte</div>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">{product.name}</h1>
           {product.subtitle && <p className="text-sm text-white/80">{product.subtitle}</p>}
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 text-xs text-white">
             <span className="font-semibold">{product.price}</span>
@@ -235,71 +294,81 @@ export default function AdultProductDetailPage() {
         </div>
       </div>
 
-      <main className="px-4 pb-8 -mt-6 relative z-10">
-        <div className="max-w-md mx-auto rounded-3xl bg-card/95 border border-border shadow-lg p-4 space-y-4">
+      <main className="relative z-10 -mt-6 px-4 pb-8">
+        <div className="mx-auto max-w-[980px] space-y-5">
+          <div className="space-y-4 border-b border-border/70 pb-5">
           {product.description && (
             <p className="text-sm text-muted-foreground leading-relaxed">{product.description}</p>
           )}
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-2xl border border-border bg-muted/20 p-3">
-              <div className="text-xs text-muted-foreground">Stock</div>
-              <div className="text-sm font-semibold text-foreground">
+          <div className="flex flex-wrap gap-2">
+            <div className="rounded-full bg-muted/35 px-3 py-2 text-sm text-foreground">
+              <span className="text-muted-foreground">Stock</span>{" "}
+              <span className="font-semibold text-foreground">
                 {typeof product.stockQty === "number" ? product.stockQty : "—"}
-              </div>
+              </span>
             </div>
-            <div className="rounded-2xl border border-border bg-muted/20 p-3">
-              <div className="text-xs text-muted-foreground">Type de lieu</div>
-              <div className="text-sm font-semibold text-foreground">
+            <div className="rounded-full bg-muted/35 px-3 py-2 text-sm text-foreground">
+              <span className="text-muted-foreground">Type de lieu</span>{" "}
+              <span className="font-semibold text-foreground">
                 {product.placeType ?? "—"}
-              </div>
+              </span>
             </div>
           </div>
 
-          <Button className="w-full h-11 gap-2" onClick={() => setOrderOpen(true)}>
-            <ShoppingCart className="w-4 h-4" />
-            Commander
-          </Button>
-
-          {product.ownerProfileId && (
-            <Button
-              variant="outline"
-              className="w-full h-11"
-              onClick={() => setLocation(`/profile/${product.ownerProfileId}`)}
-            >
-              Voir la boutique
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Button className="h-11 flex-1 gap-2" onClick={() => setOrderOpen(true)}>
+              <ShoppingCart className="w-4 h-4" />
+              Commander
             </Button>
-          )}
-        </div>
+
+            {product.ownerProfileId && (
+              <Button
+                variant="outline"
+                className="h-11 flex-1"
+                onClick={() => setLocation(`/profile/${product.ownerProfileId}`)}
+              >
+                Voir la boutique
+              </Button>
+            )}
+          </div>
+          </div>
 
         {otherProducts.length > 0 && (
-          <div className="max-w-md mx-auto mt-4 space-y-2">
-            <div className="text-sm font-semibold text-foreground">Autres produits</div>
-            <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+          <div className="space-y-2">
+            <div className="text-sm font-semibold tracking-tight text-foreground">Autres produits</div>
+            <div className="space-y-1">
               {otherProducts.map((p) => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => setLocation(`/adult-products/${p.id}`)}
-                  className="min-w-[220px] max-w-[240px] rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
+                  className="w-full border-b border-border/70 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/10"
                 >
-                  <div className="relative h-36">
-                    <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
-                      <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">Boutique</span>
-                      <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">{p.price}</span>
+                  <div className="flex gap-3">
+                    <img
+                      src={p.imageUrl}
+                      alt={p.name}
+                      loading="lazy"
+                      decoding="async"
+                      className="h-20 w-20 shrink-0 rounded-[18px] object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold tracking-tight text-foreground line-clamp-2">{p.name}</div>
+                          {p.size ? <div className="mt-1 text-[11px] text-muted-foreground">{p.size}</div> : null}
+                        </div>
+                        <span className="shrink-0 rounded-full bg-foreground px-2.5 py-1 text-[10px] font-medium text-background">{p.price}</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="p-3 space-y-1">
-                    <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
-                    {p.size && <div className="text-[11px] text-muted-foreground">{p.size}</div>}
                   </div>
                 </button>
               ))}
             </div>
           </div>
         )}
+        </div>
       </main>
 
       <Dialog open={orderOpen} onOpenChange={setOrderOpen}>

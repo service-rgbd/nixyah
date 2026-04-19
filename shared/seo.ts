@@ -405,20 +405,20 @@ export function injectSeoIntoHtml(html: string, pathname: string, origin?: strin
   const type = seo.type === "article" ? "article" : "website";
 
   return html
-    .replace(/<title>.*?<\\/title>/i, `<title>${escapeHtml(title)}</title>`)
-    .replace(/<meta\\s+name="description"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="description" content="${escapeHtml(description)}" />`)
-    .replace(/<meta\\s+name="robots"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="robots" content="${escapeHtml(robots)}" />`)
-    .replace(/<meta\\s+name="keywords"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="keywords" content="${escapeHtml(keywords)}" />`)
-    .replace(/<link\\s+rel="canonical"\\s+href="[^"]*"\\s*\\/?>/i, `<link rel="canonical" href="${escapeHtml(canonicalUrl)}" />`)
-    .replace(/<meta\\s+property="og:title"\\s+content="[^"]*"\\s*\\/?>/i, `<meta property="og:title" content="${escapeHtml(title)}" />`)
-    .replace(/<meta\\s+property="og:description"\\s+content="[^"]*"\\s*\\/?>/i, `<meta property="og:description" content="${escapeHtml(description)}" />`)
-    .replace(/<meta\\s+property="og:type"\\s+content="[^"]*"\\s*\\/?>/i, `<meta property="og:type" content="${escapeHtml(type)}" />`)
-    .replace(/<meta\\s+property="og:url"\\s+content="[^"]*"\\s*\\/?>/i, `<meta property="og:url" content="${escapeHtml(canonicalUrl)}" />`)
-    .replace(/<meta\\s+property="og:image"\\s+content="[^"]*"\\s*\\/?>/i, `<meta property="og:image" content="${escapeHtml(imageUrl)}" />`)
-    .replace(/<meta\\s+name="twitter:title"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="twitter:title" content="${escapeHtml(title)}" />`)
-    .replace(/<meta\\s+name="twitter:description"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="twitter:description" content="${escapeHtml(description)}" />`)
-    .replace(/<meta\\s+name="twitter:image"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="twitter:image" content="${escapeHtml(imageUrl)}" />`)
-    .replace(/<meta\\s+name="twitter:site"\\s+content="[^"]*"\\s*\\/?>/i, `<meta name="twitter:site" content="${escapeHtml(TWITTER_HANDLE)}" />`);
+    .replace(/<title>.*?<\/title>/i, `<title>${escapeHtml(title)}</title>`)
+    .replace(/<meta\s+name="description"\s+content="[^"]*"\s*\/?>/i, `<meta name="description" content="${escapeHtml(description)}" />`)
+    .replace(/<meta\s+name="robots"\s+content="[^"]*"\s*\/?>/i, `<meta name="robots" content="${escapeHtml(robots)}" />`)
+    .replace(/<meta\s+name="keywords"\s+content="[^"]*"\s*\/?>/i, `<meta name="keywords" content="${escapeHtml(keywords)}" />`)
+    .replace(/<link\s+rel="canonical"\s+href="[^"]*"\s*\/?>/i, `<link rel="canonical" href="${escapeHtml(canonicalUrl)}" />`)
+    .replace(/<meta\s+property="og:title"\s+content="[^"]*"\s*\/?>/i, `<meta property="og:title" content="${escapeHtml(title)}" />`)
+    .replace(/<meta\s+property="og:description"\s+content="[^"]*"\s*\/?>/i, `<meta property="og:description" content="${escapeHtml(description)}" />`)
+    .replace(/<meta\s+property="og:type"\s+content="[^"]*"\s*\/?>/i, `<meta property="og:type" content="${escapeHtml(type)}" />`)
+    .replace(/<meta\s+property="og:url"\s+content="[^"]*"\s*\/?>/i, `<meta property="og:url" content="${escapeHtml(canonicalUrl)}" />`)
+    .replace(/<meta\s+property="og:image"\s+content="[^"]*"\s*\/?>/i, `<meta property="og:image" content="${escapeHtml(imageUrl)}" />`)
+    .replace(/<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/?>/i, `<meta name="twitter:title" content="${escapeHtml(title)}" />`)
+    .replace(/<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/?>/i, `<meta name="twitter:description" content="${escapeHtml(description)}" />`)
+    .replace(/<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/?>/i, `<meta name="twitter:image" content="${escapeHtml(imageUrl)}" />`)
+    .replace(/<meta\s+name="twitter:site"\s+content="[^"]*"\s*\/?>/i, `<meta name="twitter:site" content="${escapeHtml(TWITTER_HANDLE)}" />`);
 }
 
 export type KeywordCluster = {
@@ -518,3 +518,4 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+

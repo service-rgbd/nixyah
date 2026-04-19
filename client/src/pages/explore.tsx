@@ -20,7 +20,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useAppSettings } from "@/lib/appSettings";
 import { useI18n } from "@/lib/i18n";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
-import avatarUrl from "@assets/avatar.png";
+import { getStoredBrowserCoords, requestBrowserCoords } from "@/lib/browserLocation";
+import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
 
 function dedupeMedia(urls: Array<string | null | undefined>) {
   const out: string[] = [];
@@ -89,151 +90,122 @@ function ProfileRow({
   const premium = badges.includes("PREMIUM");
   const top = badges.includes("TOP");
   const previewPhotos = dedupeMedia([p.photoUrl, ...(p.photos ?? [])]).slice(0, 3);
-  const photoCount = previewPhotos.length;
   const title = p.latestAnnonce?.title?.trim()
     ? p.latestAnnonce?.title
     : `${p.pseudo} • ${p.age}`;
   const accountLabel = getAccountTypeLabel(p.accountType, lang);
-  const primaryPhoto = previewPhotos[0] || p.photoUrl || avatarUrl;
+  const primaryPhoto = previewPhotos[0] || getProfilePhoto(p.photoUrl, p.accountType);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group w-full overflow-hidden rounded-[28px] border border-border bg-card text-left transition hover:border-foreground/20 hover:shadow-[0_26px_55px_-42px_rgba(0,0,0,0.38)]"
+      className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
     >
-      <div className="grid gap-0 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <div className="relative h-[250px] overflow-hidden border-b border-border bg-muted/20 lg:h-full lg:min-h-[280px] lg:border-b-0 lg:border-r">
+      <div className="grid items-start gap-4 md:grid-cols-[180px_minmax(0,1fr)] md:gap-5">
+        <div className="relative h-[190px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[230px]">
           <img
             src={primaryPhoto}
             alt={p.pseudo}
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover"
             onError={(e) => {
               const img = e.currentTarget;
               img.onerror = null;
-              img.src = avatarUrl;
+              img.src = getDefaultProfilePhoto(p.accountType);
             }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/5 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
 
-          <div className="absolute left-4 top-4 flex flex-wrap gap-2">
+          <div className="absolute left-3 top-3 flex flex-wrap gap-2">
             {p.isVip && (
-              <span className="flex items-center gap-1 rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] text-white">
+              <span className="flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[10px] text-white">
                 <Crown className="w-3.5 h-3.5 text-amber-300" />
                 VIP
               </span>
             )}
-            <span className="rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white">
+            <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white">
               {accountLabel}
             </span>
           </div>
 
-          <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-3">
-            <div className="rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] text-white">
-              {photoCount} {lang === "en" ? "photos" : "photos"}
-            </div>
+          <div className="absolute bottom-3 left-3 right-3 flex items-end justify-end gap-2">
             {urgent ? (
-              <span className="rounded-full border border-white/15 bg-red-500/85 px-3 py-1 text-[10px] text-white">
+              <span className="rounded-full bg-red-500/85 px-2.5 py-1 text-[10px] text-white">
                 {lang === "en" ? "Urgent" : "Urgent"}
               </span>
             ) : null}
           </div>
         </div>
 
-        <div className="min-w-0 p-5 lg:p-6">
-          <div className="flex items-start justify-between gap-4 border-b border-border/70 pb-4">
+        <div className="min-w-0">
+          <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                {lang === "en" ? "Featured profile" : "Profil en avant"}
-              </div>
-              <div className="mt-2 text-xl font-semibold leading-tight text-foreground line-clamp-2 md:text-2xl">
+              <div className="text-lg font-semibold leading-tight text-foreground line-clamp-2 md:text-[1.35rem]">
                 {title}
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span className="rounded-full border border-border bg-background px-3 py-1.5">
-                  {lang === "en" ? "Published by" : "Publié par"}{" "}
-                  <span className="font-medium text-foreground/90">{p.pseudo}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="rounded-full bg-muted/40 px-2.5 py-1">
+                  {p.pseudo}
                 </span>
                 {p.isPro ? (
-                  <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[10px] uppercase tracking-wide text-primary">
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
                     pro
                   </span>
                 ) : null}
                 {p.verified ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] text-emerald-400">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-400">
                     <BadgeCheck className="w-3.5 h-3.5" />
                     {lang === "en" ? "Certified" : "Certifié"}
                   </span>
                 ) : null}
+                {p.tarif ? (
+                  <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
+                    {p.tarif}
+                  </span>
+                ) : null}
               </div>
             </div>
-            <ChevronRight className="mt-5 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+            <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
           </div>
 
-          <div className="grid gap-4 py-4 md:grid-cols-[minmax(0,1fr)_220px]">
-            <div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="mt-3">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <MapPin className="w-4 h-4" />
                 <span className="truncate">
                   {p.ville}
                   {p.lieu ? ` • ${p.lieu}` : ""}
                   {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
                 </span>
-              </div>
-
-              <div className="mt-4 text-sm leading-7 text-muted-foreground line-clamp-4">
-                {p.description ?? "—"}
-              </div>
             </div>
-
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-1">
-              <div className="rounded-[20px] border border-border bg-background p-4">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                  {lang === "en" ? "Rate" : "Tarif"}
-                </div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
-                  {p.tarif || (lang === "en" ? "On request" : "Sur demande")}
-                </div>
-              </div>
-              <div className="rounded-[20px] border border-border bg-background p-4">
-                <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                  {lang === "en" ? "Published" : "Publication"}
-                </div>
-                <div className="mt-2 text-lg font-semibold text-foreground">
-                  {p.latestAnnonce?.createdAt ? formatRelativeTime(p.latestAnnonce.createdAt, lang) : "—"}
-                </div>
-              </div>
+            <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
+              {p.description ?? "—"}
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 border-t border-border/70 pt-4">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             {premium ? (
-              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] text-emerald-400">
+              <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-400">
                 PREMIUM
               </span>
             ) : null}
             {top ? (
-              <span className="rounded-full border border-sky-500/20 bg-sky-500/10 px-3 py-1.5 text-[10px] text-sky-400">
+              <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-400">
                 TOP
               </span>
             ) : null}
             {(p.services ?? []).slice(0, 3).map((s) => (
               <span
                 key={s}
-                className="rounded-full border border-border bg-muted/20 px-3 py-1.5 text-[10px] text-muted-foreground"
+                className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground"
               >
                 {s}
               </span>
             ))}
-          </div>
-
-          <div className="mt-5 flex items-center justify-between gap-3">
-            <div className="text-xs text-muted-foreground">
-              {lang === "en" ? "Open the full profile for media, contact and details." : "Ouvre la fiche complète pour les médias, le contact et les détails."}
+            <div className="ml-auto text-[11px] text-muted-foreground">
+              {p.latestAnnonce?.createdAt ? formatRelativeTime(p.latestAnnonce.createdAt, lang) : ""}
             </div>
-            <span className="rounded-full bg-foreground px-4 py-2 text-[11px] font-medium text-background">
-              {lang === "en" ? "View profile" : "Voir le profil"}
-            </span>
           </div>
         </div>
       </div>
@@ -259,13 +231,13 @@ export default function Explore() {
   >("__all__");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [page, setPage] = useState(0);
-  const requestLocation = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: false, timeout: 8000 },
-    );
+  useEffect(() => {
+    setCoords(getStoredBrowserCoords());
+  }, []);
+
+  const requestLocation = async () => {
+    const nextCoords = await requestBrowserCoords();
+    if (nextCoords) setCoords(nextCoords);
   };
 
   const baseParams = useMemo(() => {
@@ -616,13 +588,13 @@ export default function Explore() {
             filtered.map((p) => (
               <section key={p.id} className="snap-start snap-stop-always h-[100svh] relative">
                 <img
-                  src={p.photoUrl || avatarUrl}
+                  src={getProfilePhoto(p.photoUrl, p.accountType)}
                   alt={p.pseudo}
                   className="absolute inset-0 w-full h-full object-cover bg-muted"
                   onError={(e) => {
                     const img = e.currentTarget;
                     img.onerror = null;
-                    img.src = avatarUrl;
+                    img.src = getDefaultProfilePhoto(p.accountType);
                   }}
                 />
                 <div className="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/92 via-black/40 to-transparent pointer-events-none" />
@@ -695,84 +667,18 @@ export default function Explore() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 pb-12 pt-5 space-y-6 sm:px-6 lg:px-8">
-        <section className="space-y-4 border-b border-border/70 pb-6">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="space-y-2">
-              <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                {lang === "en" ? "Explore" : "Explorer"}
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                {lang === "en" ? "Profiles available now" : "Profils disponibles maintenant"}
-              </h1>
-              <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-                {lang === "en"
-                  ? "A clean list, direct filters, and a more professional reading of each profile."
-                  : "Une lecture simple, des filtres directs, et une présentation plus professionnelle de chaque profil."}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="rounded-full border border-border px-3 py-1.5">
-                {filtered.length} {lang === "en" ? "profiles" : "profils"}
-              </span>
-              <span className="rounded-full border border-border px-3 py-1.5">
-                {zone === "__all__" ? (lang === "en" ? "All zones" : "Toutes zones") : zone}
-              </span>
-              <span className="rounded-full border border-border px-3 py-1.5">
-                {scope === "nearby" ? `${settings.maxDistanceKm} km` : (lang === "en" ? "Unlimited" : "Sans limite")}
-              </span>
-            </div>
-          </div>
-
-          {vipFiltered.length > 0 && (
-            <div className="grid gap-3 md:grid-cols-3">
-              {vipFiltered.slice(0, 3).map((profile) => (
-                <button
-                  key={profile.id}
-                  type="button"
-                  onClick={() => openProfile(profile.id)}
-                  className="overflow-hidden rounded-[24px] border border-border bg-card text-left transition hover:border-foreground/20"
-                >
-                  <div className="relative h-44 overflow-hidden border-b border-border bg-muted/20">
-                    <img
-                      src={profile.photoUrl || avatarUrl}
-                      alt={profile.pseudo}
-                      className="h-full w-full object-cover"
-                      onError={(e) => {
-                        const img = e.currentTarget;
-                        img.onerror = null;
-                        img.src = avatarUrl;
-                      }}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
-                    <div className="absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-[10px] text-white">
-                      VIP
-                    </div>
-                    <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2 text-white">
-                      <div>
-                        <div className="text-sm font-semibold">{profile.pseudo}</div>
-                        <div className="text-[11px] text-white/75">{profile.ville}</div>
-                      </div>
-                      {profile.tarif ? <div className="text-[11px] font-medium">{profile.tarif}</div> : null}
-                    </div>
-                  </div>
-                  <div className="p-4">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                      {lang === "en" ? "VIP selection" : "Sélection VIP"}
-                    </div>
-                    <div className="mt-2 text-sm leading-6 text-muted-foreground line-clamp-2">
-                      {profile.description ?? (lang === "en" ? "Priority profile with premium visibility." : "Profil prioritaire avec visibilité premium.")}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 pb-4">
-          <div className="text-xs text-muted-foreground">
-            {lang === "en" ? "View" : "Affichage"}
+      <main className="mx-auto max-w-[980px] px-4 pb-12 pt-4 space-y-5 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="text-sm font-semibold text-foreground">
+              {lang === "en" ? "Explore" : "Explorer"}
+            </span>
+            <span className="rounded-full bg-muted/40 px-2.5 py-1">
+              {filtered.length} {lang === "en" ? "profiles" : "profils"}
+            </span>
+            <span className="rounded-full bg-muted/40 px-2.5 py-1">
+              {zone === "__all__" ? (lang === "en" ? "All zones" : "Toutes zones") : zone}
+            </span>
           </div>
           <div className="inline-flex items-center rounded-full border border-border bg-card/40 p-1">
             <button
@@ -792,20 +698,20 @@ export default function Explore() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 border-b border-border/70 pb-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-2">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-              {lang === "en" ? "Active filters" : "Filtres actifs"}
-            </div>
-            <div className="text-sm text-foreground">
+        <div className="flex flex-col gap-4 pb-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-foreground">
               {lang === "en"
                 ? `Age ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "All zones" : zone}`
                 : `Âge ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "Toutes zones" : zone}`}
               {accountType !== "__all__" ? (lang === "en" ? ` • Type ${accountType}` : ` • Type ${accountType}`) : ""}
               {quartier ? ` • ${quartier}` : ""}
-            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {vipFiltered.length > 0 ? (
+              <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs text-amber-500">
+                {vipFiltered.length} VIP
+              </span>
+            ) : null}
             {scope === "nearby" && !coords && (
               <Button variant="outline" size="sm" className="rounded-full" onClick={requestLocation}>
                 {lang === "en" ? "Use my location" : "Utiliser ma position"}
@@ -1022,29 +928,16 @@ export default function Explore() {
         </div>
 
         <div className="space-y-4">
-          <div className="flex items-end justify-between">
-            <div>
-              <div className="text-sm font-semibold text-foreground sm:text-base">
-                {lang === "en" ? "Results" : "Résultats"}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {lang === "en" ? "Professional cards with essential information first." : "Des fiches pro avec les informations essentielles en premier."}
-              </div>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {isLoading ? "…" : `${filtered.length}`}
-            </div>
-          </div>
           {viewMode === "list" ? (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-1">
               {isLoading ? (
                 <>
-                  <div className="h-56 rounded-[30px] border border-border bg-muted/40" />
-                  <div className="h-56 rounded-[30px] border border-border bg-muted/40" />
-                  <div className="h-56 rounded-[30px] border border-border bg-muted/40" />
+                  <div className="h-52 rounded-[24px] bg-muted/40" />
+                  <div className="h-52 rounded-[24px] bg-muted/40" />
+                  <div className="h-52 rounded-[24px] bg-muted/40" />
                 </>
               ) : filtered.length === 0 ? (
-                <div className="rounded-[28px] border border-border bg-muted/30 p-5 text-sm text-muted-foreground lg:col-span-2">
+                <div className="rounded-[24px] bg-muted/30 p-5 text-sm text-muted-foreground">
                   {lang === "en"
                     ? "No profiles found. Try widening filters."
                     : "Aucun profil trouvé. Essaie d’élargir les filtres."}

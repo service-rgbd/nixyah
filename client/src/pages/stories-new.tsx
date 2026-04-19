@@ -14,7 +14,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { apiFetch, apiRequest } from "@/lib/queryClient";
 import { getProfileId } from "@/lib/session";
@@ -220,8 +219,8 @@ export default function StoriesNewPage() {
               <h1 className="text-3xl font-semibold tracking-tight text-foreground">Publier une story vidéo</h1>
               <p className="max-w-2xl text-sm leading-7 text-muted-foreground">
                 {isFirstStoryFree
-                  ? `Ta première story publique jusqu'à ${STORY_PUBLIC_MAX_SECONDS} secondes est offerte. Ensuite, chaque publication consomme ${STORY_PUBLISH_TOKEN_COST} jetons.`
-                  : `Chaque publication consomme ${STORY_PUBLISH_TOKEN_COST} jetons. Les vidéos de 1 à ${STORY_PUBLIC_MAX_SECONDS} secondes peuvent être visibles comme une story publique de 24h. Au-delà, elles basculent en vidéo privée, avec option de vente.`}
+                  ? `Ta première story publique jusqu'à ${STORY_PUBLIC_MAX_SECONDS} secondes est offerte. Ensuite, chaque nouvelle publication ou republication consomme ${STORY_PUBLISH_TOKEN_COST} jetons.`
+                  : `Chaque nouvelle publication ou republication consomme ${STORY_PUBLISH_TOKEN_COST} jetons. Les vidéos de 1 à ${STORY_PUBLIC_MAX_SECONDS} secondes peuvent être visibles comme une story publique de 24h. Au-delà, elles basculent en vidéo privée, avec option de vente.`}
               </p>
             </div>
             <div className="min-w-[170px] border-l border-border pl-5 text-right">
@@ -294,16 +293,30 @@ export default function StoriesNewPage() {
             </div>
 
             <div className="space-y-4 border-t border-border pt-6">
-              <div className="flex items-center justify-between gap-3">
+              <div className="space-y-3">
                 <div>
-                  <div className="text-sm font-semibold text-foreground">Basculer en privé</div>
-                  <div className="text-xs text-muted-foreground">Pour vendre une vidéo ou un produit. Au-delà de 10 secondes, c’est automatique.</div>
+                  <div className="text-sm font-semibold text-foreground">Choisir la visibilité</div>
+                  <div className="text-xs text-muted-foreground">
+                    Choisis si la vidéo doit être publique ou privée. Au-delà de 10 secondes, le mode privé est imposé.
+                  </div>
                 </div>
-                <Switch
-                  checked={durationSeconds > STORY_PUBLIC_MAX_SECONDS ? true : isPrivate}
-                  disabled={durationSeconds > STORY_PUBLIC_MAX_SECONDS}
-                  onCheckedChange={(checked) => setIsPrivate(Boolean(checked))}
-                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    variant={!isPrivate && durationSeconds <= STORY_PUBLIC_MAX_SECONDS ? "default" : "outline"}
+                    disabled={durationSeconds > STORY_PUBLIC_MAX_SECONDS}
+                    onClick={() => setIsPrivate(false)}
+                  >
+                    Story publique
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={isPrivate || durationSeconds > STORY_PUBLIC_MAX_SECONDS ? "default" : "outline"}
+                    onClick={() => setIsPrivate(true)}
+                  >
+                    Vidéo privée
+                  </Button>
+                </div>
               </div>
 
               {(isPrivate || durationSeconds > STORY_PUBLIC_MAX_SECONDS) && (
@@ -375,8 +388,8 @@ export default function StoriesNewPage() {
                 <p>Vidéo privée: obligatoire au-delà de {STORY_PUBLIC_MAX_SECONDS} secondes, jusqu’à {STORY_PRIVATE_MAX_SECONDS} secondes.</p>
                 <p>
                   {isFirstStoryFree
-                    ? `La toute première story du profil est offerte si elle ne dépasse pas ${STORY_PUBLIC_MAX_SECONDS} secondes.`
-                    : `Chaque publication débite ${STORY_PUBLISH_TOKEN_COST} jetons au moment de l’envoi.`}
+                    ? `La toute première story du profil est offerte si elle ne dépasse pas ${STORY_PUBLIC_MAX_SECONDS} secondes. Toute republication suivante débite ${STORY_PUBLISH_TOKEN_COST} jetons.`
+                    : `Chaque publication ou republication débite ${STORY_PUBLISH_TOKEN_COST} jetons au moment de l’envoi.`}
                 </p>
               </div>
             </section>
@@ -395,8 +408,8 @@ export default function StoriesNewPage() {
                 <div className="text-sm font-semibold text-foreground">Jetons insuffisants</div>
                 <p className="mt-2 text-sm leading-7 text-muted-foreground">
                   {isFirstStoryFree
-                    ? `La première story gratuite doit être publique et limitée à ${STORY_PUBLIC_MAX_SECONDS} secondes. Sinon, il te faut au moins ${STORY_PUBLISH_TOKEN_COST} jetons.`
-                    : `Il te faut au moins ${STORY_PUBLISH_TOKEN_COST} jetons pour publier. Recharge depuis le dashboard puis reviens ici.`}
+                    ? `La première story gratuite doit être publique et limitée à ${STORY_PUBLIC_MAX_SECONDS} secondes. Sinon, il te faut au moins ${STORY_PUBLISH_TOKEN_COST} jetons, y compris pour republier.`
+                    : `Il te faut au moins ${STORY_PUBLISH_TOKEN_COST} jetons pour publier ou republier. Recharge depuis le dashboard puis reviens ici.`}
                 </p>
                 <Button className="mt-4 w-full" onClick={() => setLocation("/dashboard")}>Revenir au dashboard</Button>
               </section>
@@ -404,6 +417,7 @@ export default function StoriesNewPage() {
           </aside>
         </section>
       </main>
+
       <Dialog open={showFreeStoryDialog} onOpenChange={setShowFreeStoryDialog}>
         <DialogContent className="rounded-[28px]">
           <DialogHeader>
@@ -413,7 +427,7 @@ export default function StoriesNewPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-2xl bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-            Cette première publication doit rester en story publique. Les stories suivantes, ou toute vidéo privée, fonctionneront avec des jetons.
+            Cette première publication doit rester en story publique. Les stories suivantes, les republications, ou toute vidéo privée, fonctionneront avec des jetons.
           </div>
           <DialogFooter>
             <Button onClick={() => setShowFreeStoryDialog(false)}>J&apos;ai compris</Button>
