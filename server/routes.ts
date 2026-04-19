@@ -483,6 +483,67 @@ export async function registerRoutes(
     };
   }
 
+  const SESSION_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+  function getSessionSecret(): string {
+    return process.env.SECRET_TOKEN || process.env.SESSION_SECRET || "dev-secret";
+  }
+
+  function formatSameSite(value: "lax" | "strict" | "none"): string {
+    if (value === "none") return "None";
+    if (value === "strict") return "Strict";
+    return "Lax";
+  }
+
+  function buildSessionCookieString(sessionId: string, domain?: string): string {
+    const options = getSessionCookieOptions(domain);
+    const signature = crypto
+      .createHmac("sha256", getSessionSecret())
+      .update(sessionId)
+      .digest("base64")
+      .replace(/=+$/g, "");
+    const value = encodeURIComponent(`s:${sessionId}.${signature}`);
+    const expires = new Date(Date.now() + SESSION_COOKIE_MAX_AGE_MS).toUTCString();
+
+    return [
+      `connect.sid=${value}`,
+      "Path=/",
+      `Expires=${expires}`,
+      "HttpOnly",
+      options.secure ? "Secure" : "",
+      `SameSite=${formatSameSite(options.sameSite)}`,
+      options.domain ? `Domain=${options.domain}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  function buildClearedSessionCookieString(domain?: string): string {
+    const options = getSessionCookieOptions(domain);
+    return [
+      "connect.sid=",
+      "Path=/",
+      "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+      "Max-Age=0",
+      "HttpOnly",
+      options.secure ? "Secure" : "",
+      `SameSite=${formatSameSite(options.sameSite)}`,
+      options.domain ? `Domain=${options.domain}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  function mirrorSetCookies(res: any, cookieStrings: string[]) {
+    if (cookieStrings.length === 0) return;
+    res.setHeader("x-proxy-set-cookies", JSON.stringify(cookieStrings));
+  }
+
+  function mirrorSessionCookie(res: any, sessionId: string) {
+    const configuredDomain = getConfiguredCookieDomain();
+    mirrorSetCookies(res, [buildSessionCookieString(sessionId, configuredDomain)]);
+  }
+
   function clearSessionCookie(res: any) {
     const configuredDomain = getConfiguredCookieDomain();
     const legacyDomain = getLegacyDerivedCookieDomain();
@@ -495,6 +556,14 @@ export async function registerRoutes(
       res.clearCookie("connect.sid", getSessionCookieOptions(legacyDomain));
     }
     res.clearCookie("connect.sid", { path: "/" });
+    mirrorSetCookies(
+      res,
+      [
+        buildClearedSessionCookieString(),
+        ...(configuredDomain ? [buildClearedSessionCookieString(configuredDomain)] : []),
+        ...(legacyDomain && legacyDomain !== configuredDomain ? [buildClearedSessionCookieString(legacyDomain)] : []),
+      ],
+    );
   }
 
   async function establishAuthenticatedSession(
@@ -508,6 +577,9 @@ export async function registerRoutes(
     req.session.profileId = auth.profileId;
     req.session.csrfToken = generateToken();
     await saveSession(req);
+    if (req.sessionID) {
+      mirrorSessionCookie(res, String(req.sessionID));
+    }
   }
 
   function ensureCsrfToken(req: any): string {
@@ -1160,6 +1232,9 @@ export async function registerRoutes(
     asyncHandler(async (req, res) => {
       const csrfToken = ensureCsrfToken(req);
       await saveSession(req);
+      if (req.sessionID) {
+        mirrorSessionCookie(res, String(req.sessionID));
+      }
       res.setHeader("Cache-Control", "no-store");
       res.json({ csrfToken });
     }),
