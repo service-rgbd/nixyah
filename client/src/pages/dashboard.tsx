@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings2, Megaphone, UserCircle2, Compass, Menu, LogOut, Phone, MapPin, AlertCircle, HelpCircle, Info, Mail, Coins, Rocket, Eye, Plus, Clapperboard } from "lucide-react";
+import { Settings2, Megaphone, UserCircle2, Compass, Menu, LogOut, Phone, MapPin, AlertCircle, HelpCircle, Info, Mail, Coins, Rocket, Eye, Plus, Clapperboard, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearSession, getProfileId } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import logoTitle from "@assets/logo-titre.png";
-import { apiGetJson, apiRequest } from "@/lib/queryClient";
+import { apiFetch, apiGetJson, apiRequest } from "@/lib/queryClient";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -81,6 +81,20 @@ type DashboardStory = {
   active: boolean;
   expiresAt?: string | null;
   createdAt?: string;
+};
+
+type DashboardEvent = {
+  id: string;
+  title: string;
+  city: string;
+  startsAt: string;
+  visibility: "public" | "private";
+  priceType: "free" | "paid";
+  priceAmount?: number | null;
+  priceCurrency: string;
+  status: "draft" | "published" | "cancelled";
+  registrationsCount: number;
+  publicationCreditsCharged: number;
 };
 
 type TokenPackagesResponse = {
@@ -158,6 +172,13 @@ export default function Dashboard() {
   const { data: myStories } = useQuery<DashboardStory[]>({
     queryKey: ["/api/me/stories"],
     enabled: Boolean(profileId),
+  });
+
+  const canManageEvents = data?.accountType === "salon" || data?.accountType === "residence";
+
+  const { data: myEvents } = useQuery<DashboardEvent[]>({
+    queryKey: ["/api/me/events"],
+    enabled: Boolean(profileId && canManageEvents),
   });
 
   const { data: publishingConfig } = useQuery<any>({
@@ -299,6 +320,7 @@ export default function Dashboard() {
   const activeAnnoncesCount = annoncesList.filter((annonce) => annonce.active).length;
   const storyList = myStories ?? [];
   const activeStoriesCount = storyList.filter((story) => story.active).length;
+  const eventList = myEvents ?? [];
 
   const tokenBalance = Number(account?.tokensBalance ?? 0);
   const applyStoryToggle = async (story: DashboardStory, nextActive: boolean) => {
@@ -828,6 +850,81 @@ export default function Dashboard() {
             )}
           </section>
 
+          {canManageEvents ? (
+            <section className="space-y-3 border-b border-border/70 pb-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-base font-semibold text-foreground">Mes évènements</div>
+                  <div className="text-sm text-muted-foreground">
+                    Publication à 15 crédits. Suivi des inscrits et rappels email.
+                  </div>
+                </div>
+                <Button className="rounded-2xl" onClick={() => setLocation("/events/new")}>
+                  <CalendarDays className="mr-2 h-4 w-4" />
+                  Créer
+                </Button>
+              </div>
+
+              {eventList.length ? (
+                <div className="space-y-1">
+                  {eventList.map((event) => (
+                    <div key={event.id} className="space-y-3 border-b border-border/70 py-4 last:border-b-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-foreground">{event.title}</div>
+                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                              {event.visibility === "private" ? "Privé" : "Public"}
+                            </span>
+                            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                              {event.status}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {new Date(event.startsAt).toLocaleString("fr-FR")} • {event.city}
+                          </div>
+                          <div className="mt-2 text-[11px] text-muted-foreground">
+                            {event.priceType === "paid" ? `${event.priceAmount ?? 0} ${event.priceCurrency}` : "Gratuit"} •{" "}
+                            {event.registrationsCount} inscrit(s)
+                          </div>
+                        </div>
+                        <div className="rounded-full bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                          {event.publicationCreditsCharged} crédits
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <Button
+                          variant="outline"
+                          className="h-11 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                          onClick={() => setLocation(`/events/new?eventId=${event.id}`)}
+                        >
+                          Modifier
+                        </Button>
+                        <Button
+                          className="h-11 rounded-2xl"
+                          onClick={() => setLocation(`/dashboard/events/${event.id}/registrations`)}
+                        >
+                          Voir les inscrits
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl bg-muted/20 p-4 space-y-3">
+                  <div className="text-sm font-semibold text-foreground">Aucun évènement publié</div>
+                  <div className="text-sm text-muted-foreground">
+                    Les salons et résidences peuvent publier des évènements publics ou privés.
+                  </div>
+                  <Button className="h-11 w-full rounded-2xl" onClick={() => setLocation("/events/new")}>
+                    Créer mon premier évènement
+                  </Button>
+                </div>
+              )}
+            </section>
+          ) : null}
+
           <section className="space-y-3 border-b border-border/70 pb-5">
             <div>
               <div className="text-base font-semibold text-foreground">{lang === "en" ? "Quick actions" : "Actions rapides"}</div>
@@ -863,6 +960,16 @@ export default function Dashboard() {
                 <Clapperboard className="w-4 h-4" />
                 {lang === "en" ? "Post a story" : "Poster une story"}
               </Button>
+              {canManageEvents ? (
+                <Button
+                  variant="outline"
+                  className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                  onClick={() => setLocation("/events/new")}
+                >
+                  <CalendarDays className="w-4 h-4" />
+                  Créer un évènement
+                </Button>
+              ) : null}
               <Button
                 variant="outline"
                 className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
