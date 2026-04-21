@@ -5,6 +5,11 @@ import { db } from "./db";
 import { hashOpaqueToken, hashPassword, verifyPassword } from "./auth";
 import {
   annonceCreateSchema,
+  eventCreateSchema,
+  eventRegistrationCreateSchema,
+  eventRegistrations,
+  events,
+  eventUpdateSchema,
   profiles,
   profileMedia,
   signupSchema,
@@ -63,6 +68,7 @@ import {
   getEnabledPaymentProviders,
   getPaystackSecretKey,
   type PaymentProvider,
+  toPaystackAmount,
 } from "./payments";
 import { getOrSet, invalidateTag } from "./cache";
 
@@ -1004,6 +1010,198 @@ export async function registerRoutes(
     `;
   }
 
+  const EVENT_PUBLISH_TOKEN_COST = 15;
+
+  function escapeHtml(value: unknown): string {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatEventPrice(amount: number | null | undefined, currency: string | null | undefined): string {
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) return "Gratuit";
+    return `${Number(amount)} ${(currency || "XOF").toUpperCase()}`;
+  }
+
+  function normalizeEventImageUrls(imageUrls: string[] | null | undefined, imageUrl?: string | null): string[] {
+    const values = [imageUrl ?? null, ...(imageUrls ?? [])]
+      .map((value) => sanitizeUrl(value))
+      .filter((value): value is string => Boolean(value));
+    return Array.from(new Set(values)).slice(0, 2);
+  }
+
+  async function getCurrentEventPublisher(req: any, executor: any = db) {
+    const userId = req.session?.userId as string | undefined;
+    const profileId = req.session?.profileId as string | undefined;
+    if (!userId || !profileId) {
+      throw Object.assign(new Error("Not logged in"), { status: 401 });
+    }
+
+    const admin = await isAdmin(req);
+    const [profile] = await executor
+      .select({
+        id: profiles.id,
+        userId: profiles.userId,
+        pseudo: profiles.pseudo,
+        accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+      })
+      .from(profiles)
+      .where(eq(profiles.id, profileId))
+      .limit(1);
+
+    if (!profile) {
+      throw Object.assign(new Error("Profil introuvable"), { status: 404 });
+    }
+    if (profile.userId !== userId) {
+      throw Object.assign(new Error("Forbidden"), { status: 403 });
+    }
+
+    const accountType = String((profile as any).accountType ?? "profile");
+    if (!admin && accountType !== "salon" && accountType !== "residence") {
+      throw Object.assign(new Error("Seuls les salons et résidences peuvent publier un évènement."), {
+        status: 403,
+      });
+    }
+
+    return { userId, profileId, admin, profile, accountType };
+  }
+
+  async function sendEventRegistrationEmail(opts: {
+    req?: any;
+    to: string;
+    eventTitle: string;
+    eventDate: string;
+    eventCity: string;
+    guestName: string;
+    priceType: "free" | "paid";
+    amount?: number | null;
+    currency?: string | null;
+  }) {
+    if (!resend) return;
+    const logoUrl = appUrl("/favicon.png", opts.req);
+    const price = opts.priceType === "paid" ? formatEventPrice(opts.amount, opts.currency) : "Gratuit";
+    const html = renderEmailLayout({
+      title: "Inscription confirmée",
+      intro: `Bonjour ${escapeHtml(opts.guestName)}, ta participation à l’évènement ${escapeHtml(opts.eventTitle)} est enregistrée.`,
+      body:
+        `Date : <strong>${escapeHtml(opts.eventDate)}</strong><br />` +
+        `Ville : <strong>${escapeHtml(opts.eventCity)}</strong><br />` +
+        `Tarif : <strong>${escapeHtml(price)}</strong><br /><br />` +
+        `La plateforme ne garantit pas la véracité de l’évènement. Renseigne-toi avant toute action. Aucun remboursement n’est possible après décision de participation.`,
+      logoUrl,
+    });
+
+    await resend.emails.send({
+      from: resendFrom,
+      to: opts.to,
+      subject: `Inscription – ${opts.eventTitle}`,
+      html,
+      text:
+        `Bonjour ${opts.guestName},\n\n` +
+        `Ta participation à l’évènement ${opts.eventTitle} est enregistrée.\n` +
+        `Date: ${opts.eventDate}\nVille: ${opts.eventCity}\nTarif: ${price}\n\n` +
+        `La plateforme ne garantit pas la véracité de l’évènement. Aucun remboursement n’est possible.\n`,
+    });
+  }
+
+  async function sendEventOrganizerNotificationEmail(opts: {
+    req?: any;
+    organizerEmail: string;
+    eventTitle: string;
+    eventDate: string;
+    guestName: string;
+    guestEmail: string;
+    guestPhone?: string | null;
+    guestWhatsapp?: string | null;
+  }) {
+    if (!resend) return;
+    const html = renderEmailLayout({
+      title: "Nouvelle inscription",
+      intro: `Un participant vient de s’inscrire à ${escapeHtml(opts.eventTitle)}.`,
+      body:
+        `Date : <strong>${escapeHtml(opts.eventDate)}</strong><br />` +
+        `Nom : <strong>${escapeHtml(opts.guestName)}</strong><br />` +
+        `Email : <strong>${escapeHtml(opts.guestEmail)}</strong><br />` +
+        `Téléphone : <strong>${escapeHtml(opts.guestPhone || "—")}</strong><br />` +
+        `WhatsApp : <strong>${escapeHtml(opts.guestWhatsapp || "—")}</strong><br />` +
+        `Statut : <strong>Inscription enregistrée</strong>`,
+      logoUrl: appUrl("/favicon.png", opts.req),
+    });
+
+    await resend.emails.send({
+      from: resendFrom,
+      to: opts.organizerEmail,
+      subject: `Nouvelle inscription – ${opts.eventTitle}`,
+      html,
+      text:
+        `Nouvelle inscription – ${opts.eventTitle}\n\n` +
+        `Date: ${opts.eventDate}\nNom: ${opts.guestName}\nEmail: ${opts.guestEmail}\n` +
+        `Téléphone: ${opts.guestPhone || "—"}\nWhatsApp: ${opts.guestWhatsapp || "—"}\n` +
+        `Statut: Inscription enregistrée\n`,
+    });
+  }
+
+  async function sendEventReminderEmails(eventId: string, req?: any): Promise<{ sent: number }> {
+    if (!resend) return { sent: 0 };
+
+    const [eventRow] = await db
+      .select({
+        id: events.id,
+        title: events.title,
+        city: events.city,
+        startsAt: events.startsAt,
+      })
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    if (!eventRow) return { sent: 0 };
+
+    const registrations = await db
+      .select({
+        guestName: eventRegistrations.guestName,
+        guestEmail: eventRegistrations.guestEmail,
+        notifyByEmail: eventRegistrations.notifyByEmail,
+      })
+      .from(eventRegistrations)
+      .where(
+        and(
+          eq(eventRegistrations.eventId, eventId),
+          eq(eventRegistrations.paymentStatus, "not_required"),
+        ),
+      )
+      .limit(500);
+
+    let sent = 0;
+    for (const registration of registrations) {
+      if (!registration.notifyByEmail) continue;
+      const html = renderEmailLayout({
+        title: "Rappel évènement",
+        intro: `Bonjour ${escapeHtml(registration.guestName)}, l’évènement ${escapeHtml(eventRow.title)} approche.`,
+        body:
+          `Date : <strong>${escapeHtml(new Date(eventRow.startsAt).toLocaleString("fr-FR"))}</strong><br />` +
+          `Ville : <strong>${escapeHtml(eventRow.city)}</strong><br /><br />` +
+          `Renseigne-toi bien avant toute action. Aucun remboursement n’est possible.`,
+        logoUrl: appUrl("/favicon.png", req),
+      });
+      await resend.emails.send({
+        from: resendFrom,
+        to: registration.guestEmail,
+        subject: `Rappel – ${eventRow.title}`,
+        html,
+        text:
+          `Bonjour ${registration.guestName},\n\n` +
+          `Rappel pour ${eventRow.title}\nDate: ${new Date(eventRow.startsAt).toLocaleString("fr-FR")}\n` +
+          `Ville: ${eventRow.city}\n`,
+      });
+      sent += 1;
+    }
+
+    return { sent };
+  }
+
   async function sendVerificationEmail(
     userId: string,
     email: string,
@@ -1748,12 +1946,14 @@ export async function registerRoutes(
         const transaction = await getPaystackTransaction(reference);
         const metadata = (transaction.metadata ?? {}) as Record<string, unknown>;
         const userId = typeof metadata.userId === "string" ? metadata.userId : "";
-        const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
-        const pack = findTokenPackage(packageId);
         const amount = Number(transaction.amount ?? NaN);
-        const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
         const currency = String(transaction.currency ?? "").toUpperCase();
         const status = String(transaction.status ?? "").toLowerCase();
+        const rawEventId = transaction.id ? String(transaction.id) : null;
+
+        const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
+        const pack = findTokenPackage(packageId);
+        const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
 
         if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== expectedAmount || currency !== pack.currency) {
           if (userId) {
@@ -1761,7 +1961,7 @@ export async function registerRoutes(
               userId,
               provider: "paystack",
               providerRef: reference,
-              rawEventId: transaction.id ? String(transaction.id) : null,
+              rawEventId,
               amount: Number.isFinite(amount) ? amount : null,
               currency: currency || null,
               packageId,
@@ -1778,7 +1978,7 @@ export async function registerRoutes(
           pack,
           amount: pack.amount,
           currency,
-          rawEventId: transaction.id ? String(transaction.id) : null,
+          rawEventId,
           meta: { reference, transactionId: transaction.id ?? null },
         });
 
@@ -1834,13 +2034,14 @@ export async function registerRoutes(
 
       const metadata = (event.data.metadata ?? {}) as Record<string, unknown>;
       const userId = typeof metadata.userId === "string" ? metadata.userId : "";
-      const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
-      const pack = findTokenPackage(packageId);
       const amount = Number(event.data.amount ?? NaN);
-      const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
       const currency = String(event.data.currency ?? "").toUpperCase();
       const status = String(event.data.status ?? "").toLowerCase();
       const reference = String(event.data.reference);
+
+      const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
+      const pack = findTokenPackage(packageId);
+      const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
 
       if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== expectedAmount || currency !== pack.currency) {
         if (userId) {
@@ -1892,6 +2093,584 @@ export async function registerRoutes(
         telegramUrl: (env as any).SUPPORT_TELEGRAM_URL ?? "https://t.me/+cNj_edHZTyc2YWE0",
         turnstileRequired: Boolean((env as any).TURNSTILE_SECRET_KEY),
       });
+    }),
+  );
+
+  app.get(
+    "/api/events",
+    asyncHandler(async (req, res) => {
+      const limit = z
+        .string()
+        .optional()
+        .transform((v) => (v ? Number(v) : 50))
+        .pipe(z.number().int().min(1).max(100))
+        .parse(req.query.limit);
+
+      const now = new Date();
+      const rows = await db
+        .select({
+          id: events.id,
+          ownerProfileId: events.ownerProfileId,
+          title: events.title,
+          description: events.description,
+          city: events.city,
+          venue: events.venue,
+          startsAt: events.startsAt,
+          endsAt: events.endsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          priceCurrency: events.priceCurrency,
+          capacity: events.capacity,
+          contactWhatsapp: events.contactWhatsapp,
+          imageUrl: events.imageUrl,
+          imageUrls: events.imageUrls,
+          status: events.status,
+          createdAt: events.createdAt,
+          organizerPseudo: profiles.pseudo,
+          organizerPhotoUrl: profiles.photoUrl,
+          organizerAccountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+          registrationsCount:
+            sql<number>`(
+              select count(*)::int
+              from event_registrations er
+              where er.event_id = ${events.id}
+            )`,
+        })
+        .from(events)
+        .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+        .where(
+          and(
+            eq(events.status, "published"),
+            or(
+              gt(events.endsAt, now),
+              and(isNull(events.endsAt), gt(events.startsAt, now)),
+            ),
+          ),
+        )
+        .orderBy(events.startsAt)
+        .limit(limit);
+
+      res.json(
+        rows.map((row) => {
+          const registrationsCount = Number(row.registrationsCount ?? 0);
+          const capacity = row.capacity === null ? null : Number(row.capacity ?? 0);
+          return {
+            ...row,
+            imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+            organizer: {
+              profileId: row.ownerProfileId,
+              pseudo: row.organizerPseudo,
+              accountType: row.organizerAccountType,
+              photoUrl: sanitizeUrl(row.organizerPhotoUrl),
+            },
+            imageUrl: sanitizeUrl(row.imageUrl),
+            registrationsCount,
+            spotsLeft: capacity === null ? null : Math.max(0, capacity - registrationsCount),
+          };
+        }),
+      );
+    }),
+  );
+
+  app.get(
+    "/api/events/:id",
+    asyncHandler(async (req, res) => {
+      const id = z.string().uuid().parse(req.params.id);
+      const [row] = await db
+        .select({
+          id: events.id,
+          ownerProfileId: events.ownerProfileId,
+          title: events.title,
+          description: events.description,
+          city: events.city,
+          venue: events.venue,
+          startsAt: events.startsAt,
+          endsAt: events.endsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          priceCurrency: events.priceCurrency,
+          capacity: events.capacity,
+          contactWhatsapp: events.contactWhatsapp,
+          contactEmail: events.contactEmail,
+          imageUrl: events.imageUrl,
+          imageUrls: events.imageUrls,
+          status: events.status,
+          organizerPseudo: profiles.pseudo,
+          organizerPhotoUrl: profiles.photoUrl,
+          organizerAccountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+          registrationsCount:
+            sql<number>`(
+              select count(*)::int
+              from event_registrations er
+              where er.event_id = ${events.id}
+            )`,
+        })
+        .from(events)
+        .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+        .where(and(eq(events.id, id), eq(events.status, "published")))
+        .limit(1);
+
+      if (!row) return res.status(404).json({ message: "Évènement introuvable" });
+
+      const registrationsCount = Number(row.registrationsCount ?? 0);
+      const capacity = row.capacity === null ? null : Number(row.capacity ?? 0);
+
+      res.json({
+        ...row,
+        imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+        organizer: {
+          profileId: row.ownerProfileId,
+          pseudo: row.organizerPseudo,
+          accountType: row.organizerAccountType,
+          photoUrl: sanitizeUrl(row.organizerPhotoUrl),
+        },
+        imageUrl: sanitizeUrl(row.imageUrl),
+        registrationsCount,
+        spotsLeft: capacity === null ? null : Math.max(0, capacity - registrationsCount),
+      });
+    }),
+  );
+
+  app.get(
+    "/api/me/events",
+    asyncHandler(async (req, res) => {
+      const context = await getCurrentEventPublisher(req);
+      const rows = await db
+        .select({
+          id: events.id,
+          title: events.title,
+          description: events.description,
+          city: events.city,
+          venue: events.venue,
+          startsAt: events.startsAt,
+          endsAt: events.endsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          priceCurrency: events.priceCurrency,
+          capacity: events.capacity,
+          contactWhatsapp: events.contactWhatsapp,
+          contactEmail: events.contactEmail,
+          imageUrl: events.imageUrl,
+          imageUrls: events.imageUrls,
+          status: events.status,
+          publicationCreditsCharged: events.publicationCreditsCharged,
+          createdAt: events.createdAt,
+          updatedAt: events.updatedAt,
+          registrationsCount:
+            sql<number>`(
+              select count(*)::int
+              from event_registrations er
+              where er.event_id = ${events.id}
+            )`,
+        })
+        .from(events)
+        .where(eq(events.ownerProfileId, context.profileId))
+        .orderBy(desc(events.createdAt))
+        .limit(100);
+
+      res.json(
+        rows.map((row) => ({
+          ...row,
+          imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+          registrationsCount: Number(row.registrationsCount ?? 0),
+        })),
+      );
+    }),
+  );
+
+  app.post(
+    "/api/me/events",
+    asyncHandler(async (req, res) => {
+      await ensureIpNotBanned(req);
+      const payload = eventCreateSchema.parse(req.body);
+
+      const created = await db.transaction(async (tx) => {
+        const context = await getCurrentEventPublisher(req, tx);
+        const eventImageUrls = Array.from(new Set((payload.imageUrls ?? []).filter(Boolean))).slice(0, 2);
+        const primaryImageUrl = eventImageUrls[0] ?? payload.imageUrl ?? null;
+
+        if (!context.admin) {
+          const updated = await tx
+            .update(users)
+            .set({ tokensBalance: sql`${users.tokensBalance} - ${EVENT_PUBLISH_TOKEN_COST}` } as any)
+            .where(and(eq(users.id, context.userId), sql`${users.tokensBalance} >= ${EVENT_PUBLISH_TOKEN_COST}`))
+            .returning({ tokensBalance: users.tokensBalance });
+
+          if (!updated.length) {
+            throw Object.assign(new Error("Crédit insuffisant: 15 crédits sont requis pour publier un évènement."), {
+              status: 403,
+            });
+          }
+
+          await tx.insert(tokenTransactions).values({
+            userId: context.userId,
+            delta: -EVENT_PUBLISH_TOKEN_COST,
+            reason: "event_publish",
+            meta: {
+              profileId: context.profileId,
+              title: payload.title.trim(),
+              visibility: payload.visibility,
+              priceType: payload.priceType,
+            } as any,
+          } as any);
+        }
+
+        const [event] = await tx
+          .insert(events)
+          .values({
+            ownerProfileId: context.profileId,
+            title: payload.title.trim(),
+            description: payload.description?.trim() || null,
+            city: payload.city.trim(),
+            venue: payload.venue?.trim() || null,
+            startsAt: new Date(payload.startsAt),
+            endsAt: payload.endsAt ? new Date(payload.endsAt) : null,
+            visibility: payload.visibility,
+            priceType: payload.priceType,
+            priceAmount: payload.priceType === "paid" ? Number(payload.priceAmount ?? 0) : 0,
+            priceCurrency: payload.priceCurrency.toUpperCase(),
+            capacity: payload.capacity ?? null,
+            contactWhatsapp: payload.contactWhatsapp?.trim() || null,
+            contactEmail: payload.contactEmail?.trim().toLowerCase() || null,
+            imageUrl: primaryImageUrl,
+            imageUrls: eventImageUrls.length ? eventImageUrls : primaryImageUrl ? [primaryImageUrl] : null,
+            publicationCreditsCharged: context.admin ? 0 : EVENT_PUBLISH_TOKEN_COST,
+            legalNoticeAccepted: true,
+            status: payload.status ?? "published",
+            updatedAt: new Date(),
+          })
+          .returning({
+            id: events.id,
+            title: events.title,
+            status: events.status,
+            startsAt: events.startsAt,
+            publicationCreditsCharged: events.publicationCreditsCharged,
+          });
+
+        return event;
+      });
+
+      await logIpEvent({ req, kind: "event_publish" });
+      res.json(created);
+    }),
+  );
+
+  app.patch(
+    "/api/me/events/:id",
+    asyncHandler(async (req, res) => {
+      const eventId = z.string().uuid().parse(req.params.id);
+      const payload = eventUpdateSchema.parse(req.body);
+      const context = await getCurrentEventPublisher(req);
+
+      const [existing] = await db
+        .select({ id: events.id, ownerProfileId: events.ownerProfileId })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!existing) return res.status(404).json({ message: "Évènement introuvable" });
+      if (!context.admin && existing.ownerProfileId !== context.profileId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const nextValues: Record<string, unknown> = { updatedAt: new Date() };
+      const eventImageUrls =
+        payload.imageUrls !== undefined
+          ? Array.from(new Set((payload.imageUrls ?? []).filter(Boolean))).slice(0, 2)
+          : undefined;
+      if (payload.title !== undefined) nextValues.title = payload.title.trim();
+      if (payload.description !== undefined) nextValues.description = payload.description?.trim() || null;
+      if (payload.city !== undefined) nextValues.city = payload.city.trim();
+      if (payload.venue !== undefined) nextValues.venue = payload.venue?.trim() || null;
+      if (payload.startsAt !== undefined) nextValues.startsAt = new Date(payload.startsAt);
+      if (payload.endsAt !== undefined) nextValues.endsAt = payload.endsAt ? new Date(payload.endsAt) : null;
+      if (payload.visibility !== undefined) nextValues.visibility = payload.visibility;
+      if (payload.priceType !== undefined) nextValues.priceType = payload.priceType;
+      if (payload.priceAmount !== undefined) nextValues.priceAmount = payload.priceType === "free" ? 0 : payload.priceAmount ?? 0;
+      if (payload.priceCurrency !== undefined) nextValues.priceCurrency = payload.priceCurrency.toUpperCase();
+      if (payload.capacity !== undefined) nextValues.capacity = payload.capacity ?? null;
+      if (payload.contactWhatsapp !== undefined) nextValues.contactWhatsapp = payload.contactWhatsapp?.trim() || null;
+      if (payload.contactEmail !== undefined) nextValues.contactEmail = payload.contactEmail?.trim().toLowerCase() || null;
+      if (payload.imageUrl !== undefined) nextValues.imageUrl = payload.imageUrl ?? null;
+      if (eventImageUrls !== undefined) {
+        nextValues.imageUrls = eventImageUrls.length ? eventImageUrls : null;
+        if (payload.imageUrl === undefined) {
+          nextValues.imageUrl = eventImageUrls[0] ?? null;
+        }
+      }
+      if (payload.status !== undefined) nextValues.status = payload.status;
+      if (payload.legalNoticeAccepted !== undefined) nextValues.legalNoticeAccepted = payload.legalNoticeAccepted;
+
+      const [updated] = await db
+        .update(events)
+        .set(nextValues as any)
+        .where(eq(events.id, eventId))
+        .returning({
+          id: events.id,
+          title: events.title,
+          status: events.status,
+          updatedAt: events.updatedAt,
+        });
+
+      res.json(updated);
+    }),
+  );
+
+  app.get(
+    "/api/me/events/:id/registrations",
+    asyncHandler(async (req, res) => {
+      const eventId = z.string().uuid().parse(req.params.id);
+      const context = await getCurrentEventPublisher(req);
+
+      const [eventRow] = await db
+        .select({ id: events.id, ownerProfileId: events.ownerProfileId, title: events.title })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!eventRow) return res.status(404).json({ message: "Évènement introuvable" });
+      if (!context.admin && eventRow.ownerProfileId !== context.profileId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const rows = await db
+        .select({
+          id: eventRegistrations.id,
+          guestName: eventRegistrations.guestName,
+          guestEmail: eventRegistrations.guestEmail,
+          guestPhone: eventRegistrations.guestPhone,
+          guestWhatsapp: eventRegistrations.guestWhatsapp,
+          notifyByEmail: eventRegistrations.notifyByEmail,
+          notifyByWhatsapp: eventRegistrations.notifyByWhatsapp,
+          createdAt: eventRegistrations.createdAt,
+        })
+        .from(eventRegistrations)
+        .where(eq(eventRegistrations.eventId, eventId))
+        .orderBy(desc(eventRegistrations.createdAt))
+        .limit(500);
+
+      res.json({
+        event: eventRow,
+        attendees: rows,
+      });
+    }),
+  );
+
+  app.post(
+    "/api/me/events/:id/send-reminders",
+    asyncHandler(async (req, res) => {
+      const eventId = z.string().uuid().parse(req.params.id);
+      const context = await getCurrentEventPublisher(req);
+      const [eventRow] = await db
+        .select({ id: events.id, ownerProfileId: events.ownerProfileId })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!eventRow) return res.status(404).json({ message: "Évènement introuvable" });
+      if (!context.admin && eventRow.ownerProfileId !== context.profileId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const result = await sendEventReminderEmails(eventId, req);
+      res.json({ ok: true, sent: result.sent });
+    }),
+  );
+
+  app.post(
+    "/api/events/:id/register",
+    asyncHandler(async (req, res) => {
+      await ensureIpNotBanned(req);
+      const eventId = z.string().uuid().parse(req.params.id);
+      const payload = eventRegistrationCreateSchema.parse(req.body);
+      const sessionUserId = req.session?.userId as string | undefined;
+      const guestEmail = payload.email.trim().toLowerCase();
+      const guestName = payload.name.trim();
+      const guestPhone = payload.phone?.trim() || null;
+      const guestWhatsapp = payload.whatsapp?.trim() || null;
+
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select ${events.id} from ${events} where ${events.id} = ${eventId} for update`);
+
+        const [eventRow] = await tx
+          .select({
+            id: events.id,
+            ownerProfileId: events.ownerProfileId,
+            title: events.title,
+            city: events.city,
+            startsAt: events.startsAt,
+            endsAt: events.endsAt,
+            visibility: events.visibility,
+            priceType: events.priceType,
+            priceAmount: events.priceAmount,
+            priceCurrency: events.priceCurrency,
+            capacity: events.capacity,
+            status: events.status,
+            organizerEmail: sql<string | null>`coalesce(${events.contactEmail}, ${(users as any).email})`,
+          })
+          .from(events)
+          .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+          .leftJoin(users, eq(profiles.userId, users.id))
+          .where(eq(events.id, eventId))
+          .limit(1);
+
+        if (!eventRow || eventRow.status !== "published") {
+          throw Object.assign(new Error("Évènement introuvable"), { status: 404 });
+        }
+        if (new Date(eventRow.startsAt).getTime() <= Date.now()) {
+          throw Object.assign(new Error("Les inscriptions sont closes pour cet évènement."), { status: 400 });
+        }
+
+        const [existing] = await tx
+          .select({ id: eventRegistrations.id })
+          .from(eventRegistrations)
+          .where(
+            and(
+              eq(eventRegistrations.eventId, eventId),
+              sql`lower(${eventRegistrations.guestEmail}) = ${guestEmail}`,
+            ),
+          )
+          .limit(1);
+
+        if (existing) {
+          throw Object.assign(new Error("Cette adresse email est déjà inscrite à cet évènement."), { status: 409 });
+        }
+
+        const [{ count: registrationsCountRaw }] = await tx
+          .select({
+            count: sql<number>`count(*)::int`,
+          })
+          .from(eventRegistrations)
+          .where(eq(eventRegistrations.eventId, eventId));
+
+        const registrationsCount = Number(registrationsCountRaw ?? 0);
+        if (eventRow.capacity !== null && registrationsCount >= Number(eventRow.capacity ?? 0)) {
+          throw Object.assign(new Error("Cet évènement est complet."), { status: 400 });
+        }
+
+        const [registration] = await tx
+          .insert(eventRegistrations)
+          .values({
+            eventId,
+            userId: sessionUserId ?? null,
+            guestName,
+            guestEmail,
+            guestPhone,
+            guestWhatsapp,
+            paymentStatus: "not_required",
+            amount: null,
+            currency: null,
+            notifyByEmail: payload.notifyByEmail,
+            notifyByWhatsapp: payload.notifyByWhatsapp,
+            agreedNoRefund: true,
+            agreedDisclaimer: true,
+            updatedAt: new Date(),
+          } as any)
+          .returning({ id: eventRegistrations.id });
+
+        return {
+          registrationId: registration.id,
+          eventTitle: eventRow.title,
+          eventCity: eventRow.city,
+          eventDateLabel: new Date(eventRow.startsAt).toLocaleString("fr-FR"),
+          priceType: eventRow.priceType,
+          priceAmount: Number(eventRow.priceAmount ?? 0),
+          priceCurrency: eventRow.priceCurrency,
+          organizerEmail: eventRow.organizerEmail,
+        };
+      });
+
+      await sendEventRegistrationEmail({
+        req,
+        to: guestEmail,
+        eventTitle: result.eventTitle,
+        eventDate: result.eventDateLabel,
+        eventCity: result.eventCity,
+        guestName,
+        priceType: result.priceType,
+        amount: result.priceAmount,
+        currency: result.priceCurrency,
+      });
+      if (result.organizerEmail) {
+        await sendEventOrganizerNotificationEmail({
+          req,
+          organizerEmail: result.organizerEmail,
+          eventTitle: result.eventTitle,
+          eventDate: result.eventDateLabel,
+          guestName,
+          guestEmail,
+          guestPhone,
+          guestWhatsapp,
+        });
+      }
+      await logIpEvent({ req, kind: "event_register", userId: sessionUserId ?? null });
+      return res.json({ ok: true, status: "registered", registrationId: result.registrationId });
+    }),
+  );
+
+  app.get(
+    "/api/admin/events",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const rows = await db
+        .select({
+          id: events.id,
+          title: events.title,
+          city: events.city,
+          startsAt: events.startsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          status: events.status,
+          ownerProfileId: events.ownerProfileId,
+          ownerPseudo: profiles.pseudo,
+          createdAt: events.createdAt,
+        })
+        .from(events)
+        .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+        .orderBy(desc(events.createdAt))
+        .limit(500);
+
+      res.json(rows);
+    }),
+  );
+
+  app.patch(
+    "/api/admin/events/:id",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const eventId = z.string().uuid().parse(req.params.id);
+      const payload = eventUpdateSchema.parse(req.body);
+      const nextValues: Record<string, unknown> = { updatedAt: new Date() };
+      if (payload.title !== undefined) nextValues.title = payload.title.trim();
+      if (payload.description !== undefined) nextValues.description = payload.description?.trim() || null;
+      if (payload.city !== undefined) nextValues.city = payload.city.trim();
+      if (payload.venue !== undefined) nextValues.venue = payload.venue?.trim() || null;
+      if (payload.startsAt !== undefined) nextValues.startsAt = new Date(payload.startsAt);
+      if (payload.endsAt !== undefined) nextValues.endsAt = payload.endsAt ? new Date(payload.endsAt) : null;
+      if (payload.visibility !== undefined) nextValues.visibility = payload.visibility;
+      if (payload.priceType !== undefined) nextValues.priceType = payload.priceType;
+      if (payload.priceAmount !== undefined) nextValues.priceAmount = payload.priceType === "free" ? 0 : payload.priceAmount ?? 0;
+      if (payload.priceCurrency !== undefined) nextValues.priceCurrency = payload.priceCurrency.toUpperCase();
+      if (payload.capacity !== undefined) nextValues.capacity = payload.capacity ?? null;
+      if (payload.contactWhatsapp !== undefined) nextValues.contactWhatsapp = payload.contactWhatsapp?.trim() || null;
+      if (payload.contactEmail !== undefined) nextValues.contactEmail = payload.contactEmail?.trim().toLowerCase() || null;
+      if (payload.imageUrl !== undefined) nextValues.imageUrl = payload.imageUrl ?? null;
+      if (payload.status !== undefined) nextValues.status = payload.status;
+      if (payload.legalNoticeAccepted !== undefined) nextValues.legalNoticeAccepted = payload.legalNoticeAccepted;
+
+      const [updated] = await db
+        .update(events)
+        .set(nextValues as any)
+        .where(eq(events.id, eventId))
+        .returning({ id: events.id, status: events.status, updatedAt: events.updatedAt });
+
+      if (!updated) return res.status(404).json({ message: "Évènement introuvable" });
+      res.json(updated);
     }),
   );
 

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, MapPin, Tag, Wand2, Plus, Minus, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -473,34 +472,34 @@ export default function AnnonceNew() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="flex items-center justify-between px-6 py-4">
-        <button
-          onClick={() => setLocation("/dashboard")}
-          className="w-10 h-10 rounded-full bg-card flex items-center justify-center border border-border"
-          data-testid="button-back-annonce"
-        >
-          <ArrowLeft className="w-5 h-5 text-foreground" />
-        </button>
-        <h1 className="text-xl font-semibold text-foreground">
-          {!createNewAnnonce && profileDetail?.annonce
-            ? "Modifier l'annonce"
-            : accountType === "profile"
-            ? "Nouvelle annonce"
-            : accountType === "residence"
-            ? "Fiche résidence meublée"
-            : accountType === "salon"
-            ? "Fiche salon / SPA"
-            : "Fiche boutique adultes"}
-        </h1>
-        <div className="w-10" />
-      </header>
+      <main className="mx-auto max-w-5xl px-4 pb-12 pt-[calc(env(safe-area-inset-top)+1rem)] sm:px-6">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              onClick={() => setLocation("/dashboard")}
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-border/70 text-muted-foreground"
+              data-testid="button-back-annonce"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-semibold text-foreground">
+              {!createNewAnnonce && profileDetail?.annonce
+                ? "Modifier l'annonce"
+                : accountType === "profile"
+                ? "Nouvelle annonce"
+                : accountType === "residence"
+                ? "Fiche résidence meublée"
+                : accountType === "salon"
+                ? "Fiche salon / SPA"
+                : "Fiche boutique adultes"}
+            </h1>
+            <div className="w-10" />
+          </div>
 
-      <main className="px-6 pb-10 space-y-4">
         {isLoading || !profileDetail ? (
           <p className="text-sm text-muted-foreground mt-6">Chargement du formulaire…</p>
         ) : (
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-          <section className="rounded-[28px] border border-border/70 bg-background px-4 py-5 shadow-sm sm:px-6">
+        <div className="space-y-6">
             <div className="mb-5 border-b border-border/70 pb-4">
               <div className="flex items-center gap-2 text-base">
                 <Wand2 className="w-4 h-4 text-primary" />
@@ -512,7 +511,7 @@ export default function AnnonceNew() {
             </div>
             <div className="space-y-5">
               {account && (!account.email || account.emailVerified === false) && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-sm text-foreground">
+                <div className="border-b border-amber-500/20 pb-4 text-sm text-foreground">
                   <div className="flex items-start gap-2">
                     <Mail className="w-4 h-4 text-amber-400 mt-0.5" />
                     <div className="space-y-1">
@@ -541,13 +540,13 @@ export default function AnnonceNew() {
                 </div>
               )}
               {error && (
-                <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+                <div className="border-b border-destructive/20 pb-4 text-sm text-destructive">
                   {error}
                 </div>
               )}
 
               {step === 2 && (
-                <div className="space-y-3 rounded-2xl border border-border/70 bg-background p-4">
+                <div className="space-y-6 border-b border-border/70 pb-6">
                   <div className="space-y-1">
                     <div className="text-sm font-semibold text-foreground">Visibilité & jetons</div>
                     <p className="text-xs text-muted-foreground">
@@ -987,8 +986,8 @@ export default function AnnonceNew() {
               </div>
 
               {accountType === "profile" && (
-                <details className="rounded-2xl border border-border/70 bg-background">
-                  <summary className="px-4 py-4 cursor-pointer select-none">
+                <details className="border-t border-border/70 pt-4">
+                  <summary className="cursor-pointer select-none py-2">
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-semibold text-foreground">
                         Détails du profil (optionnel)
@@ -997,6 +996,7 @@ export default function AnnonceNew() {
                     </div>
                   </summary>
                   <div className="px-4 pb-4 space-y-4">
+                  <div className="space-y-4 pt-2">
                   <p className="text-xs text-muted-foreground">
                     Ces informations s’affichent sur votre fiche (plus de confiance, plus de contacts).
                   </p>
@@ -1194,6 +1194,7 @@ export default function AnnonceNew() {
                     </div>
                   </div>
                   </div>
+                  </div>
                 </details>
               )}
 
@@ -1335,7 +1336,7 @@ export default function AnnonceNew() {
               )}
 
               {step === 3 && (
-                <div className="rounded-2xl border border-border/70 bg-background p-4 space-y-3">
+                <div className="space-y-3 border-b border-border/70 pb-4">
                   <div className="text-sm font-semibold text-foreground">Récapitulatif</div>
                   <div className="space-y-2">
                     {recap.map((it, idx) => (
@@ -1415,9 +1416,9 @@ export default function AnnonceNew() {
                 </Button>
               )}
             </div>
-          </section>
-        </motion.div>
+        </div>
         )}
+        </div>
       </main>
     </div>
   );

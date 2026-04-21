@@ -21,6 +21,8 @@ const Start = lazy(() => import("@/pages/start"));
 const Explore = lazy(() => import("@/pages/explore"));
 const Vip = lazy(() => import("@/pages/vip"));
 const EventsPage = lazy(() => import("@/pages/events"));
+const EventsNewPage = lazy(() => import("@/pages/events-new"));
+const EventRegistrationsPage = lazy(() => import("@/pages/event-registrations"));
 const ProfileDetail = lazy(() => import("@/pages/profile"));
 const Signup = lazy(() => import("@/pages/signup"));
 const Settings = lazy(() => import("@/pages/settings"));
@@ -38,7 +40,7 @@ const PasswordReset = lazy(() => import("@/pages/password-reset"));
 const EmailVerify = lazy(() => import("@/pages/email-verify"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
-function buildDefaultStructuredData(pathname: string) {
+function buildDefaultStructuredData(pathname: string): Record<string, unknown>[] {
   const origin = typeof window !== "undefined" ? getSiteUrl(window.location.origin) : getSiteUrl();
   const canonicalUrl = buildAbsoluteUrl(pathname, origin);
   const keywordCluster = keywordArchitecture.find((item) => pathname === item.path);
@@ -71,7 +73,14 @@ function buildDefaultStructuredData(pathname: string) {
       }
     : null;
 
-  return [websiteSchema, organizationSchema, collectionSchema].filter(Boolean);
+  return [websiteSchema, organizationSchema, collectionSchema].filter(
+    (
+      item,
+    ): item is
+      | typeof websiteSchema
+      | typeof organizationSchema
+      | NonNullable<typeof collectionSchema> => item !== null,
+  );
 }
 
 function RouteRuntime() {
@@ -124,7 +133,9 @@ function Router() {
       <Route path="/cookies" component={Cookies} />
       <Route path="/start" component={Start} />
       <Route path="/events" component={EventsPage} />
+      <Route path="/events/new" component={EventsNewPage} />
       <Route path="/dashboard" component={Dashboard} />
+      <Route path="/dashboard/events/:id/registrations" component={EventRegistrationsPage} />
       <Route path="/stories/new" component={StoriesNewPage} />
       <Route path="/explore" component={Explore} />
       <Route path="/vip" component={Vip} />
