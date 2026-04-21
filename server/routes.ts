@@ -5,9 +5,16 @@ import { db } from "./db";
 import { hashOpaqueToken, hashPassword, verifyPassword } from "./auth";
 import {
   annonceCreateSchema,
+  eventCreateSchema,
+  eventRegistrationCreateSchema,
+  eventRegistrations,
+  events,
+  eventUpdateSchema,
   profiles,
   profileMedia,
   signupSchema,
+  storyCreateSchema,
+  stories,
   users,
   annonces,
   salons,
@@ -20,8 +27,15 @@ import {
   tokenTransactions,
 } from "@shared/schema";
 import { PUBLISHING_CONFIG } from "@shared/publishing-config";
+import {
+  STORY_FREE_STORY_LIMIT,
+  STORY_PRIVATE_MAX_SECONDS,
+  STORY_PUBLIC_MAX_SECONDS,
+  STORY_PUBLIC_TTL_HOURS,
+  STORY_PUBLISH_TOKEN_COST,
+} from "@shared/story-config";
 import { and, desc, eq, inArray, or, sql, gt, isNull } from "drizzle-orm";
-import { createPresignedRead, createPresignedUpload } from "./uploads";
+import { createPresignedRead, createPresignedUpload, hasObjectInR2 } from "./uploads";
 import { uploadBufferToR2 } from "./uploads";
 import multer from "multer";
 import {
@@ -36,6 +50,7 @@ import {
   hasProfileMediaTable,
   hasProfilesProFields,
   hasProfilesShowLocationColumn,
+  hasStoriesTable,
   hasProfilesVisibilityColumn,
   hasSalonsTable,
   hasProfilesVipColumn,
@@ -46,12 +61,14 @@ import { getEnv } from "./env";
 import { Resend } from "resend";
 import crypto from "crypto";
 import {
+  getPaystackAmountForPackage,
   TOKEN_PACKAGES,
   findTokenPackage,
   getDefaultPaymentProvider,
   getEnabledPaymentProviders,
   getPaystackSecretKey,
   type PaymentProvider,
+  toPaystackAmount,
 } from "./payments";
 import { getOrSet, invalidateTag } from "./cache";
 
@@ -268,6 +285,7 @@ export async function registerRoutes(
   const hasProfileMedia = await hasProfileMediaTable();
   const hasAnnonces = await hasAnnoncesTable();
   const hasAnnoncesPromotion = await hasAnnoncesPromotionColumn();
+  const hasStories = await hasStoriesTable();
   const env = getEnv();
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -277,8 +295,19 @@ export async function registerRoutes(
   const googleClientSecret = (env as any).GOOGLE_CLIENT_SECRET as string | undefined;
   const googleRedirectUri = (env as any).GOOGLE_REDIRECT_URI as string | undefined;
 
+  function isLocalFrontend(input: string): boolean {
+    try {
+      const withScheme = /^https?:\/\//i.test(input) ? input : `https://${input}`;
+      const host = new URL(withScheme).hostname.toLowerCase();
+      return host === "localhost" || host === "127.0.0.1";
+    } catch {
+      return false;
+    }
+  }
+
   function normalizeFrontendBase(input: string): string {
-    const base = String(input || "").trim() || "http://localhost:5000";
+    const fallback = process.env.NODE_ENV === "production" ? "https://www.nixyah.com" : "http://localhost:5000";
+    const base = String(input || "").trim() || fallback;
     const withScheme = /^https?:\/\//i.test(base) ? base : `https://${base}`;
     const clean = withScheme.replace(/\/+$/, "");
     // Safety: if someone mistakenly sets APP_BASE_URL to the API host, convert api.* -> root.
@@ -286,9 +315,91 @@ export async function registerRoutes(
     return clean.replace(/^https?:\/\/api\./i, (m) => m.replace(/api\./i, ""));
   }
 
-  function appUrl(path: string): string {
-    const base = normalizeFrontendBase(env.APP_BASE_URL || "http://localhost:5000");
-    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  function frontendBaseFromRequest(req: any): string | undefined {
+    const origin = String(req.get?.("origin") ?? "")
+      .split(",")[0]
+      .trim();
+    if (origin && !isLocalFrontend(origin)) {
+      return normalizeFrontendBase(origin);
+    }
+
+    const forwardedProto = String(req.get?.("x-forwarded-proto") ?? "")
+      .split(",")[0]
+      .trim() || "https";
+    const forwardedHost = String(req.get?.("x-forwarded-host") ?? "")
+      .split(",")[0]
+      .trim();
+    if (forwardedHost && !/\.onrender\.com$/i.test(forwardedHost) && !isLocalFrontend(`${forwardedProto}://${forwardedHost}`)) {
+      return normalizeFrontendBase(`${forwardedProto}://${forwardedHost}`);
+    }
+
+    const host = String(req.get?.("host") ?? "").trim();
+    if (host && !/\.onrender\.com$/i.test(host) && !isLocalFrontend(`${forwardedProto}://${host}`)) {
+      return normalizeFrontendBase(`${forwardedProto}://${host}`);
+    }
+
+    return undefined;
+  }
+
+  function extractOrigin(value: string | undefined | null): string | null {
+    const raw = String(value ?? "")
+      .split(",")[0]
+      .trim();
+    if (!raw) return null;
+    try {
+      return new URL(raw).origin.replace(/\/+$/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  function allowedCsrfOrigins(req: any): Set<string> {
+    const origins = new Set<string>(["http://localhost:5000", "http://127.0.0.1:5000"]);
+
+    const envOrigins = [env.APP_BASE_URL, ...(env.CORS_ORIGINS ? env.CORS_ORIGINS.split(",") : [])];
+    for (const value of envOrigins) {
+      const origin = extractOrigin(value);
+      if (origin) origins.add(origin);
+    }
+
+    const derivedOrigin = extractOrigin(frontendBaseFromRequest(req));
+    if (derivedOrigin) origins.add(derivedOrigin);
+
+    return origins;
+  }
+
+  function hasTrustedCsrfOrigin(req: any): boolean {
+    const requestOrigin = extractOrigin(req.get?.("origin")) || extractOrigin(req.get?.("referer"));
+    if (!requestOrigin) return false;
+    return allowedCsrfOrigins(req).has(requestOrigin);
+  }
+
+  function appUrl(path: string, req?: any): string {
+    let base = String(env.APP_BASE_URL || "").trim();
+    if ((!base || isLocalFrontend(base)) && req) {
+      base = frontendBaseFromRequest(req) || base;
+    }
+    const normalizedBase = normalizeFrontendBase(base);
+    const finalBase = process.env.NODE_ENV === "production" && isLocalFrontend(normalizedBase)
+      ? "https://www.nixyah.com"
+      : normalizedBase;
+    return `${finalBase}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
+  function getDefaultProfilePhotoUrl(
+    accountType: "profile" | "residence" | "salon" | "adult_shop",
+    req?: any,
+  ): string | undefined {
+    if (accountType === "residence") {
+      return appUrl("/default-avatars/residence.png", req);
+    }
+    if (accountType === "salon") {
+      return appUrl("/default-avatars/salon.png", req);
+    }
+    if (accountType === "adult_shop") {
+      return appUrl("/default-avatars/adult-shop.png", req);
+    }
+    return undefined;
   }
 
   function apiBaseUrl(req: any): string {
@@ -309,7 +420,24 @@ export async function registerRoutes(
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
-  function deriveCookieDomainFromAppBase(): string | undefined {
+  function mediaUrl(req: any, params: { key?: string | null; sourceUrl?: string | null }): string | null {
+    const sourceUrl = sanitizeUrl(params.sourceUrl ?? null);
+    const key = String(params.key ?? "").trim();
+    if (!key && !sourceUrl) return null;
+    const searchParams = new URLSearchParams();
+    if (key) searchParams.set("key", key);
+    if (sourceUrl) searchParams.set("fallbackUrl", sourceUrl);
+    return apiUrl(req, `/api/media?${searchParams.toString()}`);
+  }
+
+  function resolveStoryMedia(req: any, row: { mediaUrl?: string | null; mediaKey?: string | null }): string | null {
+    return mediaUrl(req, {
+      key: row.mediaKey ?? inferKeyFromUrl(sanitizeUrl(row.mediaUrl ?? null)),
+      sourceUrl: sanitizeUrl(row.mediaUrl ?? null),
+    });
+  }
+
+  function getLegacyDerivedCookieDomain(): string | undefined {
     try {
       const raw = String(env.APP_BASE_URL || "").trim();
       if (!raw) return undefined;
@@ -323,11 +451,184 @@ export async function registerRoutes(
     }
   }
 
+  function getConfiguredCookieDomain(): string | undefined {
+    const domain = String(process.env.SESSION_COOKIE_DOMAIN || "").trim();
+    return domain || undefined;
+  }
+
   function saveSession(req: any): Promise<void> {
     return new Promise((resolve) => {
       if (!req.session) return resolve();
       req.session.save(() => resolve());
     });
+  }
+
+  function regenerateSession(req: any): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!req.session) return resolve();
+      req.session.regenerate((err: unknown) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+  }
+
+  function getSessionCookieOptions(domain?: string) {
+    const isProd = process.env.NODE_ENV === "production";
+    const sameSite = ((process.env.SESSION_COOKIE_SAMESITE as any) || (isProd ? "none" : "lax")) as
+      | "lax"
+      | "strict"
+      | "none";
+
+    return {
+      path: "/",
+      httpOnly: true,
+      sameSite,
+      secure: isProd,
+      ...(domain ? { domain } : {}),
+    };
+  }
+
+  const SESSION_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  const SESSION_TOKEN_TTL_MS = SESSION_COOKIE_MAX_AGE_MS;
+
+  function getSessionSecret(): string {
+    return process.env.SECRET_TOKEN || process.env.SESSION_SECRET || "dev-secret";
+  }
+
+  function formatSameSite(value: "lax" | "strict" | "none"): string {
+    if (value === "none") return "None";
+    if (value === "strict") return "Strict";
+    return "Lax";
+  }
+
+  function buildSessionCookieString(sessionId: string, domain?: string): string {
+    const options = getSessionCookieOptions(domain);
+    const signature = crypto
+      .createHmac("sha256", getSessionSecret())
+      .update(sessionId)
+      .digest("base64")
+      .replace(/=+$/g, "");
+    const value = encodeURIComponent(`s:${sessionId}.${signature}`);
+    const expires = new Date(Date.now() + SESSION_COOKIE_MAX_AGE_MS).toUTCString();
+
+    return [
+      `connect.sid=${value}`,
+      "Path=/",
+      `Expires=${expires}`,
+      "HttpOnly",
+      options.secure ? "Secure" : "",
+      `SameSite=${formatSameSite(options.sameSite)}`,
+      options.domain ? `Domain=${options.domain}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  function buildClearedSessionCookieString(domain?: string): string {
+    const options = getSessionCookieOptions(domain);
+    return [
+      "connect.sid=",
+      "Path=/",
+      "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+      "Max-Age=0",
+      "HttpOnly",
+      options.secure ? "Secure" : "",
+      `SameSite=${formatSameSite(options.sameSite)}`,
+      options.domain ? `Domain=${options.domain}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  function mirrorSetCookies(res: any, cookieStrings: string[]) {
+    if (cookieStrings.length === 0) return;
+    res.setHeader("x-session-bridge", Buffer.from(JSON.stringify(cookieStrings), "utf8").toString("base64"));
+  }
+
+  function mirrorSessionCookie(res: any, sessionId: string) {
+    const configuredDomain = getConfiguredCookieDomain();
+    mirrorSetCookies(res, [buildSessionCookieString(sessionId, configuredDomain)]);
+  }
+
+  function createSessionToken(auth: { userId: string; profileId: string }): string {
+    const payload = Buffer.from(
+      JSON.stringify({
+        userId: auth.userId,
+        profileId: auth.profileId,
+        exp: Date.now() + SESSION_TOKEN_TTL_MS,
+      }),
+      "utf8",
+    ).toString("base64url");
+    const signature = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+    return `${payload}.${signature}`;
+  }
+
+  function readSessionToken(token: string | null | undefined): { userId: string; profileId: string } | null {
+    const raw = String(token ?? "").trim();
+    if (!raw) return null;
+    const [payload, signature] = raw.split(".");
+    if (!payload || !signature) return null;
+    const expected = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+    const left = Buffer.from(signature);
+    const right = Buffer.from(expected);
+    if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+      return null;
+    }
+    try {
+      const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+        userId?: string;
+        profileId?: string;
+        exp?: number;
+      };
+      if (!decoded?.userId || !decoded?.profileId || !decoded?.exp) return null;
+      if (Number(decoded.exp) <= Date.now()) return null;
+      return { userId: String(decoded.userId), profileId: String(decoded.profileId) };
+    } catch {
+      return null;
+    }
+  }
+
+  function csrfTokenFromSessionToken(token: string): string {
+    return crypto.createHmac("sha256", getSessionSecret()).update(`csrf:${token}`).digest("hex");
+  }
+
+  function clearSessionCookie(res: any) {
+    const configuredDomain = getConfiguredCookieDomain();
+    const legacyDomain = getLegacyDerivedCookieDomain();
+
+    res.clearCookie("connect.sid", getSessionCookieOptions());
+    if (configuredDomain) {
+      res.clearCookie("connect.sid", getSessionCookieOptions(configuredDomain));
+    }
+    if (legacyDomain && legacyDomain !== configuredDomain) {
+      res.clearCookie("connect.sid", getSessionCookieOptions(legacyDomain));
+    }
+    res.clearCookie("connect.sid", { path: "/" });
+    mirrorSetCookies(
+      res,
+      [
+        buildClearedSessionCookieString(),
+        ...(configuredDomain ? [buildClearedSessionCookieString(configuredDomain)] : []),
+        ...(legacyDomain && legacyDomain !== configuredDomain ? [buildClearedSessionCookieString(legacyDomain)] : []),
+      ],
+    );
+  }
+
+  async function establishAuthenticatedSession(
+    req: any,
+    res: any,
+    auth: { userId: string; profileId: string },
+  ) {
+    clearSessionCookie(res);
+    await regenerateSession(req);
+    req.session.userId = auth.userId;
+    req.session.profileId = auth.profileId;
+    req.session.csrfToken = generateToken();
+    await saveSession(req);
+    if (req.sessionID) {
+      mirrorSessionCookie(res, String(req.sessionID));
+    }
   }
 
   function ensureCsrfToken(req: any): string {
@@ -338,13 +639,30 @@ export async function registerRoutes(
   }
 
   function isCsrfExemptPath(path: string): boolean {
-    return path === "/api/payments/paystack/webhook";
+    return [
+      "/api/login",
+      "/api/signup",
+      "/api/password/forgot",
+      "/api/password/reset",
+      "/api/payments/paystack/webhook",
+    ].includes(path);
   }
 
   async function redirectAfterSessionSave(req: any, res: any, url: string): Promise<void> {
     await saveSession(req);
     res.redirect(url);
   }
+
+  app.use((req, _res, next) => {
+    if (req.session?.userId && req.session?.profileId) return next();
+    const token = String(req.get?.("x-session-token") ?? "").trim();
+    const auth = readSessionToken(token);
+    if (!auth || !req.session) return next();
+    req.session.userId = auth.userId;
+    req.session.profileId = auth.profileId;
+    req.session.csrfToken = csrfTokenFromSessionToken(token);
+    next();
+  });
 
   async function requireTurnstile(req: any, res: any, token: unknown): Promise<boolean> {
     const secret = (env as any).TURNSTILE_SECRET_KEY as string | undefined;
@@ -570,26 +888,44 @@ export async function registerRoutes(
     buttonLabel?: string;
     buttonUrl?: string;
     footer?: string;
+    logoUrl?: string;
   }): string {
+    const logo = opts.logoUrl
+      ? `
+        <div style="margin:0 auto 10px auto;width:52px;height:52px;border-radius:16px;background:#fff5f6;border:1px solid #fecdd3;display:flex;align-items:center;justify-content:center;">
+          <img src="${opts.logoUrl}" alt="NIXYAH" width="32" height="32" style="display:block;width:32px;height:32px;border:0;outline:none;" />
+        </div>
+      `
+      : "";
+
     const button = opts.buttonLabel && opts.buttonUrl
       ? `
         <tr>
-          <td align="center" style="padding: 24px 24px 8px 24px;">
-            <a href="${opts.buttonUrl}" target="_blank" rel="noopener"
-              style="
-                display: inline-block;
-                padding: 12px 24px;
-                border-radius: 999px;
-                background: linear-gradient(135deg,#ec4899,#8b5cf6);
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: 600;
-                text-decoration: none;
-                letter-spacing: 0.02em;
-              "
-            >
-              ${opts.buttonLabel}
-            </a>
+          <td style="padding: 8px 32px 0 32px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate;border-spacing:0;">
+              <tr>
+                <td style="padding:20px 22px;border:1px solid #e5e7eb;border-radius:18px;background:#f8fafc;">
+                  <div style="font-size:13px;line-height:1.6;color:#475467;margin:0 0 14px 0;">
+                    Utilise le bouton ci-dessous pour continuer en toute sécurité.
+                  </div>
+                  <a href="${opts.buttonUrl}" target="_blank" rel="noopener"
+                    style="
+                      display:inline-block;
+                      padding:14px 22px;
+                      border-radius:14px;
+                      background:#d61f45;
+                      color:#ffffff;
+                      font-size:14px;
+                      font-weight:600;
+                      text-decoration:none;
+                      letter-spacing:0.01em;
+                    "
+                  >
+                    ${opts.buttonLabel}
+                  </a>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
       `
@@ -597,7 +933,7 @@ export async function registerRoutes(
 
     const body = opts.body
       ? `<tr>
-            <td style="padding: 0 24px 8px 24px; font-size: 14px; line-height: 1.6; color: #4b5563;">
+            <td style="padding: 0 32px 8px 32px; font-size: 15px; line-height: 1.75; color: #475467;">
               ${opts.body}
             </td>
           </tr>`
@@ -605,46 +941,265 @@ export async function registerRoutes(
 
     const footer = opts.footer
       ? `<tr>
-            <td style="padding: 16px 24px 0 24px; font-size: 11px; line-height: 1.5; color: #9ca3af;">
-              ${opts.footer}
+            <td style="padding: 18px 32px 0 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate;border-spacing:0;">
+                <tr>
+                  <td style="padding:16px 18px;border-radius:16px;background:#f8fafc;border:1px solid #e5e7eb;font-size:12px;line-height:1.7;color:#667085;">
+                    ${opts.footer}
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>`
       : "";
 
     return `
-      <div style="background-color:#0b0b10;padding:32px 16px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;background-color:#0f172a;border-radius:24px;border:1px solid rgba(148,163,184,0.35);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <div style="margin:0;padding:32px 16px;background-color:#f4f6f8;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto;border-collapse:separate;border-spacing:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
           <tr>
-            <td style="padding:20px 24px 8px 24px;border-bottom:1px solid rgba(148,163,184,0.25);">
-              <div style="display:flex;align-items:center;gap:8px;">
-                <div style="width:32px;height:32px;border-radius:999px;background:linear-gradient(135deg,#ec4899,#8b5cf6);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">N</div>
-                <div style="font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#9ca3af;">NIXYAH</div>
+            <td style="padding:0 0 14px 0;">
+              ${logo}
+              <div style="font-size:12px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#111827;text-align:center;">
+                NIXYAH
+              </div>
+              <div style="margin-top:8px;font-size:12px;line-height:1.5;color:#667085;text-align:center;">
+                Notification de compte
               </div>
             </td>
           </tr>
           <tr>
-            <td style="padding:20px 24px 4px 24px;">
-              <h1 style="margin:0;font-size:18px;line-height:1.4;font-weight:600;color:#e5e7eb;">
-                ${opts.title}
-              </h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:0 24px 8px 24px;font-size:14px;line-height:1.6;color:#9ca3af;">
-              ${opts.intro}
-            </td>
-          </tr>
-          ${body}
-          ${button}
-          ${footer}
-          <tr>
-            <td style="padding:24px 24px 24px 24px;font-size:11px;line-height:1.6;color:#6b7280;border-top:1px solid rgba(31,41,55,0.8);">
-              Cet email est envoyé automatiquement par la plateforme NIXYAH. Merci de ne pas y répondre directement.
+            <td style="background-color:#ffffff;border:1px solid #e5e7eb;border-radius:24px;overflow:hidden;box-shadow:0 10px 30px rgba(17,24,39,0.05);">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate;border-spacing:0;">
+                <tr>
+                  <td style="padding:28px 32px 10px 32px;">
+                    <div style="display:inline-block;padding:6px 10px;border-radius:999px;background:#f3f4f6;color:#344054;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">
+                      Acces securise
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 32px 8px 32px;">
+                    <h1 style="margin:0;font-size:28px;line-height:1.25;font-weight:700;color:#101828;">
+                      ${opts.title}
+                    </h1>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 32px 14px 32px;font-size:15px;line-height:1.75;color:#344054;">
+                    ${opts.intro}
+                  </td>
+                </tr>
+                ${body}
+                ${button}
+                ${footer}
+                <tr>
+                  <td style="padding:22px 32px 0 32px;">
+                    <div style="height:1px;background:#eaecf0;"></div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:18px 32px 30px 32px;font-size:12px;line-height:1.75;color:#667085;">
+                    Message automatique. Si tu n'es pas a l'origine de cette demande, tu peux simplement ignorer cet email.
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
         </table>
       </div>
     `;
+  }
+
+  const EVENT_PUBLISH_TOKEN_COST = 15;
+
+  function escapeHtml(value: unknown): string {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatEventPrice(amount: number | null | undefined, currency: string | null | undefined): string {
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) return "Gratuit";
+    return `${Number(amount)} ${(currency || "XOF").toUpperCase()}`;
+  }
+
+  function normalizeEventImageUrls(imageUrls: string[] | null | undefined, imageUrl?: string | null): string[] {
+    const values = [imageUrl ?? null, ...(imageUrls ?? [])]
+      .map((value) => sanitizeUrl(value))
+      .filter((value): value is string => Boolean(value));
+    return Array.from(new Set(values)).slice(0, 2);
+  }
+
+  async function getCurrentEventPublisher(req: any, executor: any = db) {
+    const userId = req.session?.userId as string | undefined;
+    const profileId = req.session?.profileId as string | undefined;
+    if (!userId || !profileId) {
+      throw Object.assign(new Error("Not logged in"), { status: 401 });
+    }
+
+    const admin = await isAdmin(req);
+    const [profile] = await executor
+      .select({
+        id: profiles.id,
+        userId: profiles.userId,
+        pseudo: profiles.pseudo,
+        accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+      })
+      .from(profiles)
+      .where(eq(profiles.id, profileId))
+      .limit(1);
+
+    if (!profile) {
+      throw Object.assign(new Error("Profil introuvable"), { status: 404 });
+    }
+    if (profile.userId !== userId) {
+      throw Object.assign(new Error("Forbidden"), { status: 403 });
+    }
+
+    const accountType = String((profile as any).accountType ?? "profile");
+    if (!admin && accountType !== "salon" && accountType !== "residence") {
+      throw Object.assign(new Error("Seuls les salons et résidences peuvent publier un évènement."), {
+        status: 403,
+      });
+    }
+
+    return { userId, profileId, admin, profile, accountType };
+  }
+
+  async function sendEventRegistrationEmail(opts: {
+    req?: any;
+    to: string;
+    eventTitle: string;
+    eventDate: string;
+    eventCity: string;
+    guestName: string;
+    priceType: "free" | "paid";
+    amount?: number | null;
+    currency?: string | null;
+  }) {
+    if (!resend) return;
+    const logoUrl = appUrl("/favicon.png", opts.req);
+    const price = opts.priceType === "paid" ? formatEventPrice(opts.amount, opts.currency) : "Gratuit";
+    const html = renderEmailLayout({
+      title: "Inscription confirmée",
+      intro: `Bonjour ${escapeHtml(opts.guestName)}, ta participation à l’évènement ${escapeHtml(opts.eventTitle)} est enregistrée.`,
+      body:
+        `Date : <strong>${escapeHtml(opts.eventDate)}</strong><br />` +
+        `Ville : <strong>${escapeHtml(opts.eventCity)}</strong><br />` +
+        `Tarif : <strong>${escapeHtml(price)}</strong><br /><br />` +
+        `La plateforme ne garantit pas la véracité de l’évènement. Renseigne-toi avant toute action. Aucun remboursement n’est possible après décision de participation.`,
+      logoUrl,
+    });
+
+    await resend.emails.send({
+      from: resendFrom,
+      to: opts.to,
+      subject: `Inscription – ${opts.eventTitle}`,
+      html,
+      text:
+        `Bonjour ${opts.guestName},\n\n` +
+        `Ta participation à l’évènement ${opts.eventTitle} est enregistrée.\n` +
+        `Date: ${opts.eventDate}\nVille: ${opts.eventCity}\nTarif: ${price}\n\n` +
+        `La plateforme ne garantit pas la véracité de l’évènement. Aucun remboursement n’est possible.\n`,
+    });
+  }
+
+  async function sendEventOrganizerNotificationEmail(opts: {
+    req?: any;
+    organizerEmail: string;
+    eventTitle: string;
+    eventDate: string;
+    guestName: string;
+    guestEmail: string;
+    guestPhone?: string | null;
+    guestWhatsapp?: string | null;
+  }) {
+    if (!resend) return;
+    const html = renderEmailLayout({
+      title: "Nouvelle inscription",
+      intro: `Un participant vient de s’inscrire à ${escapeHtml(opts.eventTitle)}.`,
+      body:
+        `Date : <strong>${escapeHtml(opts.eventDate)}</strong><br />` +
+        `Nom : <strong>${escapeHtml(opts.guestName)}</strong><br />` +
+        `Email : <strong>${escapeHtml(opts.guestEmail)}</strong><br />` +
+        `Téléphone : <strong>${escapeHtml(opts.guestPhone || "—")}</strong><br />` +
+        `WhatsApp : <strong>${escapeHtml(opts.guestWhatsapp || "—")}</strong><br />` +
+        `Statut : <strong>Inscription enregistrée</strong>`,
+      logoUrl: appUrl("/favicon.png", opts.req),
+    });
+
+    await resend.emails.send({
+      from: resendFrom,
+      to: opts.organizerEmail,
+      subject: `Nouvelle inscription – ${opts.eventTitle}`,
+      html,
+      text:
+        `Nouvelle inscription – ${opts.eventTitle}\n\n` +
+        `Date: ${opts.eventDate}\nNom: ${opts.guestName}\nEmail: ${opts.guestEmail}\n` +
+        `Téléphone: ${opts.guestPhone || "—"}\nWhatsApp: ${opts.guestWhatsapp || "—"}\n` +
+        `Statut: Inscription enregistrée\n`,
+    });
+  }
+
+  async function sendEventReminderEmails(eventId: string, req?: any): Promise<{ sent: number }> {
+    if (!resend) return { sent: 0 };
+
+    const [eventRow] = await db
+      .select({
+        id: events.id,
+        title: events.title,
+        city: events.city,
+        startsAt: events.startsAt,
+      })
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    if (!eventRow) return { sent: 0 };
+
+    const registrations = await db
+      .select({
+        guestName: eventRegistrations.guestName,
+        guestEmail: eventRegistrations.guestEmail,
+        notifyByEmail: eventRegistrations.notifyByEmail,
+      })
+      .from(eventRegistrations)
+      .where(
+        and(
+          eq(eventRegistrations.eventId, eventId),
+          eq(eventRegistrations.paymentStatus, "not_required"),
+        ),
+      )
+      .limit(500);
+
+    let sent = 0;
+    for (const registration of registrations) {
+      if (!registration.notifyByEmail) continue;
+      const html = renderEmailLayout({
+        title: "Rappel évènement",
+        intro: `Bonjour ${escapeHtml(registration.guestName)}, l’évènement ${escapeHtml(eventRow.title)} approche.`,
+        body:
+          `Date : <strong>${escapeHtml(new Date(eventRow.startsAt).toLocaleString("fr-FR"))}</strong><br />` +
+          `Ville : <strong>${escapeHtml(eventRow.city)}</strong><br /><br />` +
+          `Renseigne-toi bien avant toute action. Aucun remboursement n’est possible.`,
+        logoUrl: appUrl("/favicon.png", req),
+      });
+      await resend.emails.send({
+        from: resendFrom,
+        to: registration.guestEmail,
+        subject: `Rappel – ${eventRow.title}`,
+        html,
+        text:
+          `Bonjour ${registration.guestName},\n\n` +
+          `Rappel pour ${eventRow.title}\nDate: ${new Date(eventRow.startsAt).toLocaleString("fr-FR")}\n` +
+          `Ville: ${eventRow.city}\n`,
+      });
+      sent += 1;
+    }
+
+    return { sent };
   }
 
   async function sendVerificationEmail(
@@ -671,26 +1226,28 @@ export async function registerRoutes(
       .where(eq(users.id, userId));
 
     const verifyLink = appUrl(`/email/verify?token=${encodeURIComponent(token)}`);
+    const logoUrl = appUrl("/favicon.png");
 
     try {
       const html = renderEmailLayout({
-        title: "Confirme ton email pour activer ton espace",
+        title: "Confirme ton adresse email",
         intro:
-          "Merci d'avoir créé un compte sur <strong>NIXYAH</strong>. Nous te demandons de confirmer ton adresse email pour sécuriser ton espace et activer la publication d'annonces.",
+          "Ton inscription est presque terminée. Confirme simplement ton adresse email pour sécuriser ton accès et activer la suite.",
         body:
-          "Clique sur le bouton ci‑dessous pour confirmer ton email. Si tu n'es pas à l'origine de cette demande, tu peux ignorer ce message.",
-        buttonLabel: "Confirmer mon email",
+          "Clique sur le bouton ci-dessous pour valider ton email. Le lien reste disponible pendant quelques jours.",
+        buttonLabel: "Confirmer l’adresse email",
         buttonUrl: verifyLink,
+        logoUrl,
         footer:
-          "Après confirmation, tu pourras publier des annonces, gérer ta visibilité et mettre à jour tes informations en quelques clics.",
+          "Si le bouton ne fonctionne pas, ouvre ce lien dans ton navigateur :<br /><a href=\"${verifyLink}\" target=\"_blank\" rel=\"noopener\" style=\"color:#111827;word-break:break-all;\">${verifyLink}</a>",
       });
 
       const result = await resend.emails.send({
         from: resendFrom,
         to: email,
-        subject: "Confirme ton email – NIXYAH",
+        subject: "Confirme ton adresse email",
         html,
-        text: `Merci d'avoir créé un compte sur NIXYAH.\n\nClique sur ce lien pour confirmer ton email : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
+        text: `Ton inscription est presque terminée.\n\nConfirme ton adresse email via ce lien : ${verifyLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore simplement ce message.`,
       });
 
       return { sent: true, token, messageId: (result as any)?.id };
@@ -735,25 +1292,27 @@ export async function registerRoutes(
       .where(eq(users.id, userId));
 
     const resetLink = appUrl(`/password/reset?token=${encodeURIComponent(token)}`);
+    const logoUrl = appUrl("/favicon.png");
 
     const html = renderEmailLayout({
-      title: "Réinitialise ton mot de passe",
+      title: "Réinitialisation du mot de passe",
       intro:
-        "Tu as demandé à réinitialiser ton mot de passe sur <strong>NIXYAH</strong>.",
+        "Une demande de réinitialisation de mot de passe a été reçue pour cette adresse email.",
       body:
-        "Pour choisir un nouveau mot de passe, clique sur le bouton ci‑dessous. Ce lien est valable pendant <strong>1 heure</strong> pour des raisons de sécurité.",
-      buttonLabel: "Choisir un nouveau mot de passe",
+        "Pour définir un nouveau mot de passe, clique sur le bouton ci-dessous. Ce lien reste valable pendant <strong>1 heure</strong>.",
+      buttonLabel: "Définir un nouveau mot de passe",
       buttonUrl: resetLink,
+      logoUrl,
       footer:
-        "Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email. Ton mot de passe actuel restera valide.",
+        `Si tu n'es pas à l'origine de cette demande, tu peux ignorer cet email.<br /><br />Lien direct : <a href="${resetLink}" target="_blank" rel="noopener" style="color:#111827;word-break:break-all;">${resetLink}</a>`,
     });
 
     await resend.emails.send({
       from: resendFrom,
       to: email,
-      subject: "Réinitialise ton mot de passe – NIXYAH",
+      subject: "Réinitialisation du mot de passe",
       html,
-      text: `Tu as demandé à réinitialiser ton mot de passe sur NIXYAH.\n\nLien (valable 1h) : ${resetLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore ce message.`,
+      text: `Une demande de réinitialisation de mot de passe a été reçue.\n\nLien valable 1h : ${resetLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore simplement ce message.`,
     });
   }
 
@@ -762,13 +1321,14 @@ export async function registerRoutes(
     const token = String(req.get?.("x-admin-token") ?? "");
     if (env.ADMIN_TOKEN && token && token === env.ADMIN_TOKEN) return true;
 
-    // 2) Session-based admin (preferred): compare email (or fallback to username for backward-compat)
+    // 2) Session-based admin
     const userId = req.session?.userId as string | undefined;
     if (!userId) return false;
-    if (!env.ADMIN_EMAIL) return false;
+    if (env.ADMIN_USER_ID && userId === env.ADMIN_USER_ID) return true;
 
     const [u] = await db
       .select({
+        id: users.id,
         username: users.username,
         email: hasUsersEmail ? (users as any).email : sql<string | null>`null`,
         emailVerified: hasUsersEmailVerified ? (users as any).emailVerified : sql<boolean>`false`,
@@ -778,15 +1338,23 @@ export async function registerRoutes(
       .limit(1);
 
     if (!u) return false;
-    const adminEmail = env.ADMIN_EMAIL.toLowerCase();
     const email = (u as any).email ? String((u as any).email).toLowerCase() : null;
     const username = String(u.username).toLowerCase();
-    // If email-based admin is used, require verified email (when column exists).
-    if (email && email === adminEmail) {
-      if (hasUsersEmailVerified && !(u as any).emailVerified) return false;
+
+    if (env.ADMIN_USERNAME && username === env.ADMIN_USERNAME.toLowerCase()) {
       return true;
     }
-    return username === adminEmail;
+
+    if (env.ADMIN_EMAIL) {
+      const adminEmail = env.ADMIN_EMAIL.toLowerCase();
+      if (email && email === adminEmail) {
+        if (hasUsersEmailVerified && !(u as any).emailVerified) return false;
+        return true;
+      }
+      if (username === adminEmail) return true;
+    }
+
+    return false;
   }
 
   function getClientIp(req: any): string | null {
@@ -911,13 +1479,137 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  app.get("/api/healthz", (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  function xmlEscape(value: string): string {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
+  app.get("/robots.txt", (req, res) => {
+    const sitemapUrl = appUrl("/sitemap.xml", req);
+    res.type("text/plain");
+    res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+    res.send(
+      [
+        "User-agent: *",
+        "Allow: /",
+        "Disallow: /api/",
+        "Disallow: /dashboard",
+        "Disallow: /stories/new",
+        "Disallow: /signup",
+        "Disallow: /login",
+        "Disallow: /password/forgot",
+        "Disallow: /password/reset",
+        "Disallow: /email/verify",
+        "Disallow: /settings",
+        "Disallow: /post-intent",
+        "Disallow: /annonce/new",
+        "Disallow: /admin",
+        "Disallow: /loader",
+        "",
+        `Sitemap: ${sitemapUrl}`,
+        "",
+      ].join("\n"),
+    );
+  });
+
+  app.get(
+    "/sitemap.xml",
+    asyncHandler(async (req, res) => {
+      const staticEntries = [
+        { path: "/", lastmod: null, changefreq: "weekly", priority: "1.0" },
+        { path: "/start", lastmod: null, changefreq: "daily", priority: "0.95" },
+        { path: "/explore", lastmod: null, changefreq: "daily", priority: "0.9" },
+        { path: "/annonces", lastmod: null, changefreq: "daily", priority: "0.9" },
+        { path: "/vip", lastmod: null, changefreq: "daily", priority: "0.8" },
+        { path: "/events", lastmod: null, changefreq: "weekly", priority: "0.75" },
+        { path: "/adult-products", lastmod: null, changefreq: "daily", priority: "0.8" },
+        { path: "/conditions", lastmod: null, changefreq: "monthly", priority: "0.3" },
+        { path: "/privacy", lastmod: null, changefreq: "monthly", priority: "0.3" },
+        { path: "/cookies", lastmod: null, changefreq: "monthly", priority: "0.3" },
+      ];
+
+      const profileRows = await db
+        .select({
+          id: profiles.id,
+          updatedAt: profiles.updatedAt,
+          createdAt: profiles.createdAt,
+        })
+        .from(profiles)
+        .where(hasProfilesVisibility ? eq(profiles.visible, true) : undefined)
+        .orderBy(desc(profiles.updatedAt))
+        .limit(5000);
+
+      const productRows = await db
+        .select({
+          id: adultProductsTable.id,
+          updatedAt: (adultProductsTable as any).updatedAt,
+          createdAt: adultProductsTable.createdAt,
+        })
+        .from(adultProductsTable)
+        .where(eq(adultProductsTable.active, true))
+        .orderBy(desc((adultProductsTable as any).updatedAt))
+        .limit(5000);
+
+      const urls = [
+        ...staticEntries.map((entry) => ({
+          loc: appUrl(entry.path, req),
+          lastmod: entry.lastmod,
+          changefreq: entry.changefreq,
+          priority: entry.priority,
+        })),
+        ...profileRows.map((row) => ({
+          loc: appUrl(`/profile/${row.id}`, req),
+          lastmod: new Date(row.updatedAt ?? row.createdAt).toISOString(),
+          changefreq: "daily",
+          priority: "0.7",
+        })),
+        ...productRows.map((row) => ({
+          loc: appUrl(`/adult-products/${row.id}`, req),
+          lastmod: new Date((row as any).updatedAt ?? row.createdAt).toISOString(),
+          changefreq: "weekly",
+          priority: "0.65",
+        })),
+      ];
+
+      const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+        .map(
+          (url) =>
+            `  <url>\n    <loc>${xmlEscape(url.loc)}</loc>\n${
+              url.lastmod ? `    <lastmod>${xmlEscape(url.lastmod)}</lastmod>\n` : ""
+            }    <changefreq>${url.changefreq}</changefreq>\n    <priority>${url.priority}</priority>\n  </url>`,
+        )
+        .join("\n")}\n</urlset>`;
+
+      res.type("application/xml");
+      res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+      res.send(body);
+    }),
+  );
+
   app.get(
     "/api/csrf-token",
     asyncHandler(async (req, res) => {
       const csrfToken = ensureCsrfToken(req);
       await saveSession(req);
+      if (req.sessionID) {
+        mirrorSessionCookie(res, String(req.sessionID));
+      }
       res.setHeader("Cache-Control", "no-store");
-      res.json({ csrfToken });
+      res.json({
+        csrfToken,
+        sessionToken:
+          req.session?.userId && req.session?.profileId
+            ? createSessionToken({ userId: String(req.session.userId), profileId: String(req.session.profileId) })
+            : null,
+      });
     }),
   );
 
@@ -927,6 +1619,14 @@ export async function registerRoutes(
 
     const expected = String(req.session?.csrfToken ?? "").trim();
     const provided = String(req.get("x-csrf-token") ?? "").trim();
+
+    if (expected && provided && expected === provided) {
+      return next();
+    }
+
+    if (hasTrustedCsrfOrigin(req)) {
+      return next();
+    }
 
     if (!expected || !provided || expected !== provided) {
       return res.status(419).json({ message: "Jeton CSRF manquant ou invalide." });
@@ -1067,13 +1767,15 @@ export async function registerRoutes(
         return res.redirect(appUrl(`/login?oauth=no_profile`));
       }
 
-      req.session.userId = (u as any).id;
-      req.session.profileId = p.id;
+      await establishAuthenticatedSession(req, res, {
+        userId: (u as any).id,
+        profileId: p.id,
+      });
 
       await logIpEvent({ req, kind: "login_success_google", userId: (u as any).id });
 
       // If state points to signup (common mistake), prefer dashboard for existing users.
-      return await redirectAfterSessionSave(req, res, appUrl(state));
+      return res.redirect(appUrl(state));
       } catch (e) {
         console.error("Google OAuth callback crashed", e);
         return res.redirect(appUrl(`/login?oauth=server_error`));
@@ -1105,11 +1807,20 @@ export async function registerRoutes(
           ...PUBLISHING_CONFIG.promote,
           extended: {
             ...PUBLISHING_CONFIG.promote.extended,
-            options: PUBLISHING_CONFIG.promote.extended.options.map((o) => ({
-              ...o,
-              pricePromo: Math.round(o.price * PROMO_FACTOR),
-              promoPercent: 30,
-            })),
+            options: PUBLISHING_CONFIG.promote.extended.options.map((o) => {
+              const supportsMoney = PUBLISHING_CONFIG.promote.extended.paymentMode.includes("money");
+
+              if (!supportsMoney) {
+                const { price: _price, ...rest } = o;
+                return rest;
+              }
+
+              return {
+                ...o,
+                pricePromo: Math.round(o.price * PROMO_FACTOR),
+                promoPercent: 30,
+              };
+            }),
           },
         },
         // Keep backend-only rules off the public config by default.
@@ -1171,10 +1882,9 @@ export async function registerRoutes(
         }
 
         const reference = `paystack_${crypto.randomUUID()}`;
-        const callbackUrl = apiUrl(
-          req,
-          `/api/payments/paystack/callback?reference=${encodeURIComponent(reference)}`,
-        );
+        const callbackUrl = apiUrl(req, "/api/payments/paystack/callback");
+        const cancelUrl = appUrl("/dashboard?pay=cancel&provider=paystack", req);
+        const paystackAmount = getPaystackAmountForPackage(pack);
         const initializeRes = await fetch("https://api.paystack.co/transaction/initialize", {
           method: "POST",
           headers: {
@@ -1183,11 +1893,12 @@ export async function registerRoutes(
           },
           body: JSON.stringify({
             email: customerEmail,
-            amount: pack.amount,
+            amount: String(paystackAmount),
             currency: pack.currency,
             reference,
             callback_url: callbackUrl,
             metadata: {
+              cancel_action: cancelUrl,
               userId,
               packageId: pack.id,
               tokens: pack.tokens,
@@ -1235,26 +1946,29 @@ export async function registerRoutes(
         const transaction = await getPaystackTransaction(reference);
         const metadata = (transaction.metadata ?? {}) as Record<string, unknown>;
         const userId = typeof metadata.userId === "string" ? metadata.userId : "";
-        const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
-        const pack = findTokenPackage(packageId);
         const amount = Number(transaction.amount ?? NaN);
         const currency = String(transaction.currency ?? "").toUpperCase();
         const status = String(transaction.status ?? "").toLowerCase();
+        const rawEventId = transaction.id ? String(transaction.id) : null;
 
-        if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== pack.amount || currency !== pack.currency) {
+        const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
+        const pack = findTokenPackage(packageId);
+        const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
+
+        if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== expectedAmount || currency !== pack.currency) {
           if (userId) {
             await recordPaymentFailure({
               userId,
               provider: "paystack",
               providerRef: reference,
-              rawEventId: transaction.id ? String(transaction.id) : null,
+              rawEventId,
               amount: Number.isFinite(amount) ? amount : null,
               currency: currency || null,
               packageId,
               reason: "paystack_callback_mismatch",
             });
           }
-          return res.redirect(appUrl("/dashboard?pay=cancel&provider=paystack"));
+          return res.redirect(appUrl("/dashboard?pay=cancel&provider=paystack", req));
         }
 
         await reconcileTokenPurchase({
@@ -1262,16 +1976,16 @@ export async function registerRoutes(
           provider: "paystack",
           providerRef: reference,
           pack,
-          amount,
+          amount: pack.amount,
           currency,
-          rawEventId: transaction.id ? String(transaction.id) : null,
+          rawEventId,
           meta: { reference, transactionId: transaction.id ?? null },
         });
 
-        return res.redirect(appUrl("/dashboard?pay=success&provider=paystack"));
+        return res.redirect(appUrl("/dashboard?pay=success&provider=paystack", req));
       } catch (e) {
         console.error("Paystack callback failed", e);
-        return res.redirect(appUrl("/dashboard?pay=cancel&provider=paystack"));
+        return res.redirect(appUrl("/dashboard?pay=cancel&provider=paystack", req));
       }
     }),
   );
@@ -1320,14 +2034,16 @@ export async function registerRoutes(
 
       const metadata = (event.data.metadata ?? {}) as Record<string, unknown>;
       const userId = typeof metadata.userId === "string" ? metadata.userId : "";
-      const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
-      const pack = findTokenPackage(packageId);
       const amount = Number(event.data.amount ?? NaN);
       const currency = String(event.data.currency ?? "").toUpperCase();
       const status = String(event.data.status ?? "").toLowerCase();
       const reference = String(event.data.reference);
 
-      if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== pack.amount || currency !== pack.currency) {
+      const packageId = typeof metadata.packageId === "string" ? metadata.packageId : "";
+      const pack = findTokenPackage(packageId);
+      const expectedAmount = pack ? getPaystackAmountForPackage(pack) : NaN;
+
+      if (!userId || !pack || status !== "success" || !Number.isFinite(amount) || amount !== expectedAmount || currency !== pack.currency) {
         if (userId) {
           await recordPaymentFailure({
             userId,
@@ -1348,7 +2064,7 @@ export async function registerRoutes(
         provider: "paystack",
         providerRef: reference,
         pack,
-        amount,
+        amount: pack.amount,
         currency,
         rawEventId: eventId,
         meta: { reference, transactionId: event.data.id ?? null },
@@ -1377,6 +2093,584 @@ export async function registerRoutes(
         telegramUrl: (env as any).SUPPORT_TELEGRAM_URL ?? "https://t.me/+cNj_edHZTyc2YWE0",
         turnstileRequired: Boolean((env as any).TURNSTILE_SECRET_KEY),
       });
+    }),
+  );
+
+  app.get(
+    "/api/events",
+    asyncHandler(async (req, res) => {
+      const limit = z
+        .string()
+        .optional()
+        .transform((v) => (v ? Number(v) : 50))
+        .pipe(z.number().int().min(1).max(100))
+        .parse(req.query.limit);
+
+      const now = new Date();
+      const rows = await db
+        .select({
+          id: events.id,
+          ownerProfileId: events.ownerProfileId,
+          title: events.title,
+          description: events.description,
+          city: events.city,
+          venue: events.venue,
+          startsAt: events.startsAt,
+          endsAt: events.endsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          priceCurrency: events.priceCurrency,
+          capacity: events.capacity,
+          contactWhatsapp: events.contactWhatsapp,
+          imageUrl: events.imageUrl,
+          imageUrls: events.imageUrls,
+          status: events.status,
+          createdAt: events.createdAt,
+          organizerPseudo: profiles.pseudo,
+          organizerPhotoUrl: profiles.photoUrl,
+          organizerAccountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+          registrationsCount:
+            sql<number>`(
+              select count(*)::int
+              from event_registrations er
+              where er.event_id = ${events.id}
+            )`,
+        })
+        .from(events)
+        .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+        .where(
+          and(
+            eq(events.status, "published"),
+            or(
+              gt(events.endsAt, now),
+              and(isNull(events.endsAt), gt(events.startsAt, now)),
+            ),
+          ),
+        )
+        .orderBy(events.startsAt)
+        .limit(limit);
+
+      res.json(
+        rows.map((row) => {
+          const registrationsCount = Number(row.registrationsCount ?? 0);
+          const capacity = row.capacity === null ? null : Number(row.capacity ?? 0);
+          return {
+            ...row,
+            imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+            organizer: {
+              profileId: row.ownerProfileId,
+              pseudo: row.organizerPseudo,
+              accountType: row.organizerAccountType,
+              photoUrl: sanitizeUrl(row.organizerPhotoUrl),
+            },
+            imageUrl: sanitizeUrl(row.imageUrl),
+            registrationsCount,
+            spotsLeft: capacity === null ? null : Math.max(0, capacity - registrationsCount),
+          };
+        }),
+      );
+    }),
+  );
+
+  app.get(
+    "/api/events/:id",
+    asyncHandler(async (req, res) => {
+      const id = z.string().uuid().parse(req.params.id);
+      const [row] = await db
+        .select({
+          id: events.id,
+          ownerProfileId: events.ownerProfileId,
+          title: events.title,
+          description: events.description,
+          city: events.city,
+          venue: events.venue,
+          startsAt: events.startsAt,
+          endsAt: events.endsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          priceCurrency: events.priceCurrency,
+          capacity: events.capacity,
+          contactWhatsapp: events.contactWhatsapp,
+          contactEmail: events.contactEmail,
+          imageUrl: events.imageUrl,
+          imageUrls: events.imageUrls,
+          status: events.status,
+          organizerPseudo: profiles.pseudo,
+          organizerPhotoUrl: profiles.photoUrl,
+          organizerAccountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+          registrationsCount:
+            sql<number>`(
+              select count(*)::int
+              from event_registrations er
+              where er.event_id = ${events.id}
+            )`,
+        })
+        .from(events)
+        .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+        .where(and(eq(events.id, id), eq(events.status, "published")))
+        .limit(1);
+
+      if (!row) return res.status(404).json({ message: "Évènement introuvable" });
+
+      const registrationsCount = Number(row.registrationsCount ?? 0);
+      const capacity = row.capacity === null ? null : Number(row.capacity ?? 0);
+
+      res.json({
+        ...row,
+        imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+        organizer: {
+          profileId: row.ownerProfileId,
+          pseudo: row.organizerPseudo,
+          accountType: row.organizerAccountType,
+          photoUrl: sanitizeUrl(row.organizerPhotoUrl),
+        },
+        imageUrl: sanitizeUrl(row.imageUrl),
+        registrationsCount,
+        spotsLeft: capacity === null ? null : Math.max(0, capacity - registrationsCount),
+      });
+    }),
+  );
+
+  app.get(
+    "/api/me/events",
+    asyncHandler(async (req, res) => {
+      const context = await getCurrentEventPublisher(req);
+      const rows = await db
+        .select({
+          id: events.id,
+          title: events.title,
+          description: events.description,
+          city: events.city,
+          venue: events.venue,
+          startsAt: events.startsAt,
+          endsAt: events.endsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          priceCurrency: events.priceCurrency,
+          capacity: events.capacity,
+          contactWhatsapp: events.contactWhatsapp,
+          contactEmail: events.contactEmail,
+          imageUrl: events.imageUrl,
+          imageUrls: events.imageUrls,
+          status: events.status,
+          publicationCreditsCharged: events.publicationCreditsCharged,
+          createdAt: events.createdAt,
+          updatedAt: events.updatedAt,
+          registrationsCount:
+            sql<number>`(
+              select count(*)::int
+              from event_registrations er
+              where er.event_id = ${events.id}
+            )`,
+        })
+        .from(events)
+        .where(eq(events.ownerProfileId, context.profileId))
+        .orderBy(desc(events.createdAt))
+        .limit(100);
+
+      res.json(
+        rows.map((row) => ({
+          ...row,
+          imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+          registrationsCount: Number(row.registrationsCount ?? 0),
+        })),
+      );
+    }),
+  );
+
+  app.post(
+    "/api/me/events",
+    asyncHandler(async (req, res) => {
+      await ensureIpNotBanned(req);
+      const payload = eventCreateSchema.parse(req.body);
+
+      const created = await db.transaction(async (tx) => {
+        const context = await getCurrentEventPublisher(req, tx);
+        const eventImageUrls = Array.from(new Set((payload.imageUrls ?? []).filter(Boolean))).slice(0, 2);
+        const primaryImageUrl = eventImageUrls[0] ?? payload.imageUrl ?? null;
+
+        if (!context.admin) {
+          const updated = await tx
+            .update(users)
+            .set({ tokensBalance: sql`${users.tokensBalance} - ${EVENT_PUBLISH_TOKEN_COST}` } as any)
+            .where(and(eq(users.id, context.userId), sql`${users.tokensBalance} >= ${EVENT_PUBLISH_TOKEN_COST}`))
+            .returning({ tokensBalance: users.tokensBalance });
+
+          if (!updated.length) {
+            throw Object.assign(new Error("Crédit insuffisant: 15 crédits sont requis pour publier un évènement."), {
+              status: 403,
+            });
+          }
+
+          await tx.insert(tokenTransactions).values({
+            userId: context.userId,
+            delta: -EVENT_PUBLISH_TOKEN_COST,
+            reason: "event_publish",
+            meta: {
+              profileId: context.profileId,
+              title: payload.title.trim(),
+              visibility: payload.visibility,
+              priceType: payload.priceType,
+            } as any,
+          } as any);
+        }
+
+        const [event] = await tx
+          .insert(events)
+          .values({
+            ownerProfileId: context.profileId,
+            title: payload.title.trim(),
+            description: payload.description?.trim() || null,
+            city: payload.city.trim(),
+            venue: payload.venue?.trim() || null,
+            startsAt: new Date(payload.startsAt),
+            endsAt: payload.endsAt ? new Date(payload.endsAt) : null,
+            visibility: payload.visibility,
+            priceType: payload.priceType,
+            priceAmount: payload.priceType === "paid" ? Number(payload.priceAmount ?? 0) : 0,
+            priceCurrency: payload.priceCurrency.toUpperCase(),
+            capacity: payload.capacity ?? null,
+            contactWhatsapp: payload.contactWhatsapp?.trim() || null,
+            contactEmail: payload.contactEmail?.trim().toLowerCase() || null,
+            imageUrl: primaryImageUrl,
+            imageUrls: eventImageUrls.length ? eventImageUrls : primaryImageUrl ? [primaryImageUrl] : null,
+            publicationCreditsCharged: context.admin ? 0 : EVENT_PUBLISH_TOKEN_COST,
+            legalNoticeAccepted: true,
+            status: payload.status ?? "published",
+            updatedAt: new Date(),
+          })
+          .returning({
+            id: events.id,
+            title: events.title,
+            status: events.status,
+            startsAt: events.startsAt,
+            publicationCreditsCharged: events.publicationCreditsCharged,
+          });
+
+        return event;
+      });
+
+      await logIpEvent({ req, kind: "event_publish" });
+      res.json(created);
+    }),
+  );
+
+  app.patch(
+    "/api/me/events/:id",
+    asyncHandler(async (req, res) => {
+      const eventId = z.string().uuid().parse(req.params.id);
+      const payload = eventUpdateSchema.parse(req.body);
+      const context = await getCurrentEventPublisher(req);
+
+      const [existing] = await db
+        .select({ id: events.id, ownerProfileId: events.ownerProfileId })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!existing) return res.status(404).json({ message: "Évènement introuvable" });
+      if (!context.admin && existing.ownerProfileId !== context.profileId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const nextValues: Record<string, unknown> = { updatedAt: new Date() };
+      const eventImageUrls =
+        payload.imageUrls !== undefined
+          ? Array.from(new Set((payload.imageUrls ?? []).filter(Boolean))).slice(0, 2)
+          : undefined;
+      if (payload.title !== undefined) nextValues.title = payload.title.trim();
+      if (payload.description !== undefined) nextValues.description = payload.description?.trim() || null;
+      if (payload.city !== undefined) nextValues.city = payload.city.trim();
+      if (payload.venue !== undefined) nextValues.venue = payload.venue?.trim() || null;
+      if (payload.startsAt !== undefined) nextValues.startsAt = new Date(payload.startsAt);
+      if (payload.endsAt !== undefined) nextValues.endsAt = payload.endsAt ? new Date(payload.endsAt) : null;
+      if (payload.visibility !== undefined) nextValues.visibility = payload.visibility;
+      if (payload.priceType !== undefined) nextValues.priceType = payload.priceType;
+      if (payload.priceAmount !== undefined) nextValues.priceAmount = payload.priceType === "free" ? 0 : payload.priceAmount ?? 0;
+      if (payload.priceCurrency !== undefined) nextValues.priceCurrency = payload.priceCurrency.toUpperCase();
+      if (payload.capacity !== undefined) nextValues.capacity = payload.capacity ?? null;
+      if (payload.contactWhatsapp !== undefined) nextValues.contactWhatsapp = payload.contactWhatsapp?.trim() || null;
+      if (payload.contactEmail !== undefined) nextValues.contactEmail = payload.contactEmail?.trim().toLowerCase() || null;
+      if (payload.imageUrl !== undefined) nextValues.imageUrl = payload.imageUrl ?? null;
+      if (eventImageUrls !== undefined) {
+        nextValues.imageUrls = eventImageUrls.length ? eventImageUrls : null;
+        if (payload.imageUrl === undefined) {
+          nextValues.imageUrl = eventImageUrls[0] ?? null;
+        }
+      }
+      if (payload.status !== undefined) nextValues.status = payload.status;
+      if (payload.legalNoticeAccepted !== undefined) nextValues.legalNoticeAccepted = payload.legalNoticeAccepted;
+
+      const [updated] = await db
+        .update(events)
+        .set(nextValues as any)
+        .where(eq(events.id, eventId))
+        .returning({
+          id: events.id,
+          title: events.title,
+          status: events.status,
+          updatedAt: events.updatedAt,
+        });
+
+      res.json(updated);
+    }),
+  );
+
+  app.get(
+    "/api/me/events/:id/registrations",
+    asyncHandler(async (req, res) => {
+      const eventId = z.string().uuid().parse(req.params.id);
+      const context = await getCurrentEventPublisher(req);
+
+      const [eventRow] = await db
+        .select({ id: events.id, ownerProfileId: events.ownerProfileId, title: events.title })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!eventRow) return res.status(404).json({ message: "Évènement introuvable" });
+      if (!context.admin && eventRow.ownerProfileId !== context.profileId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const rows = await db
+        .select({
+          id: eventRegistrations.id,
+          guestName: eventRegistrations.guestName,
+          guestEmail: eventRegistrations.guestEmail,
+          guestPhone: eventRegistrations.guestPhone,
+          guestWhatsapp: eventRegistrations.guestWhatsapp,
+          notifyByEmail: eventRegistrations.notifyByEmail,
+          notifyByWhatsapp: eventRegistrations.notifyByWhatsapp,
+          createdAt: eventRegistrations.createdAt,
+        })
+        .from(eventRegistrations)
+        .where(eq(eventRegistrations.eventId, eventId))
+        .orderBy(desc(eventRegistrations.createdAt))
+        .limit(500);
+
+      res.json({
+        event: eventRow,
+        attendees: rows,
+      });
+    }),
+  );
+
+  app.post(
+    "/api/me/events/:id/send-reminders",
+    asyncHandler(async (req, res) => {
+      const eventId = z.string().uuid().parse(req.params.id);
+      const context = await getCurrentEventPublisher(req);
+      const [eventRow] = await db
+        .select({ id: events.id, ownerProfileId: events.ownerProfileId })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      if (!eventRow) return res.status(404).json({ message: "Évènement introuvable" });
+      if (!context.admin && eventRow.ownerProfileId !== context.profileId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const result = await sendEventReminderEmails(eventId, req);
+      res.json({ ok: true, sent: result.sent });
+    }),
+  );
+
+  app.post(
+    "/api/events/:id/register",
+    asyncHandler(async (req, res) => {
+      await ensureIpNotBanned(req);
+      const eventId = z.string().uuid().parse(req.params.id);
+      const payload = eventRegistrationCreateSchema.parse(req.body);
+      const sessionUserId = req.session?.userId as string | undefined;
+      const guestEmail = payload.email.trim().toLowerCase();
+      const guestName = payload.name.trim();
+      const guestPhone = payload.phone?.trim() || null;
+      const guestWhatsapp = payload.whatsapp?.trim() || null;
+
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`select ${events.id} from ${events} where ${events.id} = ${eventId} for update`);
+
+        const [eventRow] = await tx
+          .select({
+            id: events.id,
+            ownerProfileId: events.ownerProfileId,
+            title: events.title,
+            city: events.city,
+            startsAt: events.startsAt,
+            endsAt: events.endsAt,
+            visibility: events.visibility,
+            priceType: events.priceType,
+            priceAmount: events.priceAmount,
+            priceCurrency: events.priceCurrency,
+            capacity: events.capacity,
+            status: events.status,
+            organizerEmail: sql<string | null>`coalesce(${events.contactEmail}, ${(users as any).email})`,
+          })
+          .from(events)
+          .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+          .leftJoin(users, eq(profiles.userId, users.id))
+          .where(eq(events.id, eventId))
+          .limit(1);
+
+        if (!eventRow || eventRow.status !== "published") {
+          throw Object.assign(new Error("Évènement introuvable"), { status: 404 });
+        }
+        if (new Date(eventRow.startsAt).getTime() <= Date.now()) {
+          throw Object.assign(new Error("Les inscriptions sont closes pour cet évènement."), { status: 400 });
+        }
+
+        const [existing] = await tx
+          .select({ id: eventRegistrations.id })
+          .from(eventRegistrations)
+          .where(
+            and(
+              eq(eventRegistrations.eventId, eventId),
+              sql`lower(${eventRegistrations.guestEmail}) = ${guestEmail}`,
+            ),
+          )
+          .limit(1);
+
+        if (existing) {
+          throw Object.assign(new Error("Cette adresse email est déjà inscrite à cet évènement."), { status: 409 });
+        }
+
+        const [{ count: registrationsCountRaw }] = await tx
+          .select({
+            count: sql<number>`count(*)::int`,
+          })
+          .from(eventRegistrations)
+          .where(eq(eventRegistrations.eventId, eventId));
+
+        const registrationsCount = Number(registrationsCountRaw ?? 0);
+        if (eventRow.capacity !== null && registrationsCount >= Number(eventRow.capacity ?? 0)) {
+          throw Object.assign(new Error("Cet évènement est complet."), { status: 400 });
+        }
+
+        const [registration] = await tx
+          .insert(eventRegistrations)
+          .values({
+            eventId,
+            userId: sessionUserId ?? null,
+            guestName,
+            guestEmail,
+            guestPhone,
+            guestWhatsapp,
+            paymentStatus: "not_required",
+            amount: null,
+            currency: null,
+            notifyByEmail: payload.notifyByEmail,
+            notifyByWhatsapp: payload.notifyByWhatsapp,
+            agreedNoRefund: true,
+            agreedDisclaimer: true,
+            updatedAt: new Date(),
+          } as any)
+          .returning({ id: eventRegistrations.id });
+
+        return {
+          registrationId: registration.id,
+          eventTitle: eventRow.title,
+          eventCity: eventRow.city,
+          eventDateLabel: new Date(eventRow.startsAt).toLocaleString("fr-FR"),
+          priceType: eventRow.priceType,
+          priceAmount: Number(eventRow.priceAmount ?? 0),
+          priceCurrency: eventRow.priceCurrency,
+          organizerEmail: eventRow.organizerEmail,
+        };
+      });
+
+      await sendEventRegistrationEmail({
+        req,
+        to: guestEmail,
+        eventTitle: result.eventTitle,
+        eventDate: result.eventDateLabel,
+        eventCity: result.eventCity,
+        guestName,
+        priceType: result.priceType,
+        amount: result.priceAmount,
+        currency: result.priceCurrency,
+      });
+      if (result.organizerEmail) {
+        await sendEventOrganizerNotificationEmail({
+          req,
+          organizerEmail: result.organizerEmail,
+          eventTitle: result.eventTitle,
+          eventDate: result.eventDateLabel,
+          guestName,
+          guestEmail,
+          guestPhone,
+          guestWhatsapp,
+        });
+      }
+      await logIpEvent({ req, kind: "event_register", userId: sessionUserId ?? null });
+      return res.json({ ok: true, status: "registered", registrationId: result.registrationId });
+    }),
+  );
+
+  app.get(
+    "/api/admin/events",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const rows = await db
+        .select({
+          id: events.id,
+          title: events.title,
+          city: events.city,
+          startsAt: events.startsAt,
+          visibility: events.visibility,
+          priceType: events.priceType,
+          priceAmount: events.priceAmount,
+          status: events.status,
+          ownerProfileId: events.ownerProfileId,
+          ownerPseudo: profiles.pseudo,
+          createdAt: events.createdAt,
+        })
+        .from(events)
+        .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
+        .orderBy(desc(events.createdAt))
+        .limit(500);
+
+      res.json(rows);
+    }),
+  );
+
+  app.patch(
+    "/api/admin/events/:id",
+    asyncHandler(async (req, res) => {
+      const ok = await isAdmin(req);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+
+      const eventId = z.string().uuid().parse(req.params.id);
+      const payload = eventUpdateSchema.parse(req.body);
+      const nextValues: Record<string, unknown> = { updatedAt: new Date() };
+      if (payload.title !== undefined) nextValues.title = payload.title.trim();
+      if (payload.description !== undefined) nextValues.description = payload.description?.trim() || null;
+      if (payload.city !== undefined) nextValues.city = payload.city.trim();
+      if (payload.venue !== undefined) nextValues.venue = payload.venue?.trim() || null;
+      if (payload.startsAt !== undefined) nextValues.startsAt = new Date(payload.startsAt);
+      if (payload.endsAt !== undefined) nextValues.endsAt = payload.endsAt ? new Date(payload.endsAt) : null;
+      if (payload.visibility !== undefined) nextValues.visibility = payload.visibility;
+      if (payload.priceType !== undefined) nextValues.priceType = payload.priceType;
+      if (payload.priceAmount !== undefined) nextValues.priceAmount = payload.priceType === "free" ? 0 : payload.priceAmount ?? 0;
+      if (payload.priceCurrency !== undefined) nextValues.priceCurrency = payload.priceCurrency.toUpperCase();
+      if (payload.capacity !== undefined) nextValues.capacity = payload.capacity ?? null;
+      if (payload.contactWhatsapp !== undefined) nextValues.contactWhatsapp = payload.contactWhatsapp?.trim() || null;
+      if (payload.contactEmail !== undefined) nextValues.contactEmail = payload.contactEmail?.trim().toLowerCase() || null;
+      if (payload.imageUrl !== undefined) nextValues.imageUrl = payload.imageUrl ?? null;
+      if (payload.status !== undefined) nextValues.status = payload.status;
+      if (payload.legalNoticeAccepted !== undefined) nextValues.legalNoticeAccepted = payload.legalNoticeAccepted;
+
+      const [updated] = await db
+        .update(events)
+        .set(nextValues as any)
+        .where(eq(events.id, eventId))
+        .returning({ id: events.id, status: events.status, updatedAt: events.updatedAt });
+
+      if (!updated) return res.status(404).json({ message: "Évènement introuvable" });
+      res.json(updated);
     }),
   );
 
@@ -1860,12 +3154,28 @@ export async function registerRoutes(
     }),
   );
 
-  app.get("/api/me", (req, res) => {
-    res.json({
-      userId: req.session?.userId ?? null,
-      profileId: req.session?.profileId ?? null,
-    });
-  });
+  app.get(
+    "/api/me",
+    asyncHandler(async (req, res) => {
+      const hasAuthenticatedSession = Boolean(req.session?.userId && req.session?.profileId);
+      const csrfToken = hasAuthenticatedSession ? ensureCsrfToken(req) : null;
+      if (hasAuthenticatedSession) {
+        await saveSession(req);
+      } else {
+        clearSessionCookie(res);
+      }
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        userId: req.session?.userId ?? null,
+        profileId: req.session?.profileId ?? null,
+        csrfToken,
+        sessionToken:
+          req.session?.userId && req.session?.profileId
+            ? createSessionToken({ userId: String(req.session.userId), profileId: String(req.session.profileId) })
+            : null,
+      });
+    }),
+  );
 
   app.patch(
     "/api/me/profile",
@@ -1881,6 +3191,8 @@ export async function registerRoutes(
           telegram: z.string().max(64).nullable().optional(),
           showTelegram: z.boolean().optional(),
           contactPreference: z.enum(["whatsapp", "telegram"]).optional(),
+          ville: z.string().trim().min(1).max(120).optional(),
+          lieu: z.string().trim().max(160).nullable().optional(),
           lat: z.number().min(-90).max(90).optional(),
           lng: z.number().min(-180).max(180).optional(),
           accuracy: z.number().min(0).max(5000).optional(),
@@ -1903,6 +3215,8 @@ export async function registerRoutes(
           ...(hasContactPref && payload.contactPreference !== undefined
             ? { contactPreference: payload.contactPreference }
             : {}),
+          ...(payload.ville !== undefined ? { ville: payload.ville } : {}),
+          ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
           ...(hasProfilesGeo && payload.lat !== undefined ? { lat: payload.lat } : {}),
           ...(hasProfilesGeo && payload.lng !== undefined ? { lng: payload.lng } : {}),
           ...(hasProfilesShowLocation && payload.showLocation !== undefined ? { showLocation: payload.showLocation } : {}),
@@ -1915,6 +3229,8 @@ export async function registerRoutes(
         .where(eq(profiles.id, profileId))
         .returning({
           id: profiles.id,
+          ville: profiles.ville,
+          lieu: hasProfilesPro ? profiles.lieu : (sql<string | null>`null` as any),
           visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
           phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
           showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
@@ -1947,12 +3263,8 @@ export async function registerRoutes(
 
   app.post("/api/logout", (req, res) => {
     req.session?.destroy(() => {
-      // Best-effort cookie clear (default cookie name used by express-session)
-      res.clearCookie("connect.sid");
-      const domain = deriveCookieDomainFromAppBase();
-      if (domain) {
-        res.clearCookie("connect.sid", { path: "/", domain });
-      }
+      clearSessionCookie(res);
+      res.setHeader("Cache-Control", "no-store");
       res.json({ ok: true });
     });
   });
@@ -2020,6 +3332,39 @@ export async function registerRoutes(
       });
 
       res.json({ key, publicUrl, viewUrl });
+    }),
+  );
+
+  app.get(
+    "/api/media",
+    asyncHandler(async (req, res) => {
+      const key = z
+        .string()
+        .optional()
+        .transform((value) => value?.trim() || "")
+        .parse(req.query.key);
+      const fallbackUrl = sanitizeUrl(
+        z
+          .string()
+          .optional()
+          .transform((value) => value?.trim() || "")
+          .parse(req.query.fallbackUrl),
+      );
+
+      if (!key && !fallbackUrl) {
+        return res.status(400).json({ message: "Missing media reference" });
+      }
+
+      if (key && (await hasObjectInR2(key))) {
+        const signedUrl = await createPresignedRead(key, 60 * 60);
+        return res.redirect(signedUrl);
+      }
+
+      if (fallbackUrl) {
+        return res.redirect(fallbackUrl);
+      }
+
+      return res.status(404).json({ message: "Media not found" });
     }),
   );
 
@@ -2108,12 +3453,17 @@ export async function registerRoutes(
 
       if (!p) return res.status(404).json({ message: "Profil introuvable" });
 
-      req.session.userId = u.id;
-      req.session.profileId = p.id;
+      await establishAuthenticatedSession(req, res, { userId: u.id, profileId: p.id });
 
       await logIpEvent({ req, kind: "login_success", userId: u.id });
 
-      res.json({ userId: u.id, profileId: p.id });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        userId: u.id,
+        profileId: p.id,
+        csrfToken: req.session.csrfToken,
+        sessionToken: createSessionToken({ userId: u.id, profileId: p.id }),
+      });
     }),
   );
 
@@ -2122,9 +3472,9 @@ export async function registerRoutes(
     asyncHandler(async (req, res) => {
       await ensureIpNotBanned(req);
       if (!(await requireTurnstile(req, res, (req.body as any)?.turnstileToken))) return;
-      // User can only create one profile per session
-      if (req.session?.profileId) {
-        return res.status(409).json({ message: "Profil déjà créé" });
+      // Never let signup continue on top of an already-linked session.
+      if (req.session?.userId || req.session?.profileId) {
+        return res.status(409).json({ message: "Une session est déjà active. Déconnecte-toi d'abord." });
       }
       const payload = signupSchema.parse(req.body);
 
@@ -2133,6 +3483,23 @@ export async function registerRoutes(
         | { provider: "google"; email: string }
         | undefined;
       const pendingEmail = pending?.provider === "google" ? pending.email : null;
+      const requestedEmail = hasUsersEmail
+        ? payload.email.trim()
+          ? payload.email.trim().toLowerCase()
+          : null
+        : null;
+      const emailToUse = requestedEmail ?? pendingEmail;
+
+      if (hasUsersEmail && !emailToUse) {
+        return res.status(400).json({ message: "Email requis pour créer un compte" });
+      }
+
+      const isGoogleVerifiedSignup = Boolean(pendingEmail && emailToUse && emailToUse === pendingEmail);
+      if (hasUsersEmail && hasUsersEmailVerified && !isGoogleVerifiedSignup && !env.RESEND_API_KEY) {
+        return res.status(503).json({
+          message: "Inscription indisponible pour le moment: la validation email n'est pas configurée.",
+        });
+      }
 
       // Basic uniqueness check (we also have DB uniques)
       const existing = await db
@@ -2142,6 +3509,17 @@ export async function registerRoutes(
         .limit(1);
       if (existing.length) {
         return res.status(409).json({ message: "Identifiant déjà utilisé" });
+      }
+
+      if (hasUsersEmail && emailToUse) {
+        const existingEmail = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(sql`lower(${(users as any).email}) = ${emailToUse}`)
+          .limit(1);
+        if (existingEmail.length) {
+          return res.status(409).json({ message: "Email déjà utilisé" });
+        }
       }
 
       const passwordHash = hashPassword(payload.password);
@@ -2164,78 +3542,87 @@ export async function registerRoutes(
         }
       }
 
-      const created = await db.transaction(async (tx) => {
-        const accountType = payload.accountType ?? "profile";
-        const userValues: any = { username, passwordHash };
-        if (hasUsersEmail) {
-          const rawEmail = payload.email?.trim() ? payload.email.trim().toLowerCase() : null;
-          const emailToUse = rawEmail ?? pendingEmail;
-          if (emailToUse) {
+      let created;
+      try {
+        created = await db.transaction(async (tx) => {
+          const accountType = payload.accountType ?? "profile";
+          const defaultPhotoUrl = payload.photoUrl ?? getDefaultProfilePhotoUrl(accountType, req);
+          const userValues: any = { username, passwordHash };
+          if (hasUsersEmail && emailToUse) {
             userValues.email = emailToUse;
             // If coming from verified Google OAuth, mark email as verified immediately.
-            if (hasUsersEmailVerified && pendingEmail && emailToUse === pendingEmail) {
+            if (hasUsersEmailVerified && isGoogleVerifiedSignup) {
               userValues.emailVerified = true;
               userValues.emailVerificationToken = null;
               userValues.emailVerificationSentAt = null;
             }
           }
+
+          const [u] = await tx
+            .insert(users)
+            .values(userValues)
+            .returning({ id: users.id, createdAt: users.createdAt, email: (users as any).email });
+
+          const [p] = await tx
+            .insert(profiles)
+            .values({
+              userId: u.id,
+              pseudo: payload.pseudo.trim(),
+              gender: payload.gender,
+              age: payload.age,
+              ville: payload.ville.trim(),
+              ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
+              photoUrl: defaultPhotoUrl,
+              photoKey: payload.photoKey,
+              ...(hasProfilesVisibility ? { visible: true } : {}),
+              ...(hasProfilesPro ? { isPro: accountType !== "profile" } : {}),
+              ...(hasAccountType ? { accountType } : {}),
+              // default availability shown in UI
+              ...(hasProfilesPro
+                ? { disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" } }
+                : {}),
+            })
+            .returning({
+              id: profiles.id,
+              pseudo: profiles.pseudo,
+              age: profiles.age,
+              ville: profiles.ville,
+              verified: profiles.verified,
+              photoUrl: profiles.photoUrl,
+              isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
+              visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+            });
+
+          // Optional: seed first photo into media table (for gallery)
+          if (hasProfileMedia && defaultPhotoUrl) {
+            await tx.insert(profileMedia).values({
+              profileId: p.id,
+              type: "photo",
+              url: defaultPhotoUrl,
+              key: payload.photoKey,
+              sortOrder: 0,
+            });
+          }
+
+          return { userId: u.id, userEmail: (u as any).email as string | null, profile: p };
+        });
+      } catch (error: any) {
+        if (String(error?.code ?? "") === "23505") {
+          const detail = String(error?.detail ?? "");
+          if (detail.includes("(email)=")) {
+            return res.status(409).json({ message: "Email déjà utilisé" });
+          }
+          if (detail.includes("(username)=")) {
+            return res.status(409).json({ message: "Identifiant déjà utilisé" });
+          }
         }
-
-        const [u] = await tx
-          .insert(users)
-          .values(userValues)
-          .returning({ id: users.id, createdAt: users.createdAt, email: (users as any).email });
-
-        const [p] = await tx
-          .insert(profiles)
-          .values({
-            userId: u.id,
-            pseudo: payload.pseudo.trim(),
-            gender: payload.gender,
-            age: payload.age,
-            ville: payload.ville.trim(),
-            ...(hasProfilesPro && payload.lieu !== undefined ? { lieu: payload.lieu } : {}),
-            photoUrl: payload.photoUrl,
-            photoKey: payload.photoKey,
-            ...(hasProfilesVisibility ? { visible: true } : {}),
-            ...(hasProfilesPro ? { isPro: accountType !== "profile" } : {}),
-            ...(hasAccountType ? { accountType } : {}),
-            // default availability shown in UI
-            ...(hasProfilesPro
-              ? { disponibilite: { date: "Aujourd'hui", heureDebut: "18:00", duree: "2h" } }
-              : {}),
-          })
-          .returning({
-            id: profiles.id,
-            pseudo: profiles.pseudo,
-            age: profiles.age,
-            ville: profiles.ville,
-            verified: profiles.verified,
-            photoUrl: profiles.photoUrl,
-            isPro: hasProfilesPro ? profiles.isPro : (sql<boolean>`false` as any),
-            visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
-          });
-
-        // Optional: seed first photo into media table (for gallery)
-        if (hasProfileMedia && payload.photoUrl) {
-          await tx.insert(profileMedia).values({
-            profileId: p.id,
-            type: "photo",
-            url: payload.photoUrl,
-            key: payload.photoKey,
-            sortOrder: 0,
-          });
-        }
-
-        return { userId: u.id, userEmail: (u as any).email as string | null, profile: p };
-      });
-
-      req.session.userId = created.userId;
-      req.session.profileId = created.profile.id;
-      // Clear pending OAuth if we just created a profile (avoid reusing on next signup).
-      if ((req.session as any)?.oauthPending) {
-        (req.session as any).oauthPending = null;
+        throw error;
       }
+
+      await establishAuthenticatedSession(req, res, {
+        userId: created.userId,
+        profileId: created.profile.id,
+      });
 
       await logIpEvent({ req, kind: "signup_success", userId: created.userId });
 
@@ -2251,8 +3638,7 @@ export async function registerRoutes(
                 "Emails indisponibles (RESEND_API_KEY manquante). Contacte l’administrateur.";
             } else {
               // If user was created via Google verified email, do not send verification email.
-              const wasGoogleVerified = Boolean(pendingEmail && email.toLowerCase() === pendingEmail.toLowerCase());
-              if (wasGoogleVerified) {
+              if (isGoogleVerifiedSignup) {
                 verificationEmailSent = null;
               } else {
                 const r = await sendVerificationEmail(created.userId, email);
@@ -2272,6 +3658,8 @@ export async function registerRoutes(
       invalidateProfilesCache();
       return res.json({
         ...created,
+        csrfToken: req.session.csrfToken,
+        sessionToken: createSessionToken({ userId: created.userId, profileId: created.profile.id }),
         verificationEmailSent,
         verificationEmailError,
       });
@@ -2751,8 +4139,18 @@ export async function registerRoutes(
           string,
           { id: string; title: string; createdAt: string; badges: string[] }
         >();
+        const latestAnnonceSortMetaByProfile = new Map<
+          string,
+          {
+            createdAtMs: number;
+            topActive: boolean;
+            featuredActive: boolean;
+            urgentActive: boolean;
+            topLastBumpAtMs: number | null;
+          }
+        >();
 
-        if (includeLatestAnnonce && hasAnnonces && ids.length) {
+        if (hasAnnonces && ids.length) {
           const annonceRows = await db
             .select({
               profileId: annonces.profileId,
@@ -2771,6 +4169,13 @@ export async function registerRoutes(
                 annonceCreatedAt: a.createdAt,
                 promotion: (a as any).promotion,
               });
+              latestAnnonceSortMetaByProfile.set(a.profileId, {
+                createdAtMs: new Date(a.createdAt).getTime(),
+                topActive: meta.topActive,
+                featuredActive: meta.featuredActive,
+                urgentActive: meta.urgentActive,
+                topLastBumpAtMs: meta.topLastBumpAt ? new Date(meta.topLastBumpAt).getTime() : null,
+              });
               latestAnnonceByProfile.set(a.profileId, {
                 id: a.id,
                 title: a.title,
@@ -2780,6 +4185,35 @@ export async function registerRoutes(
             }
           }
         }
+
+        const sortedProfiles = distanceKm
+          ? filtered
+          : [...filtered].sort((a: any, b: any) => {
+              const aMeta = latestAnnonceSortMetaByProfile.get(a.id) ?? null;
+              const bMeta = latestAnnonceSortMetaByProfile.get(b.id) ?? null;
+
+              const aTop = Boolean(aMeta?.topActive);
+              const bTop = Boolean(bMeta?.topActive);
+              if (aTop !== bTop) return aTop ? -1 : 1;
+
+              const aTopBump = aMeta?.topLastBumpAtMs ?? aMeta?.createdAtMs ?? new Date(a.createdAt).getTime();
+              const bTopBump = bMeta?.topLastBumpAtMs ?? bMeta?.createdAtMs ?? new Date(b.createdAt).getTime();
+              if (aTopBump !== bTopBump) return bTopBump - aTopBump;
+
+              const aFeatured = Boolean(aMeta?.featuredActive);
+              const bFeatured = Boolean(bMeta?.featuredActive);
+              if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
+
+              const aUrgent = Boolean(aMeta?.urgentActive);
+              const bUrgent = Boolean(bMeta?.urgentActive);
+              if (aUrgent !== bUrgent) return aUrgent ? -1 : 1;
+
+              const aAnnonceCreatedAt = aMeta?.createdAtMs ?? 0;
+              const bAnnonceCreatedAt = bMeta?.createdAtMs ?? 0;
+              if (aAnnonceCreatedAt !== bAnnonceCreatedAt) return bAnnonceCreatedAt - aAnnonceCreatedAt;
+
+              return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            });
 
         const mediaRows =
           !hasProfileMedia || ids.length === 0
@@ -2816,7 +4250,7 @@ export async function registerRoutes(
         }
 
         const payload = await Promise.all(
-          filtered.map(async (p) => {
+          sortedProfiles.map(async (p) => {
             const { phone, showPhone, telegram, showTelegram, ...safe } = p as any;
             const preference = (p as any).contactPreference ?? "whatsapp";
             const media = mediaByProfile.get(p.id);
@@ -2824,41 +4258,18 @@ export async function registerRoutes(
 
             const coverUrl = sanitizeUrl(media?.cover?.url ?? null) ?? sanitizedProfilePhotoUrl ?? null;
             const coverKey = media?.cover?.key ?? inferKeyFromUrl(coverUrl);
-
-            let resolvedCover = coverUrl;
-            if (coverKey) {
-              try {
-                resolvedCover = await createPresignedRead(coverKey, 60 * 60 * 24 * 7);
-              } catch {
-                // fallback to url if signing fails
-              }
-            }
+            const resolvedCover = mediaUrl(req, { key: coverKey, sourceUrl: coverUrl });
 
             const photoItems = (media?.photos ?? []).slice(0, 12);
-            const resolvedPhotos = await Promise.all(
-              photoItems.map(async (ph) => {
-                const u = sanitizeUrl(ph.url);
-                const key = ph.key ?? inferKeyFromUrl(u);
-                if (key) {
-                  try {
-                    return await createPresignedRead(key, 60 * 60 * 24 * 7);
-                  } catch {
-                    return u;
-                  }
-                }
-                return u;
-              }),
-            );
+            const resolvedPhotos = photoItems.map((ph) => {
+              const u = sanitizeUrl(ph.url);
+              const key = ph.key ?? inferKeyFromUrl(u);
+              return mediaUrl(req, { key, sourceUrl: u });
+            });
 
-            let resolvedVideo = sanitizeUrl(media?.video?.url ?? null);
-            const videoKey = media?.video?.key ?? inferKeyFromUrl(resolvedVideo);
-            if (videoKey) {
-              try {
-                resolvedVideo = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-              } catch {
-                // keep url
-              }
-            }
+            const rawVideoUrl = sanitizeUrl(media?.video?.url ?? null);
+            const videoKey = media?.video?.key ?? inferKeyFromUrl(rawVideoUrl);
+            const resolvedVideo = mediaUrl(req, { key: videoKey, sourceUrl: rawVideoUrl });
 
             return {
               ...safe,
@@ -2976,6 +4387,7 @@ export async function registerRoutes(
           tarif: hasProfilesPro ? profiles.tarif : (sql<string | null>`null` as any),
           lieu: hasProfilesPro ? profiles.lieu : (sql<string | null>`null` as any),
           services: hasProfilesPro ? profiles.services : (sql<any>`null` as any),
+          disponibilite: hasProfilesPro ? profiles.disponibilite : (sql<any>`null` as any),
           description: hasProfilesPro ? profiles.description : (sql<string | null>`null` as any),
           ...(hasProfileAttrs
             ? {
@@ -3067,41 +4479,18 @@ export async function registerRoutes(
 
           const coverUrl = sanitizeUrl(media?.cover?.url ?? null) ?? sanitizedProfilePhotoUrl ?? null;
           const coverKey = media?.cover?.key ?? inferKeyFromUrl(coverUrl);
-
-          let resolvedCover = coverUrl;
-          if (coverKey) {
-            try {
-              resolvedCover = await createPresignedRead(coverKey, 60 * 60 * 24 * 7);
-            } catch {
-              // keep url
-            }
-          }
+          const resolvedCover = mediaUrl(req, { key: coverKey, sourceUrl: coverUrl });
 
           const photoItems = (media?.photos ?? []).slice(0, 12);
-          const resolvedPhotos = await Promise.all(
-            photoItems.map(async (ph) => {
-              const u = sanitizeUrl(ph.url);
-              const key = ph.key ?? inferKeyFromUrl(u);
-              if (key) {
-                try {
-                  return await createPresignedRead(key, 60 * 60 * 24 * 7);
-                } catch {
-                  return u;
-                }
-              }
-              return u;
-            }),
-          );
+          const resolvedPhotos = photoItems.map((ph) => {
+            const u = sanitizeUrl(ph.url);
+            const key = ph.key ?? inferKeyFromUrl(u);
+            return mediaUrl(req, { key, sourceUrl: u });
+          });
 
-          let resolvedVideo = sanitizeUrl(media?.video?.url ?? null);
-          const videoKey = media?.video?.key ?? inferKeyFromUrl(resolvedVideo);
-          if (videoKey) {
-            try {
-              resolvedVideo = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-            } catch {
-              // keep url
-            }
-          }
+          const rawVideoUrl = sanitizeUrl(media?.video?.url ?? null);
+          const videoKey = media?.video?.key ?? inferKeyFromUrl(rawVideoUrl);
+          const resolvedVideo = mediaUrl(req, { key: videoKey, sourceUrl: rawVideoUrl });
 
           return {
             id: a.id,
@@ -3119,10 +4508,12 @@ export async function registerRoutes(
               ville: a.ville,
               verified: a.verified,
               isPro: a.isPro,
+              accountType: a.accountType,
               ...(hasVip ? { isVip: (a as any).isVip } : {}),
               tarif: a.tarif,
               lieu: a.lieu,
               services: a.services,
+              disponibilite: (a as any).disponibilite ?? null,
               description: a.description,
               ...(hasProfileAttrs
                 ? ({
@@ -3611,32 +5002,17 @@ export async function registerRoutes(
             .orderBy(profileMedia.sortOrder);
 
     const photoItems = media.filter((m) => m.type === "photo");
-    const resolvedPhotos = await Promise.all(
-      photoItems.map(async (m) => {
-        const u = sanitizeUrl(m.url);
-        const key = m.key ?? inferKeyFromUrl(u);
-        if (key) {
-          try {
-            return await createPresignedRead(key, 60 * 60 * 24 * 7);
-          } catch {
-            return u;
-          }
-        }
-        return u;
-      }),
-    );
+    const resolvedPhotos = photoItems.map((m) => {
+      const u = sanitizeUrl(m.url);
+      const key = m.key ?? inferKeyFromUrl(u);
+      return mediaUrl(req, { key, sourceUrl: u });
+    });
     const photos = resolvedPhotos.filter((x): x is string => Boolean(x));
 
     const video = media.find((m) => m.type === "video") ?? null;
-    let videoUrl = sanitizeUrl(video?.url ?? null);
-    const videoKey = video?.key ?? inferKeyFromUrl(videoUrl);
-    if (videoKey) {
-      try {
-        videoUrl = await createPresignedRead(videoKey, 60 * 60 * 24 * 7);
-      } catch {
-        // keep url
-      }
-    }
+    const rawVideoUrl = sanitizeUrl(video?.url ?? null);
+    const videoKey = video?.key ?? inferKeyFromUrl(rawVideoUrl);
+    const videoUrl = mediaUrl(req, { key: videoKey, sourceUrl: rawVideoUrl });
 
     const latestAnnonce =
       !hasAnnonces
@@ -3654,6 +5030,55 @@ export async function registerRoutes(
             .where(and(eq(annonces.profileId, id), eq(annonces.active, true)))
             .orderBy(desc(annonces.createdAt))
             .limit(1);
+
+    const activeStories =
+      !hasStories
+        ? []
+        : await db
+            .select({
+              id: stories.id,
+              visibility: stories.visibility,
+              mediaUrl: stories.mediaUrl,
+              mediaKey: stories.mediaKey,
+              durationSeconds: stories.durationSeconds,
+              caption: stories.caption,
+              createdAt: stories.createdAt,
+              expiresAt: stories.expiresAt,
+            })
+            .from(stories)
+            .where(
+              and(
+                eq(stories.profileId, id),
+                eq(stories.active, true),
+                eq(stories.visibility, "public"),
+                or(gt(stories.expiresAt, new Date()), isNull(stories.expiresAt)),
+              ),
+            )
+            .orderBy(desc(stories.createdAt))
+            .limit(12);
+
+    const privateVideos =
+      !hasStories
+        ? []
+        : await db
+            .select({
+              id: stories.id,
+              visibility: stories.visibility,
+              mediaUrl: stories.mediaUrl,
+              mediaKey: stories.mediaKey,
+              durationSeconds: stories.durationSeconds,
+              caption: stories.caption,
+              saleKind: stories.saleKind,
+              saleTitle: stories.saleTitle,
+              salePrice: stories.salePrice,
+              saleDescription: stories.saleDescription,
+              createdAt: stories.createdAt,
+              active: stories.active,
+            })
+            .from(stories)
+            .where(and(eq(stories.profileId, id), eq(stories.active, true), eq(stories.visibility, "private")))
+            .orderBy(desc(stories.createdAt))
+            .limit(24);
 
     const isOwner = req.session?.profileId === id;
 
@@ -3694,20 +5119,41 @@ export async function registerRoutes(
 
     let mapUrl: string | null = null;
     const showLocation = hasProfilesShowLocation ? ((p as any).showLocation ?? false) : false;
-    if (
-      hasProfilesGeo &&
-      (p as any).lat !== null &&
-      (p as any).lng !== null &&
-      (p as any).lat !== undefined &&
-      (p as any).lng !== undefined
-    ) {
-      const dest = `${(p as any).lat},${(p as any).lng}`;
-      mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+    const canRevealLocation = isOwner || showLocation;
+    if (canRevealLocation) {
+      if (
+        hasProfilesGeo &&
+        (p as any).lat !== null &&
+        (p as any).lng !== null &&
+        (p as any).lat !== undefined &&
+        (p as any).lng !== undefined
+      ) {
+        const dest = `${(p as any).lat},${(p as any).lng}`;
+        mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`;
+      } else {
+        const destinationLabel = [
+          hasProfilesBusiness ? ((p as any).address ?? null) : null,
+          (p as any).lieu ?? null,
+          p.ville ?? null,
+        ]
+          .map((value) => (typeof value === "string" ? value.trim() : ""))
+          .filter(Boolean)
+          .join(", ");
+        if (destinationLabel) {
+          mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destinationLabel)}`;
+        }
+      }
     }
 
     res.json({
       ...p,
-      photoUrl: photos[0] ?? sanitizeUrl(p.photoUrl ?? null) ?? null,
+      photoUrl:
+        photos[0] ??
+        mediaUrl(req, {
+          key: (p as any).photoKey ?? inferKeyFromUrl(sanitizeUrl(p.photoUrl ?? null)),
+          sourceUrl: sanitizeUrl(p.photoUrl ?? null),
+        }) ??
+        null,
       photos,
       videoUrl,
       distanceKm,
@@ -3720,6 +5166,28 @@ export async function registerRoutes(
         showTelegram: isOwner ? p.showTelegram : undefined,
         preference: (p as any).contactPreference ?? "whatsapp",
       },
+      stories: activeStories.map((story) => ({
+        id: story.id,
+        visibility: story.visibility,
+        mediaUrl: resolveStoryMedia(req, story),
+        durationSeconds: Number(story.durationSeconds ?? 0),
+        caption: story.caption ?? null,
+        createdAt: story.createdAt,
+        expiresAt: story.expiresAt,
+      })),
+      privateVideos: privateVideos.map((story) => ({
+        id: story.id,
+        visibility: story.visibility,
+        mediaUrl: isOwner ? resolveStoryMedia(req, story) : null,
+        durationSeconds: Number(story.durationSeconds ?? 0),
+        caption: story.caption ?? null,
+        saleKind: story.saleKind,
+        saleTitle: story.saleTitle ?? null,
+        salePrice: story.salePrice ?? null,
+        saleDescription: story.saleDescription ?? null,
+        createdAt: story.createdAt,
+        active: story.active,
+      })),
       annonce: latestAnnonce[0] ?? null,
     });
     }),
@@ -3868,7 +5336,7 @@ export async function registerRoutes(
           .where(and(eq(users.id, userId), sql`${users.tokensBalance} >= ${totalTokens}`))
           .returning({ tokensBalance: (users as any).tokensBalance });
         if (!updated.length) {
-          throw Object.assign(new Error("Solde de jetons insuffisant : publication refusée."), { status: 403 });
+          throw Object.assign(new Error("Crédit insuffisant, veuillez recharger vos jetons."), { status: 403 });
         }
 
         await tx.insert(tokenTransactions).values({
@@ -3890,7 +5358,9 @@ export async function registerRoutes(
         .orderBy(desc(annonces.createdAt))
         .limit(1);
 
-      const a = existing[0]
+      const shouldCreateNew = payload.forceNew !== false;
+
+      const a = !shouldCreateNew && existing[0]
         ? (
             await tx
               .update(annonces)
@@ -4002,6 +5472,361 @@ export async function registerRoutes(
 
       invalidateProfilesCache();
       res.json(updated);
+    }),
+  );
+
+  app.get(
+    "/api/stories",
+    asyncHandler(async (req, res) => {
+      if (!hasStories) return res.json([]);
+
+      const rows = await db
+        .select({
+          id: stories.id,
+          profileId: stories.profileId,
+          visibility: stories.visibility,
+          mediaUrl: stories.mediaUrl,
+          mediaKey: stories.mediaKey,
+          durationSeconds: stories.durationSeconds,
+          caption: stories.caption,
+          createdAt: stories.createdAt,
+          expiresAt: stories.expiresAt,
+          pseudo: profiles.pseudo,
+          ville: profiles.ville,
+          profilePhotoUrl: profiles.photoUrl,
+          accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+          visible: hasProfilesVisibility ? profiles.visible : (sql<boolean>`true` as any),
+          phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+          showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+          telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+          showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
+          contactPreference: hasContactPref ? profiles.contactPreference : (sql<string | null>`null` as any),
+        })
+        .from(stories)
+        .innerJoin(profiles, eq(stories.profileId, profiles.id))
+        .where(
+          and(
+            eq(stories.active, true),
+            or(
+              and(eq(stories.visibility, "public"), or(gt(stories.expiresAt, new Date()), isNull(stories.expiresAt))),
+              eq(stories.visibility, "private"),
+            ),
+          ),
+        )
+        .orderBy(desc(stories.createdAt))
+        .limit(80);
+
+      const fallbackVideoRows =
+        hasProfileMedia && rows.length < 20
+          ? await db
+              .select({
+                profileId: profileMedia.profileId,
+                mediaUrl: profileMedia.url,
+                mediaKey: profileMedia.key,
+                createdAt: profileMedia.createdAt,
+                pseudo: profiles.pseudo,
+                ville: profiles.ville,
+                profilePhotoUrl: profiles.photoUrl,
+                accountType: hasAccountType ? profiles.accountType : (sql<string>`'profile'` as any),
+                phone: hasProfilesContact ? profiles.phone : (sql<string | null>`null` as any),
+                showPhone: hasProfilesContact ? profiles.showPhone : (sql<boolean>`false` as any),
+                telegram: hasProfilesContact ? profiles.telegram : (sql<string | null>`null` as any),
+                showTelegram: hasProfilesContact ? profiles.showTelegram : (sql<boolean>`false` as any),
+                contactPreference: hasContactPref ? profiles.contactPreference : (sql<string | null>`null` as any),
+              })
+              .from(profileMedia)
+              .innerJoin(profiles, eq(profileMedia.profileId, profiles.id))
+              .where(and(eq(profileMedia.type, "video")))
+              .orderBy(desc(profileMedia.createdAt))
+              .limit(80)
+          : [];
+
+      const grouped = new Map<string, any>();
+      for (const row of rows) {
+        if (!grouped.has(row.profileId)) {
+          grouped.set(row.profileId, {
+            profile: {
+              id: row.profileId,
+              pseudo: row.pseudo,
+              ville: row.ville,
+              accountType: row.accountType,
+              photoUrl: sanitizeUrl(row.profilePhotoUrl ?? null),
+              contact: {
+                phone: row.showPhone ? row.phone ?? null : null,
+                telegram: row.showTelegram ? row.telegram ?? null : null,
+                preference: row.contactPreference ?? null,
+              },
+            },
+            items: [],
+            latestCreatedAt: row.createdAt,
+          });
+        }
+
+        const entry = grouped.get(row.profileId);
+        entry.items.push({
+          id: row.id,
+          mediaUrl: row.visibility === "private" ? null : resolveStoryMedia(req, row),
+          visibility: row.visibility,
+          isLocked: row.visibility === "private",
+          durationSeconds: Number(row.durationSeconds ?? 0),
+          caption: row.caption ?? null,
+          createdAt: row.createdAt,
+          expiresAt: row.expiresAt,
+        });
+      }
+
+      for (const row of fallbackVideoRows) {
+        if (grouped.has(row.profileId)) continue;
+        grouped.set(row.profileId, {
+          profile: {
+            id: row.profileId,
+            pseudo: row.pseudo,
+            ville: row.ville,
+            accountType: row.accountType,
+            photoUrl: sanitizeUrl(row.profilePhotoUrl ?? null),
+            contact: {
+              phone: row.showPhone ? row.phone ?? null : null,
+              telegram: row.showTelegram ? row.telegram ?? null : null,
+              preference: row.contactPreference ?? null,
+            },
+          },
+          items: [
+            {
+              id: `profile-video-${row.profileId}`,
+              mediaUrl: null,
+              visibility: "private",
+              isLocked: true,
+              durationSeconds: 0,
+              caption: "Vidéo privée",
+              createdAt: row.createdAt,
+            },
+          ],
+          latestCreatedAt: row.createdAt,
+        });
+      }
+
+      res.json(Array.from(grouped.values()).slice(0, 20));
+    }),
+  );
+
+  app.get(
+    "/api/me/stories",
+    asyncHandler(async (req, res) => {
+      const profileId = req.session?.profileId;
+      if (!profileId) return res.status(401).json({ message: "Not logged in" });
+      if (!hasStories) return res.json([]);
+
+      const rows = await db
+        .select({
+          id: stories.id,
+          visibility: stories.visibility,
+          mediaUrl: stories.mediaUrl,
+          mediaKey: stories.mediaKey,
+          durationSeconds: stories.durationSeconds,
+          caption: stories.caption,
+          saleKind: stories.saleKind,
+          saleTitle: stories.saleTitle,
+          salePrice: stories.salePrice,
+          saleDescription: stories.saleDescription,
+          active: stories.active,
+          expiresAt: stories.expiresAt,
+          createdAt: stories.createdAt,
+        })
+        .from(stories)
+        .where(eq(stories.profileId, profileId))
+        .orderBy(desc(stories.createdAt))
+        .limit(50);
+
+      res.json(
+        rows.map((story) => ({
+          ...story,
+          mediaUrl: resolveStoryMedia(req, story),
+          durationSeconds: Number(story.durationSeconds ?? 0),
+          caption: story.caption ?? null,
+          saleTitle: story.saleTitle ?? null,
+          salePrice: story.salePrice ?? null,
+          saleDescription: story.saleDescription ?? null,
+        })),
+      );
+    }),
+  );
+
+  app.post(
+    "/api/me/stories",
+    asyncHandler(async (req, res) => {
+      const userId = req.session?.userId as string | undefined;
+      const profileId = req.session?.profileId as string | undefined;
+      if (!userId || !profileId) return res.status(401).json({ message: "Not logged in" });
+      if (!hasStories) {
+        return res.status(503).json({ message: "Stories indisponibles tant que la migration base de données n'est pas appliquée." });
+      }
+
+      const payload = storyCreateSchema.parse(req.body);
+      const effectiveVisibility = payload.durationSeconds > STORY_PUBLIC_MAX_SECONDS ? "private" : payload.visibility;
+      const saleKind = effectiveVisibility === "private" ? payload.saleKind ?? "none" : "none";
+
+      if (payload.durationSeconds > STORY_PRIVATE_MAX_SECONDS) {
+        return res.status(400).json({ message: `La vidéo dépasse la limite de ${STORY_PRIVATE_MAX_SECONDS} secondes.` });
+      }
+
+      const [created] = await db.transaction(async (tx) => {
+        const [profileMeta] = await tx
+          .select({ userId: profiles.userId })
+          .from(profiles)
+          .where(eq(profiles.id, profileId))
+          .limit(1);
+
+        if (!profileMeta) {
+          throw Object.assign(new Error("Profil introuvable"), { status: 404 });
+        }
+        if (profileMeta.userId !== userId) {
+          throw Object.assign(new Error("Forbidden"), { status: 403 });
+        }
+
+        const [{ count: storiesCountRaw }] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(stories)
+          .where(eq(stories.profileId, profileId));
+
+        const storiesCount = Number(storiesCountRaw ?? 0);
+        const isFirstFreeStory =
+          storiesCount < STORY_FREE_STORY_LIMIT &&
+          effectiveVisibility === "public" &&
+          payload.durationSeconds <= STORY_PUBLIC_MAX_SECONDS;
+
+        if (isFirstFreeStory) {
+          await tx.insert(tokenTransactions).values({
+            userId,
+            delta: 0,
+            reason: "story_publish_free",
+            meta: {
+              profileId,
+              visibility: effectiveVisibility,
+              durationSeconds: payload.durationSeconds,
+              saleKind,
+              freeStory: true,
+            } as any,
+          } as any);
+        } else {
+          const updated = await tx
+            .update(users)
+            .set({ tokensBalance: sql`${users.tokensBalance} - ${STORY_PUBLISH_TOKEN_COST}` } as any)
+            .where(and(eq(users.id, userId), sql`${users.tokensBalance} >= ${STORY_PUBLISH_TOKEN_COST}`))
+            .returning({ tokensBalance: users.tokensBalance });
+
+          if (!updated.length) {
+            throw Object.assign(new Error("Crédit insuffisant, veuillez recharger vos jetons."), {
+              status: 403,
+            });
+          }
+
+          await tx.insert(tokenTransactions).values({
+            userId,
+            delta: -STORY_PUBLISH_TOKEN_COST,
+            reason: "story_publish",
+            meta: {
+              profileId,
+              visibility: effectiveVisibility,
+              durationSeconds: payload.durationSeconds,
+              saleKind,
+            } as any,
+          } as any);
+        }
+
+        const expiresAt =
+          effectiveVisibility === "public"
+            ? new Date(Date.now() + STORY_PUBLIC_TTL_HOURS * 60 * 60 * 1000)
+            : null;
+
+        return await tx
+          .insert(stories)
+          .values({
+            profileId,
+            visibility: effectiveVisibility,
+            mediaUrl: payload.mediaUrl,
+            mediaKey: payload.mediaKey,
+            durationSeconds: payload.durationSeconds,
+            caption: payload.caption?.trim() || null,
+            saleKind,
+            saleTitle: effectiveVisibility === "private" ? payload.saleTitle?.trim() || null : null,
+            salePrice: effectiveVisibility === "private" ? payload.salePrice?.trim() || null : null,
+            saleDescription: effectiveVisibility === "private" ? payload.saleDescription?.trim() || null : null,
+            expiresAt,
+          })
+          .returning({
+            id: stories.id,
+            visibility: stories.visibility,
+            mediaUrl: stories.mediaUrl,
+            mediaKey: stories.mediaKey,
+            durationSeconds: stories.durationSeconds,
+            caption: stories.caption,
+            saleKind: stories.saleKind,
+            saleTitle: stories.saleTitle,
+            salePrice: stories.salePrice,
+            saleDescription: stories.saleDescription,
+            active: stories.active,
+            expiresAt: stories.expiresAt,
+            createdAt: stories.createdAt,
+          });
+      });
+
+      res.json({
+        ...created,
+        mediaUrl: resolveStoryMedia(req, created),
+        durationSeconds: Number(created.durationSeconds ?? 0),
+      });
+    }),
+  );
+
+  app.patch(
+    "/api/me/stories/:id",
+    asyncHandler(async (req, res) => {
+      const storyId = z.string().uuid().parse(req.params.id);
+      const profileId = req.session?.profileId as string | undefined;
+      if (!profileId) return res.status(401).json({ message: "Not logged in" });
+      if (!hasStories) return res.status(404).json({ message: "Stories indisponibles" });
+
+      const payload = z.object({ active: z.boolean() }).parse(req.body);
+      const [current] = await db
+        .select({ id: stories.id, profileId: stories.profileId })
+        .from(stories)
+        .where(eq(stories.id, storyId))
+        .limit(1);
+
+      if (!current) return res.status(404).json({ message: "Story introuvable" });
+      if (current.profileId !== profileId) return res.status(403).json({ message: "Forbidden" });
+
+      const [updated] = await db
+        .update(stories)
+        .set({ active: payload.active })
+        .where(eq(stories.id, storyId))
+        .returning({ id: stories.id, active: stories.active });
+
+      res.json(updated);
+    }),
+  );
+
+  app.get(
+    "/api/me/annonces",
+    asyncHandler(async (req, res) => {
+      const profileId = req.session?.profileId;
+      if (!profileId) return res.status(401).json({ message: "Not logged in" });
+
+      const rows = await db
+        .select({
+          id: annonces.id,
+          title: annonces.title,
+          body: annonces.body,
+          active: annonces.active,
+          createdAt: annonces.createdAt,
+          promotion: annonces.promotion,
+        })
+        .from(annonces)
+        .where(eq(annonces.profileId, profileId))
+        .orderBy(desc(annonces.createdAt))
+        .limit(50);
+
+      res.json(rows);
     }),
   );
 

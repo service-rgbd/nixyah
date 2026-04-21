@@ -18,6 +18,12 @@ export const genderEnum = pgEnum("gender", ["homme", "femme"]);
 export const mediaTypeEnum = pgEnum("media_type", ["photo", "video"]);
 export const contactPreferenceEnum = pgEnum("contact_preference", ["whatsapp", "telegram"]);
 export const salonTypeEnum = pgEnum("salon_type", ["spa", "private_massage", "residence", "adult_shop"]);
+export const storyVisibilityEnum = pgEnum("story_visibility", ["public", "private"]);
+export const storySaleKindEnum = pgEnum("story_sale_kind", ["none", "video", "product"]);
+export const eventVisibilityEnum = pgEnum("event_visibility", ["public", "private"]);
+export const eventPriceTypeEnum = pgEnum("event_price_type", ["free", "paid"]);
+export const eventStatusEnum = pgEnum("event_status", ["draft", "published", "cancelled"]);
+export const eventPaymentStatusEnum = pgEnum("event_payment_status", ["not_required", "pending", "paid", "failed"]);
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -139,9 +145,7 @@ export const tokenTransactions = pgTable("token_transactions", {
 
 export const payments = pgTable("payments", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   provider: varchar("provider", { length: 32 }).notNull(),
   providerRef: varchar("provider_ref", { length: 255 }).notNull(),
   status: varchar("status", { length: 32 }).notNull(),
@@ -186,6 +190,76 @@ export const adultProductsTable = pgTable("adult_products", {
   stockQty: integer("stock_qty").notNull().default(0),
   placeType: varchar("place_type", { length: 32 }), // ex: delivery | pickup | discreet_meetup
   active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const stories = pgTable("stories", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  profileId: uuid("profile_id")
+    .notNull()
+    .references(() => profiles.id, { onDelete: "cascade" }),
+  visibility: storyVisibilityEnum("visibility").notNull().default("public"),
+  mediaUrl: text("media_url").notNull(),
+  mediaKey: text("media_key"),
+  durationSeconds: integer("duration_seconds").notNull(),
+  caption: varchar("caption", { length: 280 }),
+  saleKind: storySaleKindEnum("sale_kind").notNull().default("none"),
+  saleTitle: varchar("sale_title", { length: 160 }),
+  salePrice: varchar("sale_price", { length: 64 }),
+  saleDescription: text("sale_description"),
+  active: boolean("active").notNull().default(true),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const events = pgTable("events", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  ownerProfileId: uuid("owner_profile_id")
+    .notNull()
+    .references(() => profiles.id, { onDelete: "cascade" }),
+  title: varchar("title", { length: 180 }).notNull(),
+  description: text("description"),
+  city: varchar("city", { length: 128 }).notNull(),
+  venue: varchar("venue", { length: 255 }),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  visibility: eventVisibilityEnum("visibility").notNull().default("public"),
+  priceType: eventPriceTypeEnum("price_type").notNull().default("free"),
+  priceAmount: integer("price_amount"),
+  priceCurrency: varchar("price_currency", { length: 8 }).notNull().default("XOF"),
+  capacity: integer("capacity"),
+  contactWhatsapp: varchar("contact_whatsapp", { length: 32 }),
+  contactEmail: varchar("contact_email", { length: 160 }),
+  imageUrl: text("image_url"),
+  imageUrls: text("image_urls").array(),
+  publicationCreditsCharged: integer("publication_credits_charged").notNull().default(15),
+  legalNoticeAccepted: boolean("legal_notice_accepted").notNull().default(false),
+  status: eventStatusEnum("status").notNull().default("draft"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const eventRegistrations = pgTable("event_registrations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: uuid("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  guestName: varchar("guest_name", { length: 80 }).notNull(),
+  guestEmail: varchar("guest_email", { length: 160 }).notNull(),
+  guestPhone: varchar("guest_phone", { length: 32 }),
+  guestWhatsapp: varchar("guest_whatsapp", { length: 32 }),
+  paymentStatus: eventPaymentStatusEnum("payment_status").notNull().default("not_required"),
+  paymentRef: varchar("payment_ref", { length: 255 }),
+  receiptNumber: varchar("receipt_number", { length: 64 }),
+  receiptSentAt: timestamp("receipt_sent_at", { withTimezone: true }),
+  amount: integer("amount"),
+  currency: varchar("currency", { length: 8 }),
+  notifyByEmail: boolean("notify_by_email").notNull().default(true),
+  notifyByWhatsapp: boolean("notify_by_whatsapp").notNull().default(false),
+  agreedNoRefund: boolean("agreed_no_refund").notNull().default(false),
+  agreedDisclaimer: boolean("agreed_disclaimer").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -274,7 +348,7 @@ export const signupSchema = z.object({
   // Pseudo public
   pseudo: z.string().min(2).max(64),
   password: z.string().min(6).max(200),
-  email: z.string().email().max(160).optional(),
+  email: z.string().email("Email invalide").max(160),
   // optional: can be sent after R2 upload later
   photoUrl: z.string().url().optional(),
   photoKey: z.string().min(1).optional(),
@@ -282,6 +356,7 @@ export const signupSchema = z.object({
 
 export const annonceCreateSchema = z.object({
   profileId: z.string().uuid(),
+  forceNew: z.boolean().optional(),
   title: z.string().min(2).max(120),
   body: z.string().max(5000).optional(),
   tarif: z.string().min(1).max(32).optional(),
@@ -371,6 +446,164 @@ export const insertAdultProductSchema = createInsertSchema(adultProductsTable).p
   active: true,
 });
 
+export const insertEventSchema = createInsertSchema(events).pick({
+  ownerProfileId: true,
+  title: true,
+  description: true,
+  city: true,
+  venue: true,
+  startsAt: true,
+  endsAt: true,
+  visibility: true,
+  priceType: true,
+  priceAmount: true,
+  priceCurrency: true,
+  capacity: true,
+  contactWhatsapp: true,
+  contactEmail: true,
+  imageUrl: true,
+  imageUrls: true,
+  publicationCreditsCharged: true,
+  legalNoticeAccepted: true,
+  status: true,
+});
+
+const eventSchemaBase = z.object({
+  title: z.string().min(2).max(180),
+  description: z.string().max(5000).optional().nullable(),
+  city: z.string().min(1).max(128),
+  venue: z.string().max(255).optional().nullable(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime().optional().nullable(),
+  visibility: z.enum(["public", "private"]),
+  priceType: z.enum(["free", "paid"]),
+  priceAmount: z.coerce.number().int().min(0).max(100000000).optional().nullable(),
+  priceCurrency: z.string().min(3).max(8).default("XOF"),
+  capacity: z.coerce.number().int().min(1).max(100000).optional().nullable(),
+  contactWhatsapp: z.string().max(32).optional().nullable(),
+  contactEmail: z.string().email("Email invalide").max(160).optional().nullable(),
+  imageUrl: z.string().url().optional().nullable(),
+  imageUrls: z.array(z.string().url()).max(2).optional().nullable(),
+  legalNoticeAccepted: z.literal(true),
+  status: z.enum(["draft", "published"]).default("published"),
+});
+
+export const eventCreateSchema = eventSchemaBase
+  .superRefine((value, ctx) => {
+    if (value.priceType === "paid" && (!Number.isFinite(Number(value.priceAmount)) || Number(value.priceAmount) <= 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un prix valide pour un évènement payant.",
+        path: ["priceAmount"],
+      });
+    }
+    if (value.priceType === "free" && Number(value.priceAmount ?? 0) > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Un évènement gratuit ne doit pas avoir de prix.",
+        path: ["priceAmount"],
+      });
+    }
+    if (value.endsAt && new Date(value.endsAt).getTime() < new Date(value.startsAt).getTime()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La fin doit être postérieure au début.",
+        path: ["endsAt"],
+      });
+    }
+  });
+
+export const eventUpdateSchema = eventSchemaBase
+  .extend({
+    status: z.enum(["draft", "published", "cancelled"]).optional(),
+  })
+  .partial()
+  .superRefine((value, ctx) => {
+    if (value.priceType === "paid" && value.priceAmount !== undefined && Number(value.priceAmount ?? 0) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un prix valide pour un évènement payant.",
+        path: ["priceAmount"],
+      });
+    }
+    if (value.priceType === "free" && value.priceAmount !== undefined && Number(value.priceAmount ?? 0) > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Un évènement gratuit ne doit pas avoir de prix.",
+        path: ["priceAmount"],
+      });
+    }
+    if (value.startsAt && value.endsAt && new Date(value.endsAt).getTime() < new Date(value.startsAt).getTime()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La fin doit être postérieure au début.",
+        path: ["endsAt"],
+      });
+    }
+  });
+
+export const eventRegistrationCreateSchema = z
+  .object({
+    name: z.string().min(2).max(80),
+    email: z.string().email("Email invalide").max(160),
+    phone: z.string().max(32).optional().nullable(),
+    whatsapp: z.string().max(32).optional().nullable(),
+    notifyByEmail: z.boolean().default(true),
+    notifyByWhatsapp: z.boolean().default(false),
+    agreedNoRefund: z.literal(true),
+    agreedDisclaimer: z.literal(true),
+  })
+  .superRefine((value, ctx) => {
+    if (value.notifyByWhatsapp && !value.whatsapp?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un numéro WhatsApp pour recevoir les notifications.",
+        path: ["whatsapp"],
+      });
+    }
+  });
+
+export const storyCreateSchema = z
+  .object({
+    mediaUrl: z.string().url(),
+    mediaKey: z.string().min(1).optional(),
+    durationSeconds: z.coerce.number().int().min(1).max(300),
+    caption: z.string().max(280).optional(),
+    visibility: z.enum(["public", "private"]),
+    saleKind: z.enum(["none", "video", "product"]).optional(),
+    saleTitle: z.string().max(160).optional(),
+    salePrice: z.string().max(64).optional(),
+    saleDescription: z.string().max(2000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const isPrivate = value.visibility === "private";
+    const saleKind = value.saleKind ?? "none";
+
+    if (!isPrivate && saleKind !== "none") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Une story publique ne peut pas être monétisée.",
+        path: ["saleKind"],
+      });
+    }
+
+    if (isPrivate && saleKind !== "none" && !value.salePrice?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un prix pour cette vidéo privée.",
+        path: ["salePrice"],
+      });
+    }
+
+    if (isPrivate && saleKind !== "none" && !value.saleTitle?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Ajoute un titre pour cette vente privée.",
+        path: ["saleTitle"],
+      });
+    }
+  });
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
@@ -385,4 +618,12 @@ export type TokenTransaction = typeof tokenTransactions.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type Salon = typeof salons.$inferSelect;
 export type AdultProduct = typeof adultProductsTable.$inferSelect;
+export type Story = typeof stories.$inferSelect;
+export type Event = typeof events.$inferSelect;
+export type EventRegistration = typeof eventRegistrations.$inferSelect;
 export type IpLog = typeof ipLogs.$inferSelect;
+
+export type StoryCreatePayload = z.infer<typeof storyCreateSchema>;
+export type EventCreatePayload = z.infer<typeof eventCreateSchema>;
+export type EventUpdatePayload = z.infer<typeof eventUpdateSchema>;
+export type EventRegistrationCreatePayload = z.infer<typeof eventRegistrationCreateSchema>;
