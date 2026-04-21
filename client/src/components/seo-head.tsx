@@ -15,6 +15,17 @@ type SeoHeadProps = Partial<StaticSeoRoute> & {
   structuredData?: JsonLdValue | null;
 };
 
+function sanitizeStructuredData(payload: JsonLdValue): JsonLdValue | null {
+  const items = Array.isArray(payload) ? payload : [payload];
+  const sanitized = items.filter((item): item is Record<string, unknown> => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const context = item["@context"];
+    return typeof context === "string" && context.length > 0;
+  });
+  if (!sanitized.length) return null;
+  return Array.isArray(payload) ? sanitized : sanitized[0];
+}
+
 function ensureMeta(selector: string, attrs: Record<string, string>, content: string) {
   let node = document.head.querySelector(selector) as HTMLMetaElement | null;
   if (!node) {
@@ -37,7 +48,8 @@ function ensureLink(selector: string, rel: string, href: string) {
 
 function upsertStructuredData(id: string, payload: JsonLdValue | null | undefined) {
   const existing = document.head.querySelector(`script[data-seo-jsonld="${id}"]`) as HTMLScriptElement | null;
-  if (!payload) {
+  const safePayload = payload ? sanitizeStructuredData(payload) : null;
+  if (!safePayload) {
     existing?.remove();
     return;
   }
@@ -45,7 +57,7 @@ function upsertStructuredData(id: string, payload: JsonLdValue | null | undefine
   const script = existing ?? document.createElement("script");
   script.type = "application/ld+json";
   script.dataset.seoJsonld = id;
-  script.textContent = JSON.stringify(payload);
+  script.textContent = JSON.stringify(safePayload);
   if (!existing) {
     document.head.appendChild(script);
   }

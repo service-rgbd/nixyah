@@ -5,6 +5,7 @@ import { ArrowLeft, BadgeCheck, Calendar, Crown, MapPin, Play, Sparkles } from "
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
+import { rememberProfileBook } from "@/lib/profile-book";
 
 type ApiProfile = {
   id: string;
@@ -456,7 +457,10 @@ export default function Vip() {
     return regular.slice(start, start + pageSize);
   }, [regular, pageSafe]);
 
-  const openProfile = (id: string) => setLocation(`/profile/${id}`);
+  const openProfile = (id: string) => {
+    rememberProfileBook([...vip.map((profile) => profile.id), ...regular.map((profile) => profile.id)], "vip");
+    setLocation(`/profile/${id}`);
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -473,7 +477,7 @@ export default function Vip() {
           </Button>
           <div className="flex-1 text-center">
             <div className="text-sm font-semibold tracking-tight text-foreground">
-              {lang === "en" ? "VIP Escorts & VIP Masseuses" : "Escortes VIP & Masseuses VIP"}
+              {lang === "en" ? "VIP profiles & premium visibility" : "Profils VIP & visibilité premium"}
             </div>
             <div className="text-[11px] text-muted-foreground">
               {lang === "en"

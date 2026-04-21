@@ -4,7 +4,7 @@ import { ArrowLeft, SlidersHorizontal, RotateCcw, Globe, Palette, Sparkles, LogI
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { defaultAppSettings, useAppSettings } from "@/lib/appSettings";
+import { defaultAppSettings, resolveThemePreference, useAppSettings } from "@/lib/appSettings";
 import { getProfileId } from "@/lib/session";
 import { useTheme } from "next-themes";
 import { useT } from "@/lib/i18n";
@@ -153,7 +153,21 @@ export default function Settings() {
               <Palette className="w-4 h-4 text-primary" />
               {t("theme")}
             </div>
-            <div className="grid grid-cols-2 gap-3 pt-1">
+            <p className="px-1 text-sm leading-6 text-muted-foreground">
+              En mode auto, l'application passe en clair de `06:30` a `18:30`, puis repasse en sombre. Tu peux forcer clair ou sombre a tout moment.
+            </p>
+            <div className="grid grid-cols-3 gap-3 pt-3">
+              <Button
+                variant={settings.theme === "auto" ? "default" : "outline"}
+                onClick={() => {
+                  setSettings({ ...settings, theme: "auto" });
+                  setTheme(resolveThemePreference("auto"));
+                }}
+                className="h-11"
+                data-testid="button-theme-auto"
+              >
+                Auto
+              </Button>
               <Button
                 variant={settings.theme === "dark" ? "default" : "outline"}
                 onClick={() => {
@@ -184,7 +198,7 @@ export default function Settings() {
             className="w-full h-12 gap-2 rounded-full"
             onClick={() => {
               setSettings(defaultAppSettings);
-              setTheme(defaultAppSettings.theme);
+              setTheme(resolveThemePreference(defaultAppSettings.theme));
             }}
             data-testid="button-reset-settings"
           >

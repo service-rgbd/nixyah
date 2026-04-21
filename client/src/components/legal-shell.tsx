@@ -48,31 +48,32 @@ export function LegalShell(props: {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 pb-16 pt-6">
-        <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+        <section className="pb-5">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl">
               <Icon className="h-6 w-6 text-primary" />
             </div>
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <h1 className="text-2xl font-semibold text-foreground">{props.title}</h1>
               <p className="text-sm leading-relaxed text-muted-foreground">{props.description}</p>
             </div>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
+          <div className="mt-5 flex flex-wrap gap-x-5 gap-y-3 border-t border-border/70 pt-4">
             {navItems.map((item) => {
               const ItemIcon = item.icon;
               return (
-                <Button
+                <button
                   key={item.key}
-                  variant={props.active === item.key ? "default" : "outline"}
-                  size="sm"
-                  className="gap-2 rounded-full"
+                  type="button"
+                  className={`inline-flex min-w-0 items-center gap-2 py-1 text-left text-sm transition-colors ${
+                    props.active === item.key ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                  }`}
                   onClick={() => setLocation(item.path)}
                 >
-                  <ItemIcon className="h-4 w-4" />
-                  {item.label}
-                </Button>
+                  <ItemIcon className="h-4 w-4 shrink-0" />
+                  <span className="break-words">{item.label}</span>
+                </button>
               );
             })}
           </div>
