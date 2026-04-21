@@ -4,7 +4,7 @@ import path from 'path';
 
 /**
  * Vite plugin that updates og:image and twitter:image meta tags
- * to point to the app's opengraph image with the correct Replit domain.
+ * to point to the app's branded image using the production URL.
  */
 export function metaImagesPlugin(): Plugin {
   return {
@@ -16,7 +16,8 @@ export function metaImagesPlugin(): Plugin {
         return html;
       }
 
-      // Check if opengraph image exists in public directory
+      // Check if opengraph image exists in public directory.
+      // Fallback to the public favicon when no branded social image is available yet.
       const publicDir = path.resolve(process.cwd(), 'client', 'public');
       const opengraphPngPath = path.join(publicDir, 'opengraph.png');
       const opengraphJpgPath = path.join(publicDir, 'opengraph.jpg');
@@ -31,12 +32,7 @@ export function metaImagesPlugin(): Plugin {
         imageExt = 'jpeg';
       }
 
-      if (!imageExt) {
-        log('[meta-images] OpenGraph image not found, skipping meta tag updates');
-        return html;
-      }
-
-      const imageUrl = `${baseUrl}/opengraph.${imageExt}`;
+      const imageUrl = imageExt ? `${baseUrl}/opengraph.${imageExt}` : `${baseUrl}/favicon.png`;
 
       log('[meta-images] updating meta image tags to:', imageUrl);
 
@@ -56,19 +52,31 @@ export function metaImagesPlugin(): Plugin {
 }
 
 function getDeploymentUrl(): string | null {
+  if (process.env.APP_BASE_URL) {
+    return normalizeUrl(process.env.APP_BASE_URL);
+  }
+
   if (process.env.REPLIT_INTERNAL_APP_DOMAIN) {
-    const url = `https://${process.env.REPLIT_INTERNAL_APP_DOMAIN}`;
+    const url = normalizeUrl(`https://${process.env.REPLIT_INTERNAL_APP_DOMAIN}`);
     log('[meta-images] using internal app domain:', url);
     return url;
   }
 
   if (process.env.REPLIT_DEV_DOMAIN) {
-    const url = `https://${process.env.REPLIT_DEV_DOMAIN}`;
+    const url = normalizeUrl(`https://${process.env.REPLIT_DEV_DOMAIN}`);
     log('[meta-images] using dev domain:', url);
     return url;
   }
 
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://www.nixyah.com';
+  }
+
   return null;
+}
+
+function normalizeUrl(value: string): string {
+  return String(value).trim().replace(/\/+$/, '');
 }
 
 function log(...args: any[]): void {

@@ -17,6 +17,7 @@ let hasSalonsTablePromise: Promise<boolean> | null = null;
 let hasProfileMediaTablePromise: Promise<boolean> | null = null;
 let hasAnnoncesTablePromise: Promise<boolean> | null = null;
 let hasAnnoncesPromotionPromise: Promise<boolean> | null = null;
+let hasStoriesTablePromise: Promise<boolean> | null = null;
 
 async function hasColumn(tableName: string, columnName: string): Promise<boolean> {
   try {
@@ -145,6 +146,12 @@ export async function hasAnnoncesPromotionColumn(): Promise<boolean> {
   if (hasAnnoncesPromotionPromise) return hasAnnoncesPromotionPromise;
   hasAnnoncesPromotionPromise = hasColumn("annonces", "promotion");
   return hasAnnoncesPromotionPromise;
+}
+
+export async function hasStoriesTable(): Promise<boolean> {
+  if (hasStoriesTablePromise) return hasStoriesTablePromise;
+  hasStoriesTablePromise = hasTable("stories");
+  return hasStoriesTablePromise;
 }
 
 

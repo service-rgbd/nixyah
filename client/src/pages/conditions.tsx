@@ -1,147 +1,113 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
-import { getConsent, useConsent } from "@/lib/consent";
-import { 
-  Shield, 
-  Eye, 
-  UserCheck, 
-  MessageSquare, 
-  AlertTriangle, 
-  Lock, 
-  Scale, 
-  CheckCircle2,
-  ChevronRight,
-  Users,
-  Heart,
-  BadgeCheck,
-  Clock,
-  MapPin
-} from "lucide-react";
+import { AlertTriangle, BadgeCheck, FileText, Shield, Users } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useI18n } from "@/lib/i18n";
+import { LegalShell } from "@/components/legal-shell";
+import { useConsent } from "@/lib/consent";
 
-const features = [
+const keyPoints = [
   {
-    icon: Eye,
-    title: "Découvrez des profils exclusifs",
-    description: "Parcourez des profils vérifiés avec photos et vidéos. Chaque profil est validé par notre équipe de modération."
+    title: "Annonces en premier plan",
+    text: "NIXYAH est conçu pour mettre en avant les annonces, profils et espaces publiés par ses utilisateurs.",
   },
   {
-    icon: Shield,
-    title: "Anonymat garanti",
-    description: "Votre identité réelle reste confidentielle. Utilisez un pseudonyme et communiquez en toute discrétion."
+    title: "Plateforme de mise en relation",
+    text: "NIXYAH n'est ni l'auteur, ni le mandataire, ni l'organisateur des annonces publiées sur la plateforme.",
   },
   {
-    icon: MessageSquare,
-    title: "Contact direct et sécurisé",
-    description: "Échangez via notre messagerie interne. Aucun numéro de téléphone ou email n'est exposé publiquement."
+    title: "Responsabilité individuelle",
+    text: "Chaque utilisateur reste seul responsable de ses annonces, de ses propos, de ses actes, de ses objectifs et du respect de la loi.",
   },
-  {
-    icon: UserCheck,
-    title: "Profils vérifiés",
-    description: "Badge de vérification pour les profils authentifiés. Photos et vidéos validées manuellement."
-  },
-  {
-    icon: Clock,
-    title: "Disponibilités en temps réel",
-    description: "Consultez les disponibilités, horaires et durées proposées par chaque profil."
-  },
-  {
-    icon: MapPin,
-    title: "Géolocalisation discrète",
-    description: "Trouvez des profils près de chez vous sans jamais révéler votre position exacte."
-  }
 ];
 
-const conditions = [
+const detailSections = [
   {
-    id: "age",
-    title: "Majorité légale",
-    content: "Je certifie avoir 18 ans révolus ou l'âge de la majorité légale dans mon pays de résidence. L'accès à ce site est strictement interdit aux mineurs. Tout accès frauduleux engage ma responsabilité civile et pénale.",
-    required: true
+    id: "role",
+    title: "Rôle exact de la plateforme",
+    content:
+      "NIXYAH fournit un service de présentation et de visibilité: profils, annonces, salons, produits adultes et options de mise en avant. La plateforme facilite l'affichage et la découverte de contenus publiés par les utilisateurs, mais elle ne valide pas la réalité, la qualité, l'intention ni l'exécution des services ou propositions mentionnés.",
   },
   {
-    id: "responsibility",
-    title: "Responsabilité individuelle",
-    content: "Je comprends que NIXYAH.com est une plateforme de mise en relation uniquement. La plateforme n'est pas responsable des interactions entre utilisateurs. Je m'engage à faire preuve de discernement et de prudence dans mes échanges et rencontres.",
-    required: true
+    id: "liability",
+    title: "Responsabilité des annonces et des comportements",
+    content:
+      "Les utilisateurs assument seuls la rédaction, la légalité, l'exactitude et les conséquences de leurs annonces. NIXYAH n'est pas responsable des contenus publiés, des rendez-vous, des échanges privés, des paiements externes, des promesses faites entre utilisateurs, ni des actes ou buts poursuivis par les membres.",
   },
   {
-    id: "identity",
-    title: "Identité des membres",
-    content: "Je reconnais que NIXYAH.com ne peut garantir l'identité réelle des membres. Les profils sont anonymes et utilisent des pseudonymes. Je m'engage à vérifier par moi-même l'authenticité de mes interlocuteurs avant toute rencontre.",
-    required: true
-  },
-  {
-    id: "content",
-    title: "Contenu approprié",
-    content: "Je m'engage à ne publier que du contenu dont je suis propriétaire ou pour lequel j'ai les droits. Je ne publierai pas de contenu illégal, diffamatoire, ou portant atteinte aux droits d'autrui. Je comprends que tout contenu est soumis à modération.",
-    required: true
+    id: "moderation",
+    title: "Modération et retrait",
+    content:
+      "La plateforme peut modérer, masquer, refuser ou supprimer un contenu, un compte ou une annonce si elle estime qu'il existe un risque juridique, un abus, un contenu trompeur, violent, illicite ou contraire au fonctionnement du service. Cette modération n'implique pas une garantie générale sur tout le contenu publié.",
   },
   {
     id: "safety",
-    title: "Sécurité personnelle",
-    content: "Je m'engage à prendre toutes les précautions nécessaires lors de mes rencontres : informer un proche, choisir des lieux publics ou sécurisés, et faire preuve de vigilance. NIXYAH.com recommande la prudence en toutes circonstances.",
-    required: true
+    title: "Âge, sécurité et légalité",
+    content:
+      "L'accès est réservé aux adultes. Chaque utilisateur doit respecter les lois applicables dans son pays et prendre ses propres précautions avant tout échange, paiement ou rencontre. La plateforme recommande de vérifier l'identité de son interlocuteur, d'éviter les situations à risque et de signaler tout comportement problématique.",
   },
   {
-    id: "data",
-    title: "Protection des données",
+    id: "payments",
+    title: "Paiements, jetons et services externes",
     content:
-      "J'accepte que mes données (pseudo, photos, vidéos, annonces, préférences, ville, quartier approximatif, logs de connexion) soient stockées sur des serveurs sécurisés et utilisées uniquement pour le fonctionnement de la plateforme : affichage des profils, annonces, salons et produits adultes. NIXYAH.com ne revend pas mes données à des tiers. Je peux demander l'accès, la rectification ou la suppression de mes informations en contactant l'administrateur par email (Ra.fils27@hotmail.com) ou via le canal Telegram officiel de support.",
-    required: true
+      "Les jetons servent à certaines fonctions internes de visibilité. Les paiements sont traités par des prestataires externes lorsque cette option est proposée. NIXYAH n'est pas responsable d'un accord conclu hors plateforme, d'une prestation externe, d'un litige entre utilisateurs ou d'un service promis dans une annonce.",
+  },
+];
+
+const acceptanceItems = [
+  {
+    id: "adult",
+    label: "Je confirme être majeur et utiliser la plateforme dans un cadre légal.",
   },
   {
-    id: "terms",
-    title: "Conditions générales",
-    content:
-      "J'accepte les conditions générales d'utilisation de NIXYAH.com dans leur intégralité. Je comprends que la plateforme propose : (1) des profils et annonces pour rencontres adultes consenties, (2) la mise en avant de salons privés / SPA, (3) la présentation de produits adultes. NIXYAH.com n'organise pas de prostitution et ne garantit ni les services, ni les paiements réalisés entre utilisateurs ou partenaires externes. Toute utilisation doit rester légale dans mon pays de résidence et conforme aux lois locales en vigueur.",
-    required: true
-  }
+    id: "responsibility",
+    label: "Je comprends que chaque utilisateur est responsable de ses annonces, actes, paiements et objectifs.",
+  },
+  {
+    id: "platform-role",
+    label: "Je comprends que NIXYAH met des annonces en avant mais n'en est ni l'auteur ni le garant.",
+  },
+  {
+    id: "content-rights",
+    label: "Je m'engage à publier uniquement du contenu légal et dont je détiens les droits.",
+  },
 ];
 
 export default function Conditions() {
   const [, setLocation] = useLocation();
   const [consent, setConsent] = useConsent();
-  const { lang } = useI18n();
-  const [acceptedConditions, setAcceptedConditions] = useState<Set<string>>(new Set());
-  const [showConditions, setShowConditions] = useState(false);
+  const requiredIds = useMemo(() => acceptanceItems.map((item) => item.id), []);
+  const [acceptedItems, setAcceptedItems] = useState<Set<string>>(
+    new Set(consent.conditionsOk ? requiredIds : []),
+  );
 
   useEffect(() => {
-    // Si l'utilisateur a déjà accepté les conditions (par ex. depuis son profil),
-    // on affiche directement le détail sans passer par l'écran "Continuer".
     if (consent.conditionsOk) {
-      setShowConditions(true);
+      setAcceptedItems(new Set(requiredIds));
     }
-  }, [consent.conditionsOk]);
+  }, [consent.conditionsOk, requiredIds]);
 
-  const allAccepted = conditions.filter(c => c.required).every(c => acceptedConditions.has(c.id));
+  const allAccepted = requiredIds.every((id) => acceptedItems.has(id));
 
-  const toggleCondition = (id: string) => {
-    const newSet = new Set(acceptedConditions);
-    if (newSet.has(id)) {
-      newSet.delete(id);
-    } else {
-      newSet.add(id);
-    }
-    setAcceptedConditions(newSet);
-  };
-
-  const handleCheckAll = () => {
-    const requiredIds = conditions.filter((c) => c.required).map((c) => c.id);
-    setAcceptedConditions(new Set(requiredIds));
+  const toggleItem = (id: string) => {
+    setAcceptedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   };
 
   const handleAccept = () => {
     if (!allAccepted) return;
 
-    // On enregistre l'acceptation dans le consentement global
     setConsent((prev) => ({ ...prev, conditionsOk: true }));
 
-    // On tente de récupérer une éventuelle page de redirection
     try {
       const params = new URLSearchParams(window.location.search);
       const next = params.get("next");
@@ -150,247 +116,126 @@ export default function Conditions() {
         return;
       }
     } catch {
-      // ignore parsing errors, we'll fallback below
+      // ignore
     }
 
-    // Fallback : si un profil existe déjà, on envoie vers l'application,
-    // sinon vers l'inscription pour les nouveaux utilisateurs.
     const hasProfile = Boolean(window.localStorage.getItem("djantrah.profileId"));
     setLocation(hasProfile ? "/start" : "/signup");
   };
 
-  const handleRefuse = () => {
-    window.location.href = "https://www.google.com";
-  };
-
-  if (!showConditions) {
-    return (
-      <div className="min-h-screen bg-background">
-        <header className="flex items-center justify-between px-6 py-4">
-          <h1 className="text-2xl font-bold text-gradient">NIXYAH</h1>
-        </header>
-
-        <main className="px-6 pb-32">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-8"
-          >
-            <div className="text-center space-y-4 py-8">
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ delay: 0.2, type: "spring" }}
-                className="w-20 h-20 mx-auto rounded-full bg-primary/20 flex items-center justify-center"
-              >
-                <Heart className="w-10 h-10 text-primary" />
-              </motion.div>
-              <h2 className="text-3xl font-bold text-foreground">
-                Comment ça marche ?
-              </h2>
-              <p className="text-muted-foreground max-w-sm mx-auto">
-                Découvrez une nouvelle façon de créer des connexions authentiques et discrètes
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              {features.map((feature, index) => (
-                <motion.div
-                  key={feature.title}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.1 * index }}
-                  className="flex gap-4 p-4 rounded-2xl bg-card border border-border"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <feature.icon className="w-6 h-6 text-primary" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-semibold text-foreground">{feature.title}</h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {feature.description}
-                    </p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.6 }}
-              className="p-6 rounded-2xl bg-muted/30 border border-border space-y-4"
-            >
-              <div className="flex items-center gap-3">
-                <Scale className="w-6 h-6 text-primary" />
-                <h3 className="font-semibold text-foreground">Nos valeurs</h3>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>Anonymat total</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>Profils vérifiés</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>Contact direct</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span>100% mobile</span>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        </main>
-
-        <div className="fixed bottom-0 left-0 right-0 p-6 glass border-t border-white/10">
-          <Button
-            onClick={() => setShowConditions(true)}
-            className="w-full h-14 text-base font-semibold gap-2"
-            data-testid="button-continue-conditions"
-          >
-            Continuer
-            <ChevronRight className="w-5 h-5" />
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-background">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <h1 className="text-2xl font-bold text-gradient">NIXYAH</h1>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Lock className="w-4 h-4" />
-          <span>Conditions d'utilisation</span>
-        </div>
-      </header>
+    <LegalShell
+      active="conditions"
+      icon={FileText}
+      eyebrow="Centre légal"
+      title="Conditions d'utilisation"
+      description="Version simple et lisible: la plateforme met les annonces en avant, mais chaque utilisateur reste responsable de son contenu, de ses actes et de ses intentions."
+    >
+      <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid gap-3 md:grid-cols-3">
+        {keyPoints.map((point) => (
+          <div key={point.title} className="rounded-2xl border border-border bg-card p-4">
+            <div className="text-sm font-semibold text-foreground">{point.title}</div>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{point.text}</p>
+          </div>
+        ))}
+      </motion.section>
 
-      <main className="pb-40">
-        <div className="px-6 py-6 space-y-4">
+      <section className="rounded-3xl border border-border bg-card p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500/12">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-lg font-semibold text-foreground">Ce que cela veut dire concrètement</h2>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              NIXYAH est un service de visibilité et de découverte. La plateforme n'endosse pas les annonces, ne garantit pas les profils, ne contrôle pas les objectifs réels des utilisateurs et n'est pas responsable des actes, rencontres, paiements ou litiges nés des publications.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Détail des règles</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Les points essentiels sont regroupés ici pour éviter une page trop longue.</p>
+          </div>
+          <div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">Lecture rapide</div>
+        </div>
+
+        <Accordion type="single" collapsible className="mt-4">
+          {detailSections.map((section) => (
+            <AccordionItem key={section.id} value={section.id} className="border-border">
+              <AccordionTrigger className="text-base text-foreground hover:no-underline">{section.title}</AccordionTrigger>
+              <AccordionContent className="text-sm leading-relaxed text-muted-foreground">
+                {section.content}
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => setLocation("/privacy")}
+          className="rounded-3xl border border-border bg-card p-5 text-left transition-colors hover:bg-card/80"
+        >
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center">
-              <Scale className="w-6 h-6 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-foreground">
-                Conditions d'utilisation
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Veuillez lire et accepter chaque condition
-              </p>
-            </div>
+            <Shield className="h-5 w-5 text-primary" />
+            <div className="text-base font-semibold text-foreground">Confidentialité</div>
           </div>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Quelles données sont utilisées, pourquoi, avec quels prestataires et quels sont vos droits.
+          </p>
+        </button>
 
-          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-amber-500">Important</p>
-                <p className="text-xs text-muted-foreground">
-                  Vous devez accepter toutes les conditions obligatoires pour accéder à la plateforme. 
-                  Le refus entraînera une redirection immédiate.
-                </p>
-              </div>
-            </div>
+        <button
+          type="button"
+          onClick={() => setLocation("/cookies")}
+          className="rounded-3xl border border-border bg-card p-5 text-left transition-colors hover:bg-card/80"
+        >
+          <div className="flex items-center gap-3">
+            <Users className="h-5 w-5 text-primary" />
+            <div className="text-base font-semibold text-foreground">Cookies et stockage</div>
           </div>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Détail du cookie de session, du stockage local des préférences et de l'usage technique du navigateur.
+          </p>
+        </button>
+      </section>
 
-          <Button
-            variant="secondary"
-            className="w-full"
-            onClick={handleCheckAll}
-            data-testid="button-check-all"
-          >
-            {lang === "en" ? "Check all" : "Cocher tout"}
-          </Button>
+      <section className="rounded-3xl border border-border bg-card p-5">
+        <div className="flex items-center gap-3">
+          <BadgeCheck className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold text-foreground">Accord simple</h2>
         </div>
 
-        <ScrollArea className="h-[calc(100vh-380px)]">
-          <div className="px-6 space-y-4">
-            {conditions.map((condition, index) => (
-              <motion.div
-                key={condition.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className={`p-4 rounded-2xl border transition-all ${
-                  acceptedConditions.has(condition.id)
-                    ? "bg-primary/5 border-primary/30"
-                    : "bg-card border-border"
-                }`}
-              >
-                <div className="flex items-start gap-4">
-                  <Checkbox
-                    id={condition.id}
-                    checked={acceptedConditions.has(condition.id)}
-                    onCheckedChange={() => toggleCondition(condition.id)}
-                    className="mt-1"
-                    data-testid={`checkbox-${condition.id}`}
-                  />
-                  <div className="flex-1 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label
-                        htmlFor={condition.id}
-                        className="font-semibold text-foreground cursor-pointer"
-                      >
-                        {condition.title}
-                      </label>
-                      {condition.required && (
-                        <span className="text-xs text-primary font-medium">Obligatoire</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {condition.content}
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+        {consent.conditionsOk && (
+          <div className="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600">
+            Ces conditions ont déjà été acceptées sur cet appareil. Vous pouvez les relire et continuer à utiliser la plateforme.
           </div>
-        </ScrollArea>
+        )}
 
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">
-              {acceptedConditions.size} / {conditions.length} conditions acceptées
-            </span>
-            {allAccepted && (
-              <span className="text-emerald-500 font-medium flex items-center gap-1">
-                <CheckCircle2 className="w-4 h-4" />
-                Complet
-              </span>
-            )}
-          </div>
+        <div className="mt-4 space-y-3">
+          {acceptanceItems.map((item) => (
+            <label key={item.id} className="flex items-start gap-3 rounded-2xl border border-border bg-background/50 p-4">
+              <Checkbox checked={acceptedItems.has(item.id)} onCheckedChange={() => toggleItem(item.id)} />
+              <span className="text-sm leading-relaxed text-foreground">{item.label}</span>
+            </label>
+          ))}
         </div>
-      </main>
 
-      <div className="fixed bottom-0 left-0 right-0 p-6 glass border-t border-white/10">
-        <div className="space-y-3">
-          <Button
-            onClick={handleAccept}
-            disabled={!allAccepted}
-            className="w-full h-14 text-base font-semibold gap-2"
-            data-testid="button-accept-all"
-          >
-            <BadgeCheck className="w-5 h-5" />
-            J'accepte toutes les conditions
+        <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+          <Button className="h-12 flex-1 gap-2" disabled={!allAccepted} onClick={handleAccept}>
+            <BadgeCheck className="h-4 w-4" />
+            Accepter et continuer
           </Button>
-          
-          <Button
-            onClick={handleRefuse}
-            variant="outline"
-            className="w-full h-12 text-base text-muted-foreground"
-            data-testid="button-refuse-all"
-          >
-            Je refuse - Quitter le site
+          <Button variant="outline" className="h-12 flex-1" onClick={() => setLocation("/")}>
+            Revenir à l'accueil
           </Button>
         </div>
-      </div>
-    </div>
+      </section>
+    </LegalShell>
   );
 }

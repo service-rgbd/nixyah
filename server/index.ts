@@ -14,6 +14,10 @@ const httpServer = createServer(app);
 const env = getEnv();
 const isProd = process.env.NODE_ENV === "production";
 
+// API responses are session-specific in many places. Disable ETag so the browser
+// never reuses a prior user's 304-backed response for a different authenticated session.
+app.disable("etag");
+
 if (isProd) {
   // Render/Cloudflare sit behind proxies (needed for secure cookies + correct client IP)
   app.set("trust proxy", 1);
@@ -43,6 +47,13 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, private, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
+
 // Basic security headers (disable CSP here because Vite/Cloudflare pages handle frontend)
 app.use(
   helmet({
@@ -53,6 +64,9 @@ app.use(
 
 // CORS (needed when frontend is on Cloudflare Pages and API is on Render)
 const allowedOrigins = new Set<string>();
+for (const origin of ["http://localhost:5000", "http://127.0.0.1:5000"]) {
+  allowedOrigins.add(origin);
+}
 if (env.APP_BASE_URL) allowedOrigins.add(env.APP_BASE_URL.replace(/\/+$/, ""));
 if (env.CORS_ORIGINS) {
   for (const o of env.CORS_ORIGINS.split(",")) {
@@ -120,6 +134,24 @@ app.use(
 
 // Sessions (used to ensure one profile per user/session + logout)
 app.use(sessionMiddleware());
+
+// Cloudflare Workers do not reliably expose upstream Set-Cookie headers from proxied
+// responses. Mirror them into a readable header just before headers are sent so the
+// Worker can restore real Set-Cookie on the edge response.
+app.use((req, res, next) => {
+  const originalWriteHead = res.writeHead.bind(res);
+  res.writeHead = ((...args: any[]) => {
+    const setCookieHeader = res.getHeader("Set-Cookie");
+    if (setCookieHeader) {
+      const values = Array.isArray(setCookieHeader)
+        ? setCookieHeader.map((value) => String(value))
+        : [String(setCookieHeader)];
+      res.setHeader("x-session-bridge", Buffer.from(JSON.stringify(values), "utf8").toString("base64"));
+    }
+    return (originalWriteHead as any)(...args);
+  }) as typeof res.writeHead;
+  next();
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

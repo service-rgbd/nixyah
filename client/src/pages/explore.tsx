@@ -20,7 +20,21 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useAppSettings } from "@/lib/appSettings";
 import { useI18n } from "@/lib/i18n";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
-import avatarUrl from "@assets/avatar.png";
+import { getStoredBrowserCoords, requestBrowserCoords } from "@/lib/browserLocation";
+import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
+
+function dedupeMedia(urls: Array<string | null | undefined>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const url of urls) {
+    if (!url) continue;
+    const stable = url.split("#")[0]?.split("?")[0] ?? url;
+    if (seen.has(stable)) continue;
+    seen.add(stable);
+    out.push(url);
+  }
+  return out;
+}
 
 type ApiProfile = {
   id: string;
@@ -41,6 +55,13 @@ type ApiProfile = {
   accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
   latestAnnonce?: { id: string; title: string; createdAt: string; badges?: string[] } | null;
 };
+
+function getAccountTypeLabel(accountType: ApiProfile["accountType"], lang: "fr" | "en") {
+  if (accountType === "residence") return lang === "en" ? "Residence" : "Résidence";
+  if (accountType === "salon") return "Salon / SPA";
+  if (accountType === "adult_shop") return lang === "en" ? "Adult shop" : "Boutique adulte";
+  return lang === "en" ? "Profile" : "Profil";
+}
 
 function formatRelativeTime(iso: string, lang: "fr" | "en") {
   const ts = new Date(iso).getTime();
@@ -68,128 +89,123 @@ function ProfileRow({
   const urgent = badges.includes("URGENT");
   const premium = badges.includes("PREMIUM");
   const top = badges.includes("TOP");
-  const photoCount = Array.isArray(p.photos) ? p.photos.length : 0;
+  const previewPhotos = dedupeMedia([p.photoUrl, ...(p.photos ?? [])]).slice(0, 3);
   const title = p.latestAnnonce?.title?.trim()
     ? p.latestAnnonce?.title
     : `${p.pseudo} • ${p.age}`;
+  const accountLabel = getAccountTypeLabel(p.accountType, lang);
+  const primaryPhoto = previewPhotos[0] || getProfilePhoto(p.photoUrl, p.accountType);
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group w-full text-left rounded-3xl border border-border bg-card/70 hover:bg-card transition-colors overflow-hidden shadow-sm hover:shadow-md"
+      className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
     >
-      <div className="flex gap-3 p-3">
-        <div className="relative w-[92px] h-[112px] rounded-2xl overflow-hidden border border-border shrink-0 bg-muted/30">
+      <div className="grid items-start gap-4 md:grid-cols-[180px_minmax(0,1fr)] md:gap-5">
+        <div className="relative h-[190px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[230px]">
           <img
-            src={p.photoUrl || avatarUrl}
+            src={primaryPhoto}
             alt={p.pseudo}
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 w-full h-full object-cover"
             onError={(e) => {
               const img = e.currentTarget;
               img.onerror = null;
-              img.src = avatarUrl;
+              img.src = getDefaultProfilePhoto(p.accountType);
             }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
 
-          <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+          <div className="absolute left-3 top-3 flex flex-wrap gap-2">
             {p.isVip && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/35 text-white border border-white/15 backdrop-blur flex items-center gap-1">
+              <span className="flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-[10px] text-white">
                 <Crown className="w-3.5 h-3.5 text-amber-300" />
                 VIP
               </span>
             )}
+            <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white">
+              {accountLabel}
+            </span>
           </div>
 
-          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between gap-2">
-            {photoCount > 0 ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/35 text-white border border-white/15 backdrop-blur">
-                {photoCount} {lang === "en" ? "photos" : "photos"}
-              </span>
-            ) : (
-              <span />
-            )}
+          <div className="absolute bottom-3 left-3 right-3 flex items-end justify-end gap-2">
             {urgent ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-500/80 text-white border border-white/15">
+              <span className="rounded-full bg-red-500/85 px-2.5 py-1 text-[10px] text-white">
                 {lang === "en" ? "Urgent" : "Urgent"}
               </span>
             ) : null}
           </div>
         </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-foreground leading-snug line-clamp-2">
+              <div className="text-lg font-semibold leading-tight text-foreground line-clamp-2 md:text-[1.35rem]">
                 {title}
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span>
-                  {lang === "en" ? "Posted by" : "Publié par"}{" "}
-                  <span className="text-foreground/90 font-medium">{p.pseudo}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="rounded-full bg-muted/40 px-2.5 py-1">
+                  {p.pseudo}
                 </span>
                 {p.isPro ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-primary/10 text-primary border border-primary/20">
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
                     pro
                   </span>
                 ) : null}
                 {p.verified ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-400">
                     <BadgeCheck className="w-3.5 h-3.5" />
                     {lang === "en" ? "Certified" : "Certifié"}
                   </span>
                 ) : null}
+                {p.tarif ? (
+                  <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
+                    {p.tarif}
+                  </span>
+                ) : null}
               </div>
             </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5 group-hover:text-foreground transition-colors" />
+            <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
           </div>
 
-          <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-            <MapPin className="w-3.5 h-3.5" />
-            <span className="truncate">
-              {p.ville}
-              {p.lieu ? ` • ${p.lieu}` : ""}
-              {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
-            </span>
+          <div className="mt-3">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <MapPin className="w-4 h-4" />
+                <span className="truncate">
+                  {p.ville}
+                  {p.lieu ? ` • ${p.lieu}` : ""}
+                  {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
+                </span>
+            </div>
+            <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
+              {p.description ?? "—"}
+            </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             {premium ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-400">
                 PREMIUM
               </span>
             ) : null}
             {top ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20">
+              <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-400">
                 TOP
               </span>
             ) : null}
-            {(p.services ?? []).slice(0, 2).map((s) => (
+            {(p.services ?? []).slice(0, 3).map((s) => (
               <span
                 key={s}
-                className="px-2 py-0.5 rounded-full text-[10px] bg-muted/30 text-muted-foreground border border-border"
+                className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground"
               >
                 {s}
               </span>
             ))}
-          </div>
-
-          <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">
-            {p.description ?? "—"}
-          </div>
-
-          <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-            <span className="truncate">
-              {p.tarif ? (
-                <span className="text-foreground font-semibold">{p.tarif}</span>
-              ) : (
-                <span />
-              )}
-            </span>
-            {p.latestAnnonce?.createdAt ? (
-              <span className="shrink-0">{formatRelativeTime(p.latestAnnonce.createdAt, lang)}</span>
-            ) : null}
+            <div className="ml-auto text-[11px] text-muted-foreground">
+              {p.latestAnnonce?.createdAt ? formatRelativeTime(p.latestAnnonce.createdAt, lang) : ""}
+            </div>
           </div>
         </div>
       </div>
@@ -215,13 +231,13 @@ export default function Explore() {
   >("__all__");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [page, setPage] = useState(0);
-  const requestLocation = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => {},
-      { enableHighAccuracy: false, timeout: 8000 },
-    );
+  useEffect(() => {
+    setCoords(getStoredBrowserCoords());
+  }, []);
+
+  const requestLocation = async () => {
+    const nextCoords = await requestBrowserCoords();
+    if (nextCoords) setCoords(nextCoords);
   };
 
   const baseParams = useMemo(() => {
@@ -275,11 +291,11 @@ export default function Explore() {
     const qQuartier = normalize(quartier);
     return arr.filter((p) => {
       if (p.age < ageRange[0] || p.age > ageRange[1]) return false;
-      if (zone !== "__all__" && p.ville !== zone) return false;
+      if (zone !== "__all__" && normalize(p.ville) !== normalize(zone)) return false;
       if (accountType !== "__all__" && (p.accountType ?? "profile") !== accountType) return false;
       if (qQuartier) {
-        const lieu = normalize(p.lieu ?? "");
-        if (!lieu.includes(qQuartier)) return false;
+        const locationText = normalize([p.ville, p.lieu].filter(Boolean).join(" • "));
+        if (!locationText.includes(qQuartier)) return false;
       }
       return true;
     });
@@ -317,7 +333,7 @@ export default function Explore() {
     return (
       <div className="h-[100svh] bg-background">
         <div className="fixed top-0 left-0 right-0 z-30 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none">
-          <div className="mx-auto max-w-md flex items-center justify-between gap-2 pointer-events-auto">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 pointer-events-auto">
             <Button
               variant="secondary"
               size="icon"
@@ -572,13 +588,13 @@ export default function Explore() {
             filtered.map((p) => (
               <section key={p.id} className="snap-start snap-stop-always h-[100svh] relative">
                 <img
-                  src={p.photoUrl || avatarUrl}
+                  src={getProfilePhoto(p.photoUrl, p.accountType)}
                   alt={p.pseudo}
                   className="absolute inset-0 w-full h-full object-cover bg-muted"
                   onError={(e) => {
                     const img = e.currentTarget;
                     img.onerror = null;
-                    img.src = avatarUrl;
+                    img.src = getDefaultProfilePhoto(p.accountType);
                   }}
                 />
                 <div className="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/92 via-black/40 to-transparent pointer-events-none" />
@@ -633,8 +649,8 @@ export default function Explore() {
 
   return (
     <div className="min-h-[100svh] bg-background">
-      <header className="sticky top-0 z-30 bg-background/90 backdrop-blur border-b border-border">
-        <div className="mx-auto max-w-md px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-6 lg:px-8">
           <Button
             variant="secondary"
             size="icon"
@@ -644,20 +660,27 @@ export default function Explore() {
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <div className="text-sm font-semibold text-foreground">
+          <div className="text-sm font-semibold text-foreground sm:text-base">
             {lang === "en" ? "Explore" : "Explorer"}
           </div>
           <div className="w-9" />
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 pb-10 pt-4 space-y-6">
-        {/* View mode */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-xs text-muted-foreground">
-            {lang === "en" ? "View" : "Affichage"}
+      <main className="mx-auto max-w-[980px] px-4 pb-12 pt-4 space-y-5 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="text-sm font-semibold text-foreground">
+              {lang === "en" ? "Explore" : "Explorer"}
+            </span>
+            <span className="rounded-full bg-muted/40 px-2.5 py-1">
+              {filtered.length} {lang === "en" ? "profiles" : "profils"}
+            </span>
+            <span className="rounded-full bg-muted/40 px-2.5 py-1">
+              {zone === "__all__" ? (lang === "en" ? "All zones" : "Toutes zones") : zone}
+            </span>
           </div>
-          <div className="inline-flex items-center rounded-full border border-border bg-card/60 p-1">
+          <div className="inline-flex items-center rounded-full border border-border bg-card/40 p-1">
             <button
               type="button"
               onClick={() => setViewMode("list")}
@@ -675,17 +698,29 @@ export default function Explore() {
           </div>
         </div>
 
-        {/* Filters (collapsed bar + full-screen sheet) */}
-        <div className="rounded-3xl border border-border bg-card/60 p-4 flex items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground truncate">
-            {lang === "en"
-              ? `Age ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "All zones" : zone}`
-              : `Âge ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "Toutes zones" : zone}`}
-            {accountType !== "__all__" ? (lang === "en" ? ` • Type ${accountType}` : ` • Type ${accountType}`) : ""}
+        <div className="flex flex-col gap-4 pb-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-foreground">
+              {lang === "en"
+                ? `Age ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "All zones" : zone}`
+                : `Âge ${ageRange[0]}–${ageRange[1]} • ${zone === "__all__" ? "Toutes zones" : zone}`}
+              {accountType !== "__all__" ? (lang === "en" ? ` • Type ${accountType}` : ` • Type ${accountType}`) : ""}
+              {quartier ? ` • ${quartier}` : ""}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {vipFiltered.length > 0 ? (
+              <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs text-amber-500">
+                {vipFiltered.length} VIP
+              </span>
+            ) : null}
+            {scope === "nearby" && !coords && (
+              <Button variant="outline" size="sm" className="rounded-full" onClick={requestLocation}>
+                {lang === "en" ? "Use my location" : "Utiliser ma position"}
+              </Button>
+            )}
           </div>
           <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
             <SheetTrigger asChild>
-              <Button variant="outline" size="sm" className="rounded-2xl">
+              <Button variant="outline" size="sm" className="rounded-full">
                 <SlidersHorizontal className="w-4 h-4 mr-2" />
                 {lang === "en" ? "Filters" : "Filtres"}
               </Button>
@@ -720,12 +755,6 @@ export default function Explore() {
                     {lang === "en" ? "Anywhere search" : "Recherche partout"}
                   </button>
                 </div>
-
-                {scope === "nearby" && !coords && (
-                  <Button variant="outline" className="w-full rounded-2xl" onClick={requestLocation}>
-                    {lang === "en" ? "Use my location" : "Utiliser ma position"}
-                  </Button>
-                )}
 
                 {scope === "nearby" && !coords && (
                   <Button variant="outline" className="w-full rounded-2xl" onClick={requestLocation}>
@@ -898,31 +927,17 @@ export default function Explore() {
           </Sheet>
         </div>
 
-        {/* Results list */}
-        <div className="space-y-2">
-          <div className="flex items-end justify-between">
-            <div>
-              <div className="text-sm font-semibold text-foreground">
-                {lang === "en" ? "Results" : "Résultats"}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {lang === "en" ? "List view (no swipe)." : "Affichage en liste (sans swipe)."}
-              </div>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {isLoading ? "…" : `${filtered.length}`}
-            </div>
-          </div>
+        <div className="space-y-4">
           {viewMode === "list" ? (
-            <div className="grid gap-2">
+            <div className="space-y-1">
               {isLoading ? (
                 <>
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
+                  <div className="h-52 rounded-[24px] bg-muted/40" />
+                  <div className="h-52 rounded-[24px] bg-muted/40" />
+                  <div className="h-52 rounded-[24px] bg-muted/40" />
                 </>
               ) : filtered.length === 0 ? (
-                <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <div className="rounded-[24px] bg-muted/30 p-5 text-sm text-muted-foreground">
                   {lang === "en"
                     ? "No profiles found. Try widening filters."
                     : "Aucun profil trouvé. Essaie d’élargir les filtres."}

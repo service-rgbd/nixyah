@@ -1,0 +1,5 @@
+export const STORY_PUBLISH_TOKEN_COST = 10;
+export const STORY_PUBLIC_MAX_SECONDS = 10;
+export const STORY_PRIVATE_MAX_SECONDS = 300;
+export const STORY_PUBLIC_TTL_HOURS = 24;
+export const STORY_FREE_STORY_LIMIT = 1;

@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
-import { Compass, Settings2, UserPlus, LogIn, Sparkles, MapPin, SlidersHorizontal, BadgeCheck, Crown, ChevronRight } from "lucide-react";
+import { Compass, Settings2, UserPlus, LogIn, Sparkles, MapPin, SlidersHorizontal, Crown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carousel";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -23,7 +21,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useAppSettings } from "@/lib/appSettings";
 import { getProfileId } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
-import avatarUrl from "@assets/avatar.png";
 import spaPhoto from "@assets/photo_2026-01-09_17-36-41.jpg";
 import resiPhoto from "@assets/resi-meublmee.jpg";
 import eventBgToast from "@assets/Attached_image.png";
@@ -36,6 +33,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import type { Salon } from "@shared/schema";
+import { StoryReel, type StoryReelGroup } from "@/components/story-reel";
+import { getStoredBrowserCoords, requestBrowserCoords } from "@/lib/browserLocation";
+import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
 
 export default function Start() {
   const [, setLocation] = useLocation();
@@ -54,6 +54,8 @@ export default function Start() {
   const [accountTypeFilter, setAccountTypeFilter] = useState<
     "__all__" | "profile" | "residence" | "salon" | "adult_shop"
   >("__all__");
+  const [profileScope, setProfileScope] = useState<"nearby" | "anywhere">("anywhere");
+  const [availableOnly, setAvailableOnly] = useState(false);
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [rsvpName, setRsvpName] = useState("");
@@ -61,6 +63,11 @@ export default function Start() {
   const [rsvpMessage, setRsvpMessage] = useState("");
   const [rsvpLoading, setRsvpLoading] = useState(false);
   const [rsvpDone, setRsvpDone] = useState(false);
+  const [eventInfoAccepted, setEventInfoAccepted] = useState(false);
+
+  useEffect(() => {
+    setCoords(getStoredBrowserCoords());
+  }, []);
 
   // Geolocation is opt-in (user chooses to enable it).
 
@@ -80,7 +87,49 @@ export default function Start() {
     distanceKm?: number | null;
     isPro?: boolean;
     isVip?: boolean;
+    disponibilite?: { date?: string; heureDebut?: string; duree?: string } | null;
     accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
+  };
+
+  type StartEventPreview = {
+    id: string;
+    title: string;
+    date: string;
+    city: string;
+    tag: string;
+    description: string;
+  };
+
+  const getAccountTypeLabel = (accountType: StartProfile["accountType"]) => {
+    if (accountType === "residence") return lang === "en" ? "Residence" : "Résidence";
+    if (accountType === "salon") return "Salon / SPA";
+    if (accountType === "adult_shop") return lang === "en" ? "Adult shop" : "Boutique adulte";
+    return lang === "en" ? "Escort profile" : "Profil escorte";
+  };
+
+  const getAvailabilityMeta = (disponibilite?: StartProfile["disponibilite"]) => {
+    const date = String(disponibilite?.date ?? "").trim();
+    if (!date) return null;
+    const lowered = date.toLowerCase();
+    if (lowered.includes("occup")) {
+      return {
+        label: lang === "en" ? "Busy" : "Occupé",
+        className: "bg-rose-500/10 text-rose-300",
+        availableNow: false,
+      };
+    }
+    if (lowered.startsWith("dans")) {
+      return {
+        label: lang === "en" ? "Available soon" : "Disponible bientôt",
+        className: "bg-amber-500/10 text-amber-300",
+        availableNow: false,
+      };
+    }
+    return {
+      label: lang === "en" ? "Available" : "Disponible",
+      className: "bg-emerald-500/10 text-emerald-300",
+      availableNow: true,
+    };
   };
 
   const commonParams = useMemo(
@@ -129,19 +178,6 @@ export default function Start() {
     profile: StartProfile;
   };
 
-  const timeAgo = (iso: string) => {
-    const t = new Date(iso).getTime();
-    if (!Number.isFinite(t)) return "";
-    const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-    if (s < 60) return `il y a ${s} secondes`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `il y a ${m} mins`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `il y a ${h} h`;
-    const d = Math.floor(h / 24);
-    return `il y a ${d} j`;
-  };
-
   const { data: news, isLoading: newsLoading } = useQuery<StartAnnonce[]>({
     queryKey: [newsQuery],
   });
@@ -160,6 +196,14 @@ export default function Start() {
   const profilesAllQuery = `/api/profiles?${new URLSearchParams({
     ...(settings.proOnly ? { proOnly: "1" } : {}),
     ...(selectedServices.length ? { services: selectedServices.join(",") } : {}),
+    includeLatestAnnonce: "1",
+    ...(profileScope === "nearby" && coords
+      ? {
+          lat: String(coords.lat),
+          lng: String(coords.lng),
+          maxDistanceKm: String(settings.maxDistanceKm),
+        }
+      : {}),
     limit: "24",
   }).toString()}`;
 
@@ -175,11 +219,12 @@ export default function Start() {
     const qQuartier = normalize(quartierFilter);
     return (arr ?? []).filter((p) => {
       if (p.age < ageRange[0] || p.age > ageRange[1]) return false;
-      if (zoneFilter !== "__all__" && p.ville !== zoneFilter) return false;
+      if (zoneFilter !== "__all__" && normalize(p.ville) !== normalize(zoneFilter)) return false;
       if (accountTypeFilter !== "__all__" && (p.accountType ?? "profile") !== accountTypeFilter) return false;
+      if (availableOnly && !getAvailabilityMeta(p.disponibilite)?.availableNow) return false;
       if (qQuartier) {
-        const lieu = normalize(p.lieu ?? "");
-        if (!lieu.includes(qQuartier)) return false;
+        const locationText = normalize([p.ville, p.lieu].filter(Boolean).join(" • "));
+        if (!locationText.includes(qQuartier)) return false;
       }
       return true;
     });
@@ -187,68 +232,17 @@ export default function Start() {
 
   const profilesFiltered = useMemo(
     () => applyProfileFilters(profilesAll ?? []),
-    [profilesAll, zoneFilter, quartierFilter, ageRange, accountTypeFilter],
+    [profilesAll, zoneFilter, quartierFilter, ageRange, accountTypeFilter, availableOnly],
   );
   const profileHighlights = (profilesFiltered ?? []).slice(0, 4);
 
-  const events = useMemo(
-    () => [
-      {
-        id: "masked-velvet-night",
-        title: "Soirée Masquée — Velvet Night",
-        date: new Date("2026-01-18T20:00:00"),
-        city: "Abidjan",
-        tag: "Club privé",
-        description: "Masques, élégance, accès sur invitation. Places limitées.",
-      },
-      {
-        id: "z-party-jan",
-        title: "Rencontre Z‑Party — Édition Janvier",
-        date: new Date("2026-01-31T21:00:00"),
-        city: "Abidjan",
-        tag: "Z‑Party",
-        description: "Rencontres + ambiance premium. Confirmation avant l’accès.",
-      },
-      {
-        id: "private-villa-march",
-        title: "Soirée Privée — Villa Sessions",
-        date: new Date("2026-03-07T20:30:00"),
-        city: "Bonapriso",
-        tag: "Privé",
-        description: "Villa, sécurité, dress code. Respect & discrétion.",
-      },
-      {
-        id: "masked-march",
-        title: "Soirée Masquée — Midnight Rendez‑vous",
-        date: new Date("2026-03-14T21:00:00"),
-        city: "Cocody",
-        tag: "Masquée",
-        description: "Évènement à venir. Inscription pour recevoir l’accès.",
-      },
-      {
-        id: "club-march",
-        title: "Club Privé — After Hours",
-        date: new Date("2026-03-28T22:00:00"),
-        city: "Abidjan",
-        tag: "After",
-        description: "Évènement à venir. Places limitées, validation manuelle.",
-      },
-    ],
-    [],
-  );
-
-  const selectedEvent = useMemo(
-    () => events.find((e) => e.id === selectedEventId) ?? null,
-    [events, selectedEventId],
-  );
-
-  const formatEventDate = (d: Date) =>
+  const formatEventDate = (d: string | Date) =>
     new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "fr-FR", {
       weekday: "short",
       day: "2-digit",
       month: "long",
       year: "numeric",
-    }).format(d);
+    }).format(typeof d === "string" ? new Date(d) : d);
 
   const submitRsvp = async () => {
     if (!selectedEvent) return;
@@ -275,11 +269,37 @@ export default function Start() {
     queryKey: ["/api/salons?types=spa,private_massage,residence&limit=12"],
   });
 
+  const { data: storyGroups } = useQuery<StoryReelGroup[]>({
+    queryKey: ["/api/stories"],
+  });
+
+  const { data: liveEvents } = useQuery<any[]>({
+    queryKey: ["/api/events?limit=3"],
+  });
+
+  const previewEvents = useMemo<StartEventPreview[]>(
+    () =>
+      (liveEvents ?? []).map((event) => ({
+        id: event.id,
+        title: event.title,
+        date: event.startsAt,
+        city: event.city,
+        tag: event.visibility === "private" ? "Privé" : "Public",
+        description: event.description ?? "",
+      })),
+    [liveEvents],
+  );
+
+  const selectedEvent = useMemo(
+    () => previewEvents.find((e) => e.id === selectedEventId) ?? null,
+    [selectedEventId, previewEvents],
+  );
+
   const openProfile = (id: string) => setLocation(`/profile/${id}`);
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="px-6 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
+      <header className="px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:px-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-xl md:text-2xl font-semibold text-foreground tracking-tight">
             <MapPin className="w-5 h-5" />
@@ -330,21 +350,149 @@ export default function Start() {
         </div>
       </header>
 
-      <main className="px-6 pb-10">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <main className="px-2 pb-10 sm:px-4">
+        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+          {/* À proximité */}
+          <div className="space-y-3">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-lg font-semibold text-foreground">
+                  {lang === "en" ? "Nearby" : "À proximité"}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {coords
+                    ? lang === "en"
+                      ? `Within ${settings.maxDistanceKm} km`
+                      : `Dans un rayon de ${settings.maxDistanceKm} km`
+                    : lang === "en"
+                      ? "Enable location to see nearby"
+                      : "Active la position pour voir près de toi"}
+                </div>
+              </div>
+              {!coords ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    void (async () => {
+                      const nextCoords = await requestBrowserCoords();
+                      if (nextCoords) {
+                        setCoords(nextCoords);
+                        setGeoDenied(false);
+                      } else {
+                        setGeoDenied(true);
+                      }
+                    })();
+                  }}
+                >
+                  {lang === "en" ? "Use my location" : "Utiliser ma position"}
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/annonces")}>
+                  {lang === "en" ? "Open feed" : "Ouvrir le feed"}
+                </Button>
+              )}
+            </div>
+
+            {geoDenied && !coords ? (
+              <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                {lang === "en"
+                  ? "Location permission was denied. You can still browse profiles from Explore."
+                  : "Permission de localisation refusée. Tu peux quand même explorer les profils."}
+              </div>
+            ) : null}
+
+            <div className="grid gap-3">
+              {(!coords ? [] : topNearby.slice(0, 3)).map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => openProfile(a.profile.id)}
+                  className="w-full overflow-hidden rounded-[28px] border border-border/70 bg-card/80 text-left backdrop-blur transition-colors hover:bg-card/95"
+                >
+                  <div className="flex">
+                    <div className="h-32 w-32 shrink-0 overflow-hidden rounded-[24px] bg-muted">
+                      <img
+                        src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
+                        alt={a.profile.pseudo}
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          img.onerror = null;
+                          img.src = getDefaultProfilePhoto(a.profile.accountType);
+                        }}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1 px-4 py-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-[15px] font-semibold text-foreground">{a.title}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-muted/50 px-2.5 py-1 text-[10px] text-foreground/85">
+                              {getAccountTypeLabel(a.profile.accountType)}
+                            </span>
+                            {getAvailabilityMeta(a.profile.disponibilite) ? (
+                              <span className={`rounded-full px-2.5 py-1 text-[10px] ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
+                                {getAvailabilityMeta(a.profile.disponibilite)?.label}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                            <MapPin className="h-3.5 w-3.5" />
+                            <span className="truncate">
+                              {a.profile.pseudo} • {a.profile.ville}
+                            </span>
+                          </div>
+                        </div>
+                        {typeof a.distanceKm === "number" ? (
+                          <div className="shrink-0 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs text-foreground/80">
+                            {a.distanceKm.toFixed(1)} km
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {(a.profile.services ?? []).slice(0, 3).map((s: string) => (
+                          <span key={s} className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[11px] text-foreground/80">
+                            {s}
+                          </span>
+                        ))}
+                        {a.profile.tarif ? (
+                          <span className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white">
+                            {a.profile.tarif}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+
+              {coords && nearbyLoading ? (
+                <div className="h-28 rounded-[26px] border border-border bg-muted/40" />
+              ) : null}
+
+              {coords && !nearbyLoading && topNearby.length === 0 ? (
+                <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                  {lang === "en"
+                    ? "No profiles found nearby with your current filters."
+                    : "Aucun profil proche trouvé avec tes filtres actuels."}
+                </div>
+              ) : null}
+            </div>
+          </div>
           {/* Aperçu compact de l'utilisateur (si connecté) */}
           {hasSession && (
             <div className="rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <img
-                    src={meProfile?.photoUrl || avatarUrl}
+                    src={getProfilePhoto(meProfile?.photoUrl, meProfile?.accountType)}
                     alt="Moi"
                     className="w-11 h-11 rounded-2xl object-cover border border-border"
                     onError={(e) => {
                       const img = e.currentTarget;
                       img.onerror = null;
-                      img.src = avatarUrl;
+                      img.src = getDefaultProfilePhoto(meProfile?.accountType);
                     }}
                   />
                   <div className="min-w-0">
@@ -397,10 +545,10 @@ export default function Start() {
           </div>
 
           {/* Quick actions (compacts) */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-1.5">
             <Button
               variant="secondary"
-              className="h-10 gap-1 text-xs"
+              className="h-11 gap-1 rounded-2xl text-xs"
               onClick={() => setLocation("/annonces")}
               data-testid="button-go-ads"
             >
@@ -409,7 +557,7 @@ export default function Start() {
             </Button>
             <Button
               variant="outline"
-              className="h-10 gap-1 text-xs"
+              className="h-11 gap-1 rounded-2xl text-xs"
               onClick={() => setLocation("/explore")}
               data-testid="button-go-profiles"
             >
@@ -418,7 +566,7 @@ export default function Start() {
             </Button>
             <Button
               variant="outline"
-              className="h-10 gap-1 text-xs"
+              className="h-11 gap-1 rounded-2xl text-xs"
               onClick={() => setLocation(hasSession ? "/dashboard" : "/signup")}
               data-testid="button-go-profile"
             >
@@ -427,41 +575,37 @@ export default function Start() {
             </Button>
           </div>
 
-          {/* VIP shortcut (premium, without breaking existing navigation) */}
-          <button
-            type="button"
-            onClick={() => setLocation("/vip")}
-            className="w-full rounded-3xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-card/70 to-card px-4 py-4 shadow-[0_18px_60px_-45px_rgba(245,158,11,0.55)]"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-black/25 border border-white/10 flex items-center justify-center">
-                  <Crown className="w-5 h-5 text-amber-300" />
+          {/* Stories + filtres principaux */}
+          <section className="space-y-3">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <div className="text-xl font-semibold text-foreground">
+                  {lang === "en" ? "Stories" : "Stories"}
                 </div>
-                <div className="text-left">
-                  <div className="text-sm font-semibold text-foreground">
-                    {lang === "en" ? "VIP Escorts & VIP Masseuses" : "Escortes VIP & Masseuses VIP"}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {lang === "en"
-                      ? "Premium profiles pinned on top."
-                      : "Profils premium épinglés en premier."}
-                  </div>
+                <div className="text-[12px] text-muted-foreground">
+                  {lang === "en"
+                    ? "Public stories and locked private videos from active profiles"
+                    : "Stories publiques et vidéos privées verrouillées des profils actifs"}
                 </div>
               </div>
-              <div className="inline-flex items-center gap-2">
-                {vipCount ? (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-black/25 border border-white/10 text-foreground/90">
-                    {vipCount} VIP
-                  </span>
-                ) : null}
-                <ChevronRight className="w-4 h-4 text-muted-foreground" />
-              </div>
+              {hasSession ? (
+                <Button variant="outline" size="sm" onClick={() => setLocation("/stories/new")}>
+                  {lang === "en" ? "Post mine" : "Poster la mienne"}
+                </Button>
+              ) : null}
             </div>
-          </button>
 
-          {/* Filtres principaux (pour salons, annonces, escorts-girls, produits) */}
-          <div>
+            <div className="py-1">
+              <StoryReel
+                groups={storyGroups ?? []}
+                emptyLabel={
+                  lang === "en"
+                    ? "No story or private video available yet."
+                    : "Aucune story ni vidéo privée disponible pour le moment."
+                }
+                onOpenProfile={openProfile}
+              />
+            </div>
             <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
               <SheetTrigger asChild>
                 <Button
@@ -472,28 +616,28 @@ export default function Start() {
                   <span className="flex items-center gap-2 text-muted-foreground">
                     <SlidersHorizontal className="w-4 h-4" />
                     <Sparkles className="w-4 h-4 text-yellow-400 drop-shadow-[0_0_14px_rgba(250,204,21,0.85)] animate-pulse" />
-                    {lang === "en" ? "Search filters" : "Filtres de recherche"}
+                    {lang === "en" ? "Targeted filters" : "Filtres ciblés"}
                   </span>
                   <span className="text-[10px] text-muted-foreground truncate max-w-[55%] text-right">
                     {lang === "en"
-                      ? "Salons, ads, escorts & products"
-                      : "Salons, annonces, escorts & produits"}
+                      ? "Escorts, residences, salons and shops"
+                      : "Escortes, résidences, salons et boutiques"}
                   </span>
                 </Button>
               </SheetTrigger>
               <SheetContent side="bottom" className="h-[100svh] rounded-none overflow-y-auto">
                 <SheetHeader>
-                  <SheetTitle>{lang === "en" ? "Search filters" : "Filtres de recherche"}</SheetTitle>
+                  <SheetTitle>{lang === "en" ? "Targeted filters" : "Filtres ciblés"}</SheetTitle>
                   <SheetDescription>
                     {lang === "en"
-                      ? "These settings apply to salons & SPA, nearby news, escorts profiles and adult products suggestions."
-                      : "Ces réglages s'appliquent aux salons & SPA, actualités, profils (escorts-girls) et suggestions de produits adultes."}
+                      ? "Refine what you want to see: escorts, residences, salons / SPA or adult shops."
+                      : "Affinez exactement ce que vous cherchez : escortes, résidences, salons / SPA ou boutiques adultes."}
                   </SheetDescription>
                 </SheetHeader>
 
                 <div className="mt-6 space-y-6">
                   <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    {lang === "en" ? "0) Profile search" : "0) Recherche profils"}
+                    {lang === "en" ? "0) Search by profile category" : "0) Recherche par catégorie de profil"}
                   </div>
 
                   <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-3">
@@ -541,7 +685,7 @@ export default function Start() {
                     </div>
 
                     <div className="rounded-2xl border border-border bg-background/50 p-3">
-                      <div className="text-xs text-muted-foreground">{lang === "en" ? "Profile type" : "Type de profil"}</div>
+                      <div className="text-xs text-muted-foreground">{lang === "en" ? "I am looking for" : "Je recherche"}</div>
                       <select
                         className="mt-2 w-full bg-transparent text-sm outline-none"
                         value={accountTypeFilter}
@@ -566,6 +710,48 @@ export default function Start() {
                       onCheckedChange={(checked) => setSettings({ ...settings, proOnly: Boolean(checked) })}
                     />
                   </div>
+                  <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-3">
+                    <div className="text-xs text-muted-foreground">
+                      {lang === "en" ? "Profile scope" : "Portée des profils"}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setProfileScope("nearby")}
+                        className={`rounded-2xl border px-3 py-2 text-sm ${
+                          profileScope === "nearby"
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-background/50 text-muted-foreground"
+                        }`}
+                      >
+                        {lang === "en" ? "Nearby only" : "Proches seulement"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setProfileScope("anywhere")}
+                        className={`rounded-2xl border px-3 py-2 text-sm ${
+                          profileScope === "anywhere"
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-background/50 text-muted-foreground"
+                        }`}
+                      >
+                        {lang === "en" ? "All profiles" : "Tous les profils"}
+                      </button>
+                    </div>
+                    {!coords && profileScope === "nearby" ? (
+                      <div className="text-[11px] text-muted-foreground">
+                        {lang === "en"
+                          ? "Enable your location to filter by nearby distance."
+                          : "Active ta position pour filtrer par distance proche."}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <Label className="text-sm text-foreground">
+                      {lang === "en" ? "Available now only" : "Disponibles maintenant"}
+                    </Label>
+                    <Switch checked={availableOnly} onCheckedChange={(checked) => setAvailableOnly(Boolean(checked))} />
+                  </div>
                   <div className="space-y-2">
                     <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                       {lang === "en" ? "2) Distance" : "2) Distance"}
@@ -583,19 +769,15 @@ export default function Start() {
                         setSettings({ ...settings, maxDistanceKm: v[0] ?? settings.maxDistanceKm })
                       }
                     />
-        </div>
-
-        <div className="space-y-3 pt-1 text-sm leading-relaxed text-muted-foreground">
-          <p>
-            {lang === "en"
-              ? "Discover new arrivals, private moments and curated spaces. We carefully select the experiences we highlight, always respecting your discretion."
-              : "Découvre les nouveautés, moments privés et espaces sélectionnés. Nous mettons en avant des expériences choisies avec soin, dans le respect de ta discrétion."}
-          </p>
-          <p>
-            {lang === "en"
-              ? "Need support? Our team monitors requests continuously and can guide you through VIP services or exclusive promotions."
-              : "Besoin de support ? Notre équipe suit les demandes en continu et peut t’accompagner sur les services VIP ou promotions exclusives."}
-          </p>
+                    <div className="text-[11px] text-muted-foreground">
+                      {profileScope === "anywhere"
+                        ? lang === "en"
+                          ? "Distance limit is ignored while \"All profiles\" is selected."
+                          : "La distance est ignorée tant que \"Tous les profils\" est sélectionné."
+                        : lang === "en"
+                          ? "Nearby profiles respect your selected radius."
+                          : "Les profils proches respectent le rayon choisi."}
+                    </div>
         </div>
 
         <div className="space-y-3">
@@ -647,243 +829,62 @@ export default function Start() {
                 </div>
               </SheetContent>
             </Sheet>
-          </div>
+          </section>
+
+          {/* VIP shortcut (premium, without breaking existing navigation) */}
+          <button
+            type="button"
+            onClick={() => setLocation("/vip")}
+            className="relative w-full overflow-hidden rounded-[28px] border border-amber-500/20 bg-[linear-gradient(135deg,rgba(20,16,10,0.98),rgba(38,30,17,0.96)_45%,rgba(18,15,11,0.98))] px-4 py-4 text-left shadow-[0_24px_80px_-45px_rgba(245,158,11,0.55)]"
+          >
+            <div className="pointer-events-none absolute inset-0">
+              <div className="absolute -right-10 top-0 h-28 w-28 rounded-full bg-amber-400/16 blur-3xl" />
+              <div className="absolute bottom-0 left-0 h-20 w-20 rounded-full bg-amber-300/10 blur-2xl" />
+            </div>
+
+            <div className="relative flex items-center justify-between gap-4">
+              <div className="min-w-0 flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-[18px] bg-white/8 text-amber-300 ring-1 ring-white/10">
+                  <Crown className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-[0.26em] text-amber-300/85">
+                    {lang === "en" ? "Elite access" : "Accès elite"}
+                  </div>
+                  <div className="mt-1 text-base font-semibold tracking-tight text-white">
+                    {lang === "en" ? "VIP Escorts & VIP Masseuses" : "Escortes VIP & Masseuses VIP"}
+                  </div>
+                  <div className="mt-1 text-[11px] text-white/70">
+                    {lang === "en"
+                      ? "High-priority profiles, premium visibility."
+                      : "Profils premium, visibilité prioritaire."}
+                  </div>
+                </div>
+              </div>
+              <div className="inline-flex shrink-0 items-center gap-2">
+                {vipCount ? (
+                  <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-medium text-white ring-1 ring-white/10">
+                    {vipCount} VIP
+                  </span>
+                ) : null}
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/8 text-white ring-1 ring-white/10">
+                  <ChevronRight className="h-4 w-4" />
+                </div>
+              </div>
+            </div>
+          </button>
 
           {/* Profils en vedette */}
           <div className="space-y-3">
             <div className="flex items-end justify-between">
               <div>
-                <div className="text-sm font-semibold text-foreground">
-                  {lang === "en" ? "Explorer profiles" : "Explorer les profils"}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {lang === "en"
-                    ? "Swipe through a curated selection of members before you dive deeper."
-                    : "Une sélection de membres pour commencer ta recherche."}
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/explore")}>
-                {lang === "en" ? "See all" : "Voir tout"}
-              </Button>
-            </div>
-
-            <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
-              <CarouselContent>
-                {(profileHighlights.length ? profileHighlights : Array.from({ length: 3 })).map((p, idx) => {
-                  const isPlaceholder = !Boolean(p && (p as StartProfile).id);
-                  const profile = p as StartProfile;
-                  return (
-                    <CarouselItem
-                      key={isPlaceholder ? `placeholder-${idx}` : profile.id}
-                      className="basis-[86%] sm:basis-[60%] md:basis-[42%] lg:basis-[30%]"
-                    >
-                      {isPlaceholder ? (
-                        <div className="h-44 rounded-3xl border border-border bg-muted/30" />
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => openProfile(profile.id)}
-                          className="w-full h-full rounded-3xl border border-border bg-card/80 overflow-hidden shadow-sm text-left flex flex-col"
-                        >
-                          <div className="relative h-44">
-                            <img
-                              src={profile.photoUrl || avatarUrl}
-                              alt={profile.pseudo}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
-                              <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
-                                {profile.isVip ? "VIP" : profile.isPro ? "Pro" : "Profile"}
-                              </span>
-                              <span className="text-xs font-semibold bg-primary/90 px-2 py-1 rounded-full text-white">
-                                {profile.accountType === "salon"
-                                  ? "Salon"
-                                  : profile.accountType === "residence"
-                                  ? "Résidence"
-                                  : lang === "en"
-                                  ? "Escort"
-                                  : "Escort"}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="p-3 flex-1 flex flex-col justify-between">
-                            <div>
-                              <div className="text-sm font-semibold text-foreground line-clamp-1">
-                                {profile.pseudo} • {profile.age}
-                              </div>
-                              <div className="text-[11px] text-muted-foreground line-clamp-1">
-                                {profile.ville}
-                                {profile.lieu ? ` • ${profile.lieu}` : ""}
-                              </div>
-                            </div>
-                            <p className="text-[11px] text-muted-foreground line-clamp-2">
-                              {profile.description ?? (lang === "en" ? "Tap to view profile details." : "Appuie pour la fiche complète.")}
-                            </p>
-                          </div>
-                        </button>
-                      )}
-                    </CarouselItem>
-                  );
-                })}
-              </CarouselContent>
-            </Carousel>
-          </div>
-
-          {/* Événements / espaces publicitaires (à venir) */}
-          <div className="space-y-3">
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-sm font-semibold text-foreground">
-                  {lang === "en" ? "Upcoming events" : "Événements à venir"}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {lang === "en"
-                    ? "Masked nights, private clubs, Z‑party meetings. Participate if you want — we’ll contact you before the date."
-                    : "Soirées masquées, clubs privés, rencontres Z‑party. Tu peux participer si tu veux — on te contacte avant la date."}
-                </div>
-              </div>
-            </div>
-
-            <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
-              <CarouselContent>
-                {events.map((ev, idx) => {
-                  const bg = eventBackgrounds[idx % eventBackgrounds.length];
-                  return (
-                    <CarouselItem key={ev.id} className="basis-[92%] sm:basis-[60%] md:basis-[45%] lg:basis-[34%]">
-                      <div className="relative w-full min-h-[210px] rounded-3xl border border-border overflow-hidden shadow-sm bg-card">
-                        <img
-                          src={bg}
-                          alt=""
-                          aria-hidden="true"
-                          className="absolute inset-0 w-full h-full object-cover"
-                          draggable={false}
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/88 via-black/48 to-black/18" />
-                        <div className="absolute inset-0 opacity-10 [background:radial-gradient(circle_at_18%_20%,hsl(var(--primary))_0%,transparent_62%),radial-gradient(circle_at_88%_30%,hsl(var(--primary))_0%,transparent_66%)]" />
-
-                        <div className="relative z-10 p-4 space-y-2.5">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-sm font-semibold text-white line-clamp-2 drop-shadow-[0_10px_24px_rgba(0,0,0,0.8)]">
-                                {ev.title}
-                              </div>
-                              <div className="text-[11px] text-white/80 mt-1">
-                                {formatEventDate(ev.date)} • {ev.city}
-                              </div>
-                            </div>
-                            <span className="shrink-0 px-3 py-1 rounded-full text-[11px] bg-white/12 border border-white/20 text-white backdrop-blur-sm">
-                              {ev.tag}
-                            </span>
-                          </div>
-
-                          <p className="text-[11px] text-white/80 line-clamp-3">{ev.description}</p>
-
-                          <Button
-                            className="w-full rounded-2xl bg-white/14 text-white border border-white/15 hover:bg-white/20 hover:text-white"
-                            onClick={() => {
-                              setSelectedEventId(ev.id);
-                              setEventDialogOpen(true);
-                              setRsvpDone(false);
-                              setRsvpName("");
-                              setRsvpContact("");
-                              setRsvpMessage("");
-                            }}
-                          >
-                            {lang === "en" ? "Participate" : "Participer"}
-                          </Button>
-                        </div>
-                      </div>
-                    </CarouselItem>
-                  );
-                })}
-              </CarouselContent>
-            </Carousel>
-          </div>
-
-        <div className="space-y-3 pt-1 text-sm leading-relaxed text-muted-foreground">
-          <p>
-            {lang === "en"
-              ? "Discover new arrivals, private moments and curated spaces. We carefully select the experiences we highlight, always respecting your discretion."
-              : "Découvre les nouveautés, moments privés et espaces sélectionnés. Nous mettons en avant des expériences choisies avec soin, dans le respect de ta discrétion."}
-          </p>
-          <p>
-            {lang === "en"
-              ? "Need support? Our team monitors requests continuously and can guide you through VIP services or exclusive promotions."
-              : "Besoin de support ? Notre équipe suit les demandes en continu et peut t’accompagner sur les services VIP ou promotions exclusives."}
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-end justify-between">
-            <div>
-              <div className="text-sm font-semibold text-foreground">
-                {lang === "en" ? "Energy & men’s care" : "Énergie & produits masculins"}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {lang === "en"
-                  ? "Selection of endurance and comfort products."
-                  : "Sélection de produits pour l’endurance et le confort."}
-              </div>
-            </div>
-          </div>
-          <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
-            <CarouselContent>
-              {maleProducts.slice(0, 5).map((p) => (
-                <CarouselItem key={p.id} className="basis-[86%] sm:basis-[60%] md:basis-[38%] lg:basis-[30%]">
-                  <button
-                    type="button"
-                    onClick={() => setLocation(`/adult-products/${p.id}`)}
-                    className="w-full rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
-                  >
-                    <div className="relative h-44">
-                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
-                        <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
-                          {p.tag}
-                        </span>
-                        <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">
-                          {p.price}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="p-3 space-y-1">
-                      <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{p.size}</div>
-                      <p className="text-[11px] text-muted-foreground line-clamp-3">{p.description}</p>
-                    </div>
-                  </button>
-                </CarouselItem>
-              ))}
-              {maleProducts.length > 5 && (
-                <CarouselItem className="basis-[60%] sm:basis-[40%] md:basis-[28%] lg:basis-[22%]">
-                  <button
-                    type="button"
-                    onClick={() => setLocation("/adult-products")}
-                    className="w-full h-full min-h-[220px] rounded-3xl border border-dashed border-border/70 bg-card/60 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground"
-                  >
-                    <span className="text-2xl">➜</span>
-                    <span className="font-medium">{lang === "en" ? "See more" : "Voir plus"}</span>
-                    <span>{maleProducts.length} {lang === "en" ? "products" : "produits"}</span>
-                  </button>
-                </CarouselItem>
-              )}
-            </CarouselContent>
-          </Carousel>
-        </div>
-
-          {/* Profils (liste verticale par catégories) */}
-          <div className="space-y-3">
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-lg font-semibold text-foreground">
+                <div className="text-xl font-semibold tracking-tight text-foreground">
                   {lang === "en" ? "Profiles" : "Profils"}
                 </div>
-                <div className="text-sm text-muted-foreground">
+                <div className="text-[11px] text-muted-foreground">
                   {lang === "en"
-                    ? "A clean list preview — no swipe."
-                    : "Aperçu propre en liste — sans swipe."}
+                    ? "Clean horizontal selection before opening the full feed."
+                    : "Sélection horizontale propre avant d'ouvrir le feed complet."}
                 </div>
               </div>
               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/explore")}>
@@ -891,84 +892,214 @@ export default function Start() {
               </Button>
             </div>
 
-            <div>
-              <Button
-                variant="outline"
-                className="min-h-9 w-full justify-between rounded-2xl text-xs px-4 py-3 border-dashed"
-                data-testid="button-open-filters-profiles"
-                onClick={() => setFiltersOpen(true)}
-              >
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  <SlidersHorizontal className="w-4 h-4" />
-                  {lang === "en" ? "Search filters" : "Filtres de recherche"}
-                </span>
-                <span className="text-[10px] text-muted-foreground truncate max-w-[55%] text-right">
-                  {lang === "en" ? "Salons, ads, escorts & products" : "Salons, annonces, escorts & produits"}
-                </span>
-              </Button>
-            </div>
-
-            <div className="grid gap-2">
+            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
               {profilesAllLoading ? (
                 <>
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
-                  <div className="h-20 rounded-2xl bg-muted/40 border border-border" />
+                  <div className="h-[172px] w-[94%] shrink-0 rounded-[24px] bg-muted/40 sm:w-[76%] md:w-[56%] lg:w-[42%]" />
+                  <div className="h-[172px] w-[94%] shrink-0 rounded-[24px] bg-muted/40 sm:w-[76%] md:w-[56%] lg:w-[42%]" />
+                  <div className="h-[172px] w-[94%] shrink-0 rounded-[24px] bg-muted/40 sm:w-[76%] md:w-[56%] lg:w-[42%]" />
                 </>
-              ) : profilesFiltered.length === 0 ? (
-                <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+              ) : profileHighlights.length === 0 ? (
+                <div className="w-full rounded-2xl bg-muted/30 p-4 text-sm text-muted-foreground">
                   {lang === "en" ? "No profiles for current filters." : "Aucun profil avec les filtres actuels."}
                 </div>
               ) : (
                 <>
-                  {profilesFiltered.slice(0, 4).map((p) => (
+                  {profileHighlights.map((profile) => (
                     <button
-                      key={p.id}
+                      key={profile.id}
                       type="button"
-                      onClick={() => openProfile(p.id)}
-                      className="w-full text-left rounded-2xl border border-border bg-card/80 hover:bg-card transition-colors overflow-hidden"
+                      onClick={() => openProfile(profile.id)}
+                      className="flex h-[172px] w-[94%] shrink-0 items-center gap-3 overflow-hidden rounded-[26px] border border-border/70 bg-card/50 px-3 py-3 text-left transition-colors hover:bg-muted/10 sm:w-[76%] md:w-[56%] lg:w-[42%]"
                     >
-                      <div className="flex items-center gap-3 p-3">
-                        <img
-                          src={p.photoUrl || avatarUrl}
-                          alt={p.pseudo}
-                          className="w-14 h-14 rounded-2xl object-cover border border-border"
-                          onError={(e) => {
-                            const img = e.currentTarget;
-                            img.onerror = null;
-                            img.src = avatarUrl;
-                          }}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-foreground truncate">
-                            {p.pseudo} • {p.age}
+                      <img
+                        src={getProfilePhoto(profile.photoUrl, profile.accountType)}
+                        alt={profile.pseudo}
+                        className="h-full w-[132px] shrink-0 rounded-[22px] object-cover"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          img.onerror = null;
+                          img.src = getDefaultProfilePhoto(profile.accountType);
+                        }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold tracking-tight text-foreground truncate">
+                              {profile.pseudo} • {profile.age}
+                            </div>
+                            <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                              {profile.ville}
+                              {profile.lieu ? ` • ${profile.lieu}` : ""}
+                              {typeof profile.distanceKm === "number" ? ` • ${Math.round(profile.distanceKm)} km` : ""}
+                            </div>
                           </div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            {p.ville} {p.lieu ? `• ${p.lieu}` : ""}
-                          </div>
-                          <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
-                            {p.description ?? (lang === "en" ? "Tap to view details." : "Appuie pour voir la fiche.")}
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {profile.isVip ? (
+                              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                VIP
+                              </span>
+                            ) : null}
+                            {profile.tarif ? (
+                              <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-foreground/85">
+                                {profile.tarif}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {getAccountTypeLabel(profile.accountType)}
+                          </span>
+                          {getAvailabilityMeta(profile.disponibilite) ? (
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] ${getAvailabilityMeta(profile.disponibilite)?.className}`}>
+                              {getAvailabilityMeta(profile.disponibilite)?.label}
+                            </span>
+                          ) : null}
+                          {profile.isPro ? (
+                            <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-foreground/75">
+                              Pro
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground line-clamp-3">
+                          {profile.description ??
+                            (lang === "en"
+                              ? "Tap to view profile details."
+                              : "Appuie pour voir les détails du profil.")}
+                        </p>
                       </div>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                     </button>
                   ))}
-
-                  {(profilesFiltered.length ?? 0) > 4 && (
-                    <button
-                      type="button"
-                      onClick={() => setLocation("/explore")}
-                      className="w-full rounded-2xl border border-dashed border-border/70 bg-card/60 px-4 py-4 text-sm text-muted-foreground hover:bg-card/80 transition-colors"
-                      data-testid="button-see-all-profiles"
-                    >
-                      {lang === "en" ? "Tap to see all profiles" : "Toucher pour voir tous les profils"}
-                    </button>
-                  )}
                 </>
               )}
             </div>
           </div>
+
+          {/* Événements / espaces publicitaires (à venir) */}
+          <div className="space-y-3">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-xl font-semibold tracking-tight text-foreground">
+                  {lang === "en" ? "Upcoming events" : "Événements à venir"}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {lang === "en"
+                    ? "Private nights and curated meetings."
+                    : "Soirées privées et rendez-vous sélectionnés."}
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/events")}>
+                {lang === "en" ? "See more" : "Voir plus"}
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {previewEvents.slice(0, 3).map((ev, idx) => {
+                const bg = eventBackgrounds[idx % eventBackgrounds.length];
+                return (
+                  <div
+                    key={ev.id}
+                    className="group flex w-full items-center gap-3"
+                  >
+                    <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[22px] md:h-36 md:w-36">
+                      <img
+                        src={bg}
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                        draggable={false}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/72 via-black/18 to-transparent" />
+                      <span className="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[10px] text-white">
+                        {ev.tag}
+                      </span>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="text-base font-semibold tracking-tight text-foreground line-clamp-2">
+                        {ev.title}
+                      </div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {formatEventDate(ev.date)} • {ev.city}
+                      </div>
+                      <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-2">
+                        {ev.description}
+                      </p>
+                      <Button
+                        size="sm"
+                        className="mt-3 rounded-full"
+                        onClick={() => setLocation("/events")}
+                      >
+                        {lang === "en" ? "Participate" : "Participer"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <Button variant="outline" className="w-full rounded-2xl" onClick={() => setLocation("/events")}>
+              {lang === "en" ? "See all upcoming events" : "Voir tous les évènements"}
+            </Button>
+          </div>
+
+        <div className="space-y-3">
+          <div className="flex items-end justify-between">
+            <div>
+              <div className="text-xl font-semibold tracking-tight text-foreground">
+                {lang === "en" ? "Energy & men’s care" : "Énergie & produits masculins"}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {lang === "en"
+                  ? "Selected products for comfort and endurance."
+                  : "Produits choisis pour le confort et l'endurance."}
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/adult-products")}>
+              {lang === "en" ? "Open" : "Voir"}
+            </Button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {maleProducts.slice(0, 4).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setLocation(`/adult-products/${p.id}`)}
+                className="flex w-[94%] shrink-0 gap-3 overflow-hidden rounded-[24px] border border-border/70 bg-card/40 px-3 py-3 text-left transition-colors hover:bg-muted/10 sm:w-[70%] md:w-[52%] lg:w-[38%]"
+              >
+                <img src={p.imageUrl} alt={p.name} className="h-[96px] w-[96px] shrink-0 rounded-[20px] object-cover" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold tracking-tight text-foreground line-clamp-2">{p.name}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                          {p.tag}
+                        </span>
+                        <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-foreground/85">
+                          {p.size}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-foreground px-2.5 py-1 text-[10px] font-medium text-background">
+                      {p.price}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-2">{p.description}</p>
+                </div>
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setLocation("/adult-products")}
+              className="flex w-[78%] shrink-0 items-center justify-center rounded-[24px] border border-dashed border-border/70 bg-muted/20 px-4 py-4 text-sm text-muted-foreground transition-colors hover:bg-muted/40 sm:w-[52%] md:w-[36%] lg:w-[28%]"
+            >
+              {lang === "en" ? "See all products" : "Voir tous les produits"}
+            </button>
+          </div>
+        </div>
+
           {/* Salon massages privés / SPA */}
           <div className="space-y-3">
             <div className="flex items-end justify-between">
@@ -1085,11 +1216,11 @@ export default function Start() {
           <div className="space-y-3">
             <div className="flex items-end justify-between">
               <div>
-                <div className="text-lg font-semibold text-foreground">
-                  {lang === "en" ? "News" : "Actualités"}
-                </div>
-                <div className="text-sm text-muted-foreground">
+                <div className="text-xl font-semibold tracking-tight text-foreground">
                   {lang === "en" ? "Latest ads" : "Dernières annonces"}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {lang === "en" ? "Newest posts from active profiles." : "Les publications les plus récentes."}
                 </div>
               </div>
               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/annonces")}>
@@ -1099,79 +1230,112 @@ export default function Start() {
             <div className="space-y-2">
               {(newsLoading ? Array.from({ length: 6 }) : topNews.slice(0, 8)).map((a: any, idx: number) =>
                 newsLoading ? (
-                  <div key={idx} className="h-24 rounded-2xl bg-muted/40 border border-border" />
+                  <div key={idx} className="h-32 rounded-[24px] bg-muted/40" />
                 ) : (
                   <button
                     key={a.id}
                     type="button"
                     onClick={() => openProfile(a.profile.id)}
-                    className="w-full text-left rounded-2xl border border-border bg-card/70 hover:bg-card/90 transition-colors overflow-hidden"
+                    className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
                   >
-                    <div className="flex">
-                      <div className="relative w-28 h-24 shrink-0 bg-muted overflow-hidden">
+                    <div className="grid items-start gap-4 md:grid-cols-[156px_minmax(0,1fr)]">
+                      <div className="relative h-[132px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[170px]">
                         <img
-                          src={a.profile.photoUrl || avatarUrl}
+                          src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
                           alt={a.profile.pseudo}
-                          className="w-full h-full object-cover"
+                          className="absolute inset-0 h-full w-full object-cover"
                           onError={(e) => {
                             const img = e.currentTarget;
                             img.onerror = null;
-                            img.src = avatarUrl;
+                            img.src = getDefaultProfilePhoto(a.profile.accountType);
                           }}
                         />
-                        <div className="absolute top-2 left-2 flex flex-col gap-1">
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
+                        <div className="absolute left-3 top-3 flex flex-wrap gap-2">
                           {a.profile.isVip ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/90 text-white font-semibold">
+                            <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] text-white">
                               VIP
                             </span>
                           ) : null}
+                          <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white">
+                            {getAccountTypeLabel(a.profile.accountType)}
+                          </span>
+                        </div>
+                        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-end gap-2">
                           {(a.promotionMeta?.badges ?? []).includes("URGENT") ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-500/90 text-white font-semibold">
+                            <span className="rounded-full bg-red-500/85 px-2.5 py-1 text-[10px] text-white">
                               Urgent
                             </span>
                           ) : null}
                         </div>
                       </div>
 
-                      <div className="flex-1 p-3 min-w-0">
+                      <div className="min-w-0">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold text-foreground line-clamp-2">
+                            <div className="text-base font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.2rem]">
                               {a.title}
                             </div>
-                            <div className="text-xs text-muted-foreground mt-1 truncate">
-                              Publié par{" "}
-                              <span className="text-foreground/90 font-medium">{a.profile.pseudo}</span>{" "}
-                              {a.profile.isPro ? <span className="text-muted-foreground">(pro)</span> : null}
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <span className="rounded-full bg-muted/40 px-2.5 py-1">
+                                {a.profile.pseudo}
+                              </span>
+                              {a.profile.isPro ? (
+                                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
+                                  pro
+                                </span>
+                              ) : null}
+                              {a.profile.tarif ? (
+                                <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
+                                  {a.profile.tarif}
+                                </span>
+                              ) : null}
+                              {getAvailabilityMeta(a.profile.disponibilite) ? (
+                                <span className={`rounded-full px-2.5 py-1 text-[10px] ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
+                                  {getAvailabilityMeta(a.profile.disponibilite)?.label}
+                                </span>
+                              ) : null}
                             </div>
-                            <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                            <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                               <MapPin className="w-3.5 h-3.5" />
-                              <span className="truncate">{a.profile.ville}</span>
+                              <span className="truncate">
+                                {a.profile.ville}
+                                {a.profile.lieu ? ` • ${a.profile.lieu}` : ""}
+                                {typeof a.distanceKm === "number" ? ` • ${Math.round(a.distanceKm)} km` : ""}
+                              </span>
+                            </div>
+                            <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
+                              {a.profile.description ??
+                                (lang === "en"
+                                  ? "Open the profile to see the full details."
+                                  : "Ouvre le profil pour voir tous les détails.")}
                             </div>
                           </div>
-
-                          <div className="shrink-0 text-[11px] text-muted-foreground">
-                            {timeAgo(a.createdAt)}
-                          </div>
+                          <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
                         </div>
 
-                        <div className="mt-2 flex items-center justify-between gap-3">
-                          <div className="text-[11px] text-muted-foreground">
-                            {(a.profile.photos?.length ?? 0) > 0 ? `${a.profile.photos.length} photos` : "—"}
-                          </div>
-                          <div className="flex gap-1.5 flex-wrap justify-end">
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <div className="flex gap-1.5 flex-wrap">
                             {(a.promotionMeta?.badges ?? [])
                               .filter((b: string) => b !== "URGENT")
                               .slice(0, 3)
                               .map((b: string) => (
                                 <span
                                   key={b}
-                                  className="px-2 py-0.5 rounded-full text-[10px] bg-muted/40 border border-border text-foreground/80"
+                                  className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-foreground/80"
                                 >
                                   {b === "PROLONGATION" ? "Prolong." : b}
                                 </span>
                               ))}
                           </div>
+                          {(a.profile.services ?? []).slice(0, 3).map((s: string) => (
+                            <span
+                              key={s}
+                              className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground"
+                            >
+                              {s}
+                            </span>
+                          ))}
                         </div>
                       </div>
                     </div>
@@ -1179,190 +1343,17 @@ export default function Start() {
                 ),
               )}
             </div>
-          </div>
-
-          <Separator />
-
-          {/* À proximité */}
-          <div className="space-y-3">
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-lg font-semibold text-foreground">
-                  {lang === "en" ? "Nearby" : "À proximité"}
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {coords
-                    ? lang === "en"
-                      ? `Within ${settings.maxDistanceKm} km`
-                      : `Dans un rayon de ${settings.maxDistanceKm} km`
-                    : lang === "en"
-                      ? "Enable location to see nearby"
-                      : "Active la position pour voir près de toi"}
-                </div>
-              </div>
-              {!coords ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    if (!navigator.geolocation) return;
-                    navigator.geolocation.getCurrentPosition(
-                      (pos) => {
-                        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-                        setGeoDenied(false);
-                      },
-                      () => setGeoDenied(true),
-                      { enableHighAccuracy: false, timeout: 8000 },
-                    );
-                  }}
-                >
-                  {lang === "en" ? "Use my location" : "Utiliser ma position"}
-                </Button>
-              ) : (
-                <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/annonces")}>
-                  {lang === "en" ? "Open feed" : "Ouvrir le feed"}
-                </Button>
-              )}
-            </div>
-
-            {geoDenied && !coords ? (
-              <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                {lang === "en"
-                  ? "Location permission was denied. You can still browse profiles from Explore."
-                  : "Permission de localisation refusée. Tu peux quand même explorer les profils."}
-              </div>
+            {!newsLoading && (news?.length ?? 0) > 8 ? (
+              <Button
+                variant="outline"
+                className="w-full rounded-2xl"
+                onClick={() => setLocation("/explore")}
+              >
+                {lang === "en" ? "Show more profiles" : "Afficher plus de profils"}
+              </Button>
             ) : null}
-
-            <div className="grid gap-3">
-              {(!coords ? [] : topNearby.slice(0, 3)).map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => openProfile(a.profile.id)}
-                  className="w-full text-left rounded-3xl border border-border bg-card/80 backdrop-blur overflow-hidden hover:bg-card/95 transition-colors"
-                >
-                    <div className="flex">
-                      <div className="w-24 h-24 bg-muted shrink-0 rounded-3xl overflow-hidden">
-                      <img
-                        src={a.profile.photoUrl || avatarUrl}
-                        alt={a.profile.pseudo}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          const img = e.currentTarget;
-                          img.onerror = null;
-                          img.src = avatarUrl;
-                        }}
-                      />
-                    </div>
-                    <div className="flex-1 px-4 py-3 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="font-semibold text-foreground truncate">{a.title}</div>
-                          </div>
-                          <div className="text-sm text-muted-foreground mt-1 truncate">
-                            {a.profile.pseudo} • {a.profile.age}
-                          </div>
-                          <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-                            <MapPin className="w-3.5 h-3.5" />
-                            <span className="truncate">{a.profile.ville}</span>
-                          </div>
-                        </div>
-                        {typeof a.distanceKm === "number" ? (
-                          <div className="shrink-0 px-2.5 py-1 rounded-full text-xs bg-muted/60 text-foreground/80 border border-border">
-                            {a.distanceKm.toFixed(1)} km
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {(a.profile.services ?? []).slice(0, 3).map((s: string) => (
-                          <span key={s} className="px-2.5 py-1 rounded-full text-[11px] bg-muted/60 text-foreground/80 border border-border">
-                            {s}
-                          </span>
-                        ))}
-                        {a.profile.tarif ? (
-                          <span className="px-2.5 py-1 rounded-full text-[11px] bg-primary text-white font-semibold">
-                            {a.profile.tarif}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              ))}
-
-              {coords && nearbyLoading ? (
-                <div className="h-24 rounded-2xl bg-muted/40 border border-border" />
-              ) : null}
-
-              {coords && !nearbyLoading && topNearby.length === 0 ? (
-                <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                  {lang === "en"
-                    ? "No profiles found nearby with your current filters."
-                    : "Aucun profil proche trouvé avec tes filtres actuels."}
-                </div>
-              ) : null}
-            </div>
           </div>
 
-          <div className="space-y-3">
-          <div className="flex items-end justify-between">
-            <div>
-              <div className="text-sm font-semibold text-foreground">
-                {lang === "en" ? "Energy & men’s care" : "Énergie & produits masculins"}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {lang === "en"
-                  ? "Selection of endurance and comfort products."
-                  : "Sélection de produits pour l’endurance et le confort."}
-              </div>
-            </div>
-          </div>
-          <Carousel opts={{ align: "start", dragFree: true }} className="w-full">
-            <CarouselContent>
-              {maleProducts.slice(0, 5).map((p) => (
-                <CarouselItem key={p.id} className="basis-[86%] sm:basis-[60%] md:basis-[38%] lg:basis-[30%]">
-                  <button
-                    type="button"
-                    onClick={() => setLocation(`/adult-products/${p.id}`)}
-                    className="w-full rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
-                  >
-                    <div className="relative h-44">
-                      <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-                      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
-                        <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
-                          {p.tag}
-                        </span>
-                        <span className="font-semibold bg-primary/90 text-xs px-2 py-1 rounded-full">
-                          {p.price}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="p-3 space-y-1">
-                      <div className="text-sm font-semibold text-foreground line-clamp-2">{p.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{p.size}</div>
-                      <p className="text-[11px] text-muted-foreground line-clamp-3">{p.description}</p>
-                    </div>
-                  </button>
-                </CarouselItem>
-              ))}
-              {maleProducts.length > 5 && (
-                <CarouselItem className="basis-[60%] sm:basis-[40%] md:basis-[28%] lg:basis-[22%]">
-                  <button
-                    type="button"
-                    onClick={() => setLocation("/adult-products")}
-                    className="w-full h-full min-h-[220px] rounded-3xl border border-dashed border-border/70 bg-card/60 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground"
-                  >
-                    <span className="text-2xl">➜</span>
-                    <span className="font-medium">{lang === "en" ? "See more" : "Voir plus"}</span>
-                    <span>{maleProducts.length} {lang === "en" ? "products" : "produits"}</span>
-                  </button>
-                </CarouselItem>
-              )}
-            </CarouselContent>
-          </Carousel>
-          </div>
         </motion.div>
 
         <Dialog open={eventDialogOpen} onOpenChange={setEventDialogOpen}>
@@ -1372,7 +1363,7 @@ export default function Start() {
               <DialogDescription>
                 {selectedEvent
                   ? `${formatEventDate(selectedEvent.date)} • ${selectedEvent.city}`
-                  : (lang === "en" ? "Fill the form to participate." : "Remplis le formulaire pour participer.")}
+                  : (lang === "en" ? "Read before you participate." : "Lis ceci avant de participer.")}
               </DialogDescription>
             </DialogHeader>
 
@@ -1381,6 +1372,20 @@ export default function Start() {
                 {lang === "en"
                   ? "Your request is recorded. We’ll contact you before the event date."
                   : "Ta demande est enregistrée. On te contactera avant la date de l’évènement."}
+              </div>
+            ) : !eventInfoAccepted ? (
+              <div className="space-y-4">
+                <div className="rounded-2xl bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">
+                  {lang === "en"
+                    ? "Some events are free and others are paid. Please make sure to get informed before any participation."
+                    : "Certains évènements sont gratuits et d'autres payants. Merci de bien vous informer avant toute participation."}
+                </div>
+                <Button
+                  className="w-full rounded-2xl"
+                  onClick={() => setEventInfoAccepted(true)}
+                >
+                  {lang === "en" ? "Continue" : "Continuer"}
+                </Button>
               </div>
             ) : (
               <div className="space-y-3">

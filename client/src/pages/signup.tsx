@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
-import { ArrowLeft, ArrowRight, User, Calendar, MapPin, Lock, Check, Shield, Mail, Sparkles } from "lucide-react";
+import { ArrowLeft, Calendar, Check, Lock, Mail, MapPin, Shield, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { apiFetch, apiGetJson, apiRequest, API_BASE_URL } from "@/lib/queryClient";
+import { apiFetch, apiGetJson, apiRequest, API_BASE_URL, queryClient } from "@/lib/queryClient";
 import { setSessionIds } from "@/lib/session";
 import { getProfileId } from "@/lib/session";
 import { cityOptions } from "@/lib/cities";
@@ -31,15 +28,35 @@ interface FormData {
   email: string;
 }
 
-const steps = [
-  { id: 1, title: "Genre", icon: User },
-  { id: 2, title: "Profil", icon: Calendar },
-  { id: 3, title: "Compte", icon: Lock },
+const accountTypeOptions: Array<{
+  value: FormData["accountType"];
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "profile",
+    title: "Profil personnel",
+    description: "Annonces, rencontres et espace privé.",
+  },
+  {
+    value: "residence",
+    title: "Résidence meublée",
+    description: "Appartements ou chambres pour accueillir les rendez-vous.",
+  },
+  {
+    value: "salon",
+    title: "Salon / SPA / massages",
+    description: "Établissement de massages privés ou SPA.",
+  },
+  {
+    value: "adult_shop",
+    title: "Vente produits adultes",
+    description: "Boutique pour préservatifs, lubrifiants, sextoys et accessoires.",
+  },
 ];
 
 export default function Signup() {
   const [, setLocation] = useLocation();
-  const [currentStep, setCurrentStep] = useState(1);
   const [emailLocked, setEmailLocked] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileRequired, setTurnstileRequired] = useState(false);
@@ -71,8 +88,6 @@ export default function Signup() {
   }, []);
   const showGoogleSignup = !emailLocked && formData.email.trim().length === 0 && oauthFromUrl !== "google";
 
-  const progress = (currentStep / steps.length) * 100;
-
   const publicNameLabel =
     formData.accountType === "residence"
       ? "Nom de Résidence"
@@ -95,39 +110,22 @@ export default function Signup() {
     formData.accountType === "profile"
       ? "Ce nom est visible publiquement. Ne mettez pas votre identifiant de connexion ici."
       : "Ce nom est visible publiquement (il remplace le pseudo).";
+  const emailTrimmed = formData.email.trim();
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
 
-  const canProceed = () => {
-    switch (currentStep) {
-      case 1:
-        return formData.gender !== null && ageConfirmed;
-      case 2:
-        return formData.age && formData.ville;
-      case 3:
-        return (
-          formData.username.trim().length >= 4 &&
-          formData.pseudo.trim().length >= 2 &&
-          formData.username.trim() !== formData.pseudo.trim() &&
-          formData.password.length >= 6
-        );
-      default:
-        return false;
-    }
-  };
-
-  const handleNext = () => {
-    if (currentStep < 3) {
-      setCurrentStep(currentStep + 1);
-    } else {
-      void handleSubmit();
-    }
-  };
+  const canSubmit =
+    formData.gender !== null &&
+    ageConfirmed &&
+    Number(formData.age) >= 18 &&
+    formData.ville.trim().length > 0 &&
+    formData.username.trim().length >= 4 &&
+    formData.pseudo.trim().length >= 2 &&
+    formData.username.trim() !== formData.pseudo.trim() &&
+    formData.password.length >= 6 &&
+    emailLooksValid;
 
   const handleBack = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    } else {
-      setLocation("/start");
-    }
+    setLocation("/start");
   };
 
   useEffect(() => {
@@ -208,25 +206,31 @@ export default function Signup() {
       if (!res.ok) {
         throw new Error(json?.message ?? "Erreur lors de l'inscription");
       }
-      setSessionIds({ userId: json.userId, profileId: json.profile.id });
+      queryClient.clear();
+      setSessionIds(
+        { userId: json.userId, profileId: json.profile.id },
+        json.csrfToken ?? null,
+        json.sessionToken ?? null,
+      );
 
-      const providedEmail = formData.email.trim().length > 0;
-      if (providedEmail) {
-        if (json?.verificationEmailSent === true) {
-          toast({
-            title: "Email de confirmation envoyé",
-            description: "Vérifie ta boîte mail (et les spams) puis clique sur le lien.",
-          });
-        } else if (json?.verificationEmailSent === false) {
-          toast({
-            title: "Email de confirmation non envoyé",
-            description:
-              json?.verificationEmailError ??
-              "Impossible d’envoyer l’email pour le moment. Tu pourras réessayer depuis ton dashboard.",
-          });
-        }
+      if (json?.verificationEmailSent === true) {
+        toast({
+          title: "Email de confirmation envoyé",
+          description: "Vérifie ta boîte mail puis valide ton adresse avant de continuer.",
+        });
+      } else if (json?.verificationEmailSent === false) {
+        toast({
+          title: "Validation email à terminer",
+          description:
+            json?.verificationEmailError ??
+            "L’envoi initial a échoué. Tu pourras relancer l’envoi depuis l’écran de vérification.",
+        });
       }
-      setLocation("/post-intent");
+      if (emailLocked) {
+        setLocation("/post-intent");
+      } else {
+        setLocation("/email/verify");
+      }
     } catch (e: any) {
       setSubmitError(e?.message ?? "Erreur lors de l'inscription");
     } finally {
@@ -239,25 +243,10 @@ export default function Signup() {
     window.location.href = `${API_BASE_URL}/api/auth/google?state=${state}`;
   };
 
-  const slideVariants = {
-    enter: (direction: number) => ({
-      x: direction > 0 ? 300 : -300,
-      opacity: 0,
-    }),
-    center: {
-      x: 0,
-      opacity: 1,
-    },
-    exit: (direction: number) => ({
-      x: direction < 0 ? 300 : -300,
-      opacity: 0,
-    }),
-  };
-
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="flex items-center justify-between px-6 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
-        <button 
+    <div className="min-h-screen bg-background">
+      <header className="flex items-center justify-between px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:px-6">
+        <button
           onClick={handleBack}
           className="w-10 h-10 rounded-full bg-card flex items-center justify-center"
           data-testid="button-back-signup"
@@ -273,216 +262,116 @@ export default function Signup() {
         <div className="w-10" />
       </header>
 
-      <div className="px-6 py-2">
-        <Progress value={progress} className="h-1" />
-        <div className="flex justify-between mt-3">
-          {steps.map((step) => (
-            <div 
-              key={step.id}
-              className={`flex items-center gap-1.5 ${
-                currentStep >= step.id ? "text-primary" : "text-muted-foreground"
-              }`}
-            >
-              <step.icon className="w-4 h-4" />
-              <span className="text-xs hidden sm:inline">{step.title}</span>
+      <main className="px-4 pb-10 pt-4">
+        <form
+          className="mx-auto max-w-2xl space-y-8"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSubmit();
+          }}
+        >
+          <section className="space-y-2 border-b border-border/70 pb-6 text-center sm:text-left">
+            <h1 className="font-display text-3xl font-semibold text-foreground">
+              Créer un compte
+            </h1>
+            <p className="text-sm text-muted-foreground sm:text-base">
+              Inscription directe, sans étapes inutiles. Les mêmes données sont envoyées, mais en une seule vue.
+            </p>
+          </section>
+
+          <section className="space-y-5 border-b border-border/70 pb-7">
+            <div className="mb-4 space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Profil</h2>
+              <p className="text-sm text-muted-foreground">
+                Choisis le type de profil, confirme ton âge et indique les bases de ton annonce.
+              </p>
             </div>
-          ))}
-        </div>
-      </div>
 
-      <main className="flex-1 px-4 py-6 overflow-hidden">
-        <div className="max-w-md mx-auto rounded-3xl border border-border bg-card/70 backdrop-blur p-5 shadow-lg">
-        <AnimatePresence mode="wait" custom={1}>
-          {currentStep === 1 && (
-            <motion.div
-              key="step1"
-              custom={1}
-              variants={slideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="space-y-8"
-            >
-              <div className="text-center space-y-2">
-                <h2 className="font-display text-3xl font-semibold text-foreground">
-                  Bienvenue
-                </h2>
-                <p className="text-muted-foreground">
-                  Choisissez votre profil pour commencer
-                </p>
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  Genre
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, gender: "femme" }))}
+                    className={`rounded-2xl border px-4 py-4 text-sm font-medium transition-colors ${
+                      formData.gender === "femme"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border bg-background text-muted-foreground"
+                    }`}
+                    data-testid="button-gender-femme"
+                  >
+                    Femme
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, gender: "homme" }))}
+                    className={`rounded-2xl border px-4 py-4 text-sm font-medium transition-colors ${
+                      formData.gender === "homme"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border bg-background text-muted-foreground"
+                    }`}
+                    data-testid="button-gender-homme"
+                  >
+                    Homme
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setFormData({ ...formData, gender: "femme" })}
-                  className={`p-6 rounded-2xl border-2 transition-all ${
-                    formData.gender === "femme"
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-card hover:border-primary/50"
-                  }`}
-                  data-testid="button-gender-femme"
-                >
-                  <div className="text-4xl mb-2">👩</div>
-                  <span className="font-medium text-foreground">Femme</span>
-                </motion.button>
-
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setFormData({ ...formData, gender: "homme" })}
-                  className={`p-6 rounded-2xl border-2 transition-all ${
-                    formData.gender === "homme"
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-card hover:border-primary/50"
-                  }`}
-                  data-testid="button-gender-homme"
-                >
-                  <div className="text-4xl mb-2">👨</div>
-                  <span className="font-medium text-foreground">Homme</span>
-                </motion.button>
-              </div>
-
-              <motion.button
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setAgeConfirmed(!ageConfirmed)}
-                className={`w-full p-4 rounded-2xl border-2 flex items-center gap-3 transition-all ${
+              <button
+                type="button"
+                onClick={() => setAgeConfirmed((prev) => !prev)}
+                className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
                   ageConfirmed
                     ? "border-primary bg-primary/10"
-                    : "border-border bg-card"
+                    : "border-border bg-background"
                 }`}
                 data-testid="button-age-confirm"
               >
-                <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center ${
-                  ageConfirmed ? "border-primary bg-primary" : "border-muted-foreground"
-                }`}>
-                  {ageConfirmed && <Check className="w-4 h-4 text-white" />}
+                <div
+                  className={`flex h-6 w-6 items-center justify-center rounded-md border ${
+                    ageConfirmed ? "border-primary bg-primary" : "border-muted-foreground"
+                  }`}
+                >
+                  {ageConfirmed && <Check className="h-4 w-4 text-white" />}
                 </div>
-                <div className="flex-1 text-left">
-                  <span className="text-foreground font-medium">Je confirme avoir +18 ans</span>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Plateforme réservée aux adultes
-                  </p>
+                <div className="flex-1">
+                  <div className="font-medium text-foreground">Je confirme avoir 18 ans ou plus</div>
+                  <div className="text-xs text-muted-foreground">Plateforme réservée aux adultes.</div>
                 </div>
-                <Shield className="w-5 h-5 text-primary" />
-              </motion.button>
+                <Shield className="h-5 w-5 text-primary" />
+              </button>
 
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-foreground">
-                  Type de compte
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  Tu peux créer un profil personnel pour poster des annonces, ou déclarer un
-                  établissement (résidence meublée, SPA, boutique produits adultes).
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() =>
-                      setFormData((prev) => ({ ...prev, accountType: "profile" }))
-                    }
-                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
-                      formData.accountType === "profile"
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-card hover:border-primary/40"
-                    }`}
-                  >
-                    <span className="text-[11px] font-semibold text-foreground">
-                      Profil personnel
-                    </span>
-                    <p className="text-[11px] text-muted-foreground">
-                      Annonces, rencontres et espace privé.
-                    </p>
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() =>
-                      setFormData((prev) => ({ ...prev, accountType: "residence" }))
-                    }
-                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
-                      formData.accountType === "residence"
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-card hover:border-primary/40"
-                    }`}
-                  >
-                    <span className="text-[11px] font-semibold text-foreground">
-                      Résidence meublée
-                    </span>
-                    <p className="text-[11px] text-muted-foreground">
-                      Appartements / chambres pour accueillir les rendez-vous.
-                    </p>
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() =>
-                      setFormData((prev) => ({ ...prev, accountType: "salon" }))
-                    }
-                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
-                      formData.accountType === "salon"
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-card hover:border-primary/40"
-                    }`}
-                  >
-                    <span className="text-[11px] font-semibold text-foreground">
-                      Salon / SPA / massages
-                    </span>
-                    <p className="text-[11px] text-muted-foreground">
-                      Établissement de massages privés ou SPA.
-                    </p>
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() =>
-                      setFormData((prev) => ({ ...prev, accountType: "adult_shop" }))
-                    }
-                    className={`p-4 rounded-2xl border-2 text-left text-xs space-y-1 ${
-                      formData.accountType === "adult_shop"
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-card hover:border-primary/40"
-                    }`}
-                  >
-                    <span className="text-[11px] font-semibold text-foreground">
-                      Vente produits adultes
-                    </span>
-                    <p className="text-[11px] text-muted-foreground">
-                      Boutique pour préservatifs, lubrifiants, sextoys, etc.
-                    </p>
-                  </motion.button>
+              <div className="space-y-2">
+                <Label>Type de compte</Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {accountTypeOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev) => ({ ...prev, accountType: option.value }))
+                      }
+                      className={`rounded-2xl border p-4 text-left transition-colors ${
+                        formData.accountType === option.value
+                          ? "border-primary bg-primary/10"
+                          : "border-border bg-background"
+                      }`}
+                    >
+                      <div className="text-sm font-medium text-foreground">{option.title}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{option.description}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
-            </motion.div>
-          )}
 
-          {currentStep === 2 && (
-            <motion.div
-              key="step2"
-              custom={1}
-              variants={slideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="space-y-8"
-            >
-              <div className="text-center space-y-2">
-                <h2 className="font-display text-3xl font-semibold text-foreground">
-                  Votre profil
-                </h2>
-                <p className="text-muted-foreground">
-                  Quelques informations de base
-                </p>
-              </div>
-
-              <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="age" className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-muted-foreground" />
+                    <Calendar className="h-4 w-4 text-muted-foreground" />
                     Âge
                   </Label>
                   <Input
@@ -490,214 +379,185 @@ export default function Signup() {
                     type="number"
                     min="18"
                     max="99"
-                    placeholder="Votre âge"
+                    placeholder="18+"
                     value={formData.age}
-                    onChange={(e) => setFormData({ ...formData, age: e.target.value })}
-                    className="h-14 text-lg"
+                    onChange={(e) => setFormData((prev) => ({ ...prev, age: e.target.value }))}
+                    className="h-12"
                     data-testid="input-age"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="ville" className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-muted-foreground" />
+                    <MapPin className="h-4 w-4 text-muted-foreground" />
                     Ville
                   </Label>
                   <Select
                     value={formData.villePreset}
-                    onValueChange={(v) => {
-                      if (v === "__other__") {
-                        setFormData({ ...formData, villePreset: v, ville: "" });
-                      } else {
-                        setFormData({ ...formData, villePreset: v, ville: v });
+                    onValueChange={(value) => {
+                      if (value === "__other__") {
+                        setFormData((prev) => ({ ...prev, villePreset: value, ville: "" }));
+                        return;
                       }
+                      setFormData((prev) => ({ ...prev, villePreset: value, ville: value }));
                     }}
                   >
-                    <SelectTrigger className="h-14 text-lg" data-testid="select-ville">
+                    <SelectTrigger className="h-12" data-testid="select-ville">
                       <SelectValue placeholder="Sélectionner une ville" />
                     </SelectTrigger>
                     <SelectContent>
-                      {cityOptions.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
+                      {cityOptions.map((city) => (
+                        <SelectItem key={city} value={city}>
+                          {city}
                         </SelectItem>
                       ))}
                       <SelectItem value="__other__">Autre…</SelectItem>
                     </SelectContent>
                   </Select>
-
-                  {formData.villePreset === "__other__" && (
-                    <Input
-                      id="ville"
-                      type="text"
-                      placeholder="Votre ville"
-                      value={formData.ville}
-                      onChange={(e) => setFormData({ ...formData, ville: e.target.value })}
-                      className="h-14 text-lg"
-                      data-testid="input-ville"
-                    />
-                  )}
                 </div>
+              </div>
 
+              {formData.villePreset === "__other__" && (
                 <div className="space-y-2">
+                  <Label htmlFor="ville-custom">Ville personnalisée</Label>
+                  <Input
+                    id="ville-custom"
+                    type="text"
+                    placeholder="Votre ville"
+                    value={formData.ville}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, ville: e.target.value }))}
+                    className="h-12"
+                    data-testid="input-ville"
+                  />
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="quartier" className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-muted-foreground" />
+                    <MapPin className="h-4 w-4 text-muted-foreground" />
                     Quartier / commune
                   </Label>
-                  <Input
-                    id="quartier"
-                    type="text"
-                    placeholder="Votre quartier (ex: Bonapriso, Angré, etc.)"
-                    value={formData.quartier}
-                    onChange={(e) => setFormData({ ...formData, quartier: e.target.value })}
-                    className="h-14 text-lg"
-                    data-testid="input-quartier"
-                  />
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-[11px] text-muted-foreground">
-                      Utiliser ma localisation précise (GPS)
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-3 text-[11px]"
-                      disabled={geoLoading}
-                      onClick={() => {
-                        if (!navigator.geolocation) {
-                          setSubmitError(
-                            "La géolocalisation n'est pas disponible sur ce navigateur.",
-                          );
-                          return;
-                        }
-                        setGeoLoading(true);
-                        navigator.geolocation.getCurrentPosition(
-                          async (pos) => {
-                            try {
-                              const lat = pos.coords.latitude;
-                              const lng = pos.coords.longitude;
-                              const r = await apiFetch(
-                                `/api/geo/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
-                              );
-                              if (!r.ok) {
-                                throw new Error();
-                              }
-                              const data = (await r.json()) as {
-                                country?: string | null;
-                                city?: string | null;
-                                district?: string | null;
-                                road?: string | null;
-                              };
-                              const city = data.city ?? "";
-                              const district = data.district ?? "";
-                              const road = data.road ?? "";
-
-                              setFormData((prev) => ({
-                                ...prev,
-                                villePreset:
-                                  city &&
-                                  cityOptions.includes(
-                                    city as (typeof cityOptions)[number],
-                                  )
-                                    ? city
-                                    : "__other__",
-                                ville: city || prev.ville,
-                                quartier:
-                                  [district, road].filter(Boolean).join(" • ") ||
-                                  prev.quartier,
-                              }));
-                            } catch {
-                              setSubmitError(
-                                "Impossible de déterminer automatiquement ta ville. Tu peux remplir la ville et le quartier manuellement.",
-                              );
-                            } finally {
-                              setGeoLoading(false);
-                            }
-                          },
-                          () => {
-                            setGeoLoading(false);
-                            setSubmitError(
-                              "Permission de localisation refusée. Tu peux remplir la ville et le quartier manuellement.",
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs"
+                    disabled={geoLoading}
+                    onClick={() => {
+                      if (!navigator.geolocation) {
+                        setSubmitError("La géolocalisation n'est pas disponible sur ce navigateur.");
+                        return;
+                      }
+                      setGeoLoading(true);
+                      navigator.geolocation.getCurrentPosition(
+                        async (pos) => {
+                          try {
+                            const lat = pos.coords.latitude;
+                            const lng = pos.coords.longitude;
+                            const response = await apiFetch(
+                              `/api/geo/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
                             );
-                          },
-                          { enableHighAccuracy: false, timeout: 8000 },
-                        );
-                      }}
-                    >
-                      {geoLoading ? "Localisation..." : "Autoriser"}
-                    </Button>
-                  </div>
+                            if (!response.ok) {
+                              throw new Error();
+                            }
+                            const data = (await response.json()) as {
+                              city?: string | null;
+                              district?: string | null;
+                              road?: string | null;
+                            };
+                            const city = data.city ?? "";
+                            const district = data.district ?? "";
+                            const road = data.road ?? "";
+
+                            setFormData((prev) => ({
+                              ...prev,
+                              villePreset:
+                                city && cityOptions.includes(city as (typeof cityOptions)[number])
+                                  ? city
+                                  : "__other__",
+                              ville: city || prev.ville,
+                              quartier: [district, road].filter(Boolean).join(" • ") || prev.quartier,
+                            }));
+                          } catch {
+                            setSubmitError(
+                              "Impossible de déterminer automatiquement ta ville. Tu peux remplir la ville et le quartier manuellement.",
+                            );
+                          } finally {
+                            setGeoLoading(false);
+                          }
+                        },
+                        () => {
+                          setGeoLoading(false);
+                          setSubmitError(
+                            "Permission de localisation refusée. Tu peux remplir la ville et le quartier manuellement.",
+                          );
+                        },
+                        { enableHighAccuracy: false, timeout: 8000 },
+                      );
+                    }}
+                  >
+                    {geoLoading ? "Localisation..." : "Utiliser ma position"}
+                  </Button>
                 </div>
+                <Input
+                  id="quartier"
+                  type="text"
+                  placeholder="Ex: Bonapriso, Angré, Cocody..."
+                  value={formData.quartier}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, quartier: e.target.value }))}
+                  className="h-12"
+                  data-testid="input-quartier"
+                />
               </div>
-            </motion.div>
-          )}
+            </div>
+          </section>
 
-          {currentStep === 3 && (
-            <motion.div
-              key="step3"
-              custom={1}
-              variants={slideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="space-y-8"
-            >
-              <div className="text-center space-y-2">
-                <h2 className="font-display text-3xl font-semibold text-foreground">
-                  Votre compte
-                </h2>
-                <p className="text-muted-foreground">
-                  Créez votre identité anonyme
-                </p>
-              </div>
+          <section className="space-y-5 border-b border-border/70 pb-7">
+            <div className="mb-4 space-y-1">
+              <h2 className="text-base font-semibold text-foreground">Accès au compte</h2>
+              <p className="text-sm text-muted-foreground">
+                Crée ton accès et confirme ton email juste après l’inscription pour poursuivre.
+              </p>
+            </div>
 
-              <div className="space-y-6">
+            <div className="space-y-5">
+              {showGoogleSignup && (
                 <div className="space-y-3">
-                  {showGoogleSignup && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full h-12 rounded-2xl gap-2"
-                      onClick={handleGoogleSignup}
-                    >
-                      <Sparkles className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium">S’inscrire avec Google</span>
-                    </Button>
-                  )}
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <span className="w-full border-t border-border" />
-                    </div>
-                    <div className="relative flex justify-center text-[11px]">
-                      <span className="bg-card/70 px-2 text-muted-foreground">
-                        ou créer un compte manuellement
-                      </span>
-                    </div>
-                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-12 w-full gap-2 rounded-2xl"
+                    onClick={handleGoogleSignup}
+                  >
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">Continuer avec Google</span>
+                  </Button>
+                  <p className="text-center text-xs text-muted-foreground">
+                    Ou remplis directement le formulaire ci-dessous.
+                  </p>
                 </div>
+              )}
 
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="username" className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-muted-foreground" />
+                    <User className="h-4 w-4 text-muted-foreground" />
                     Identifiant de connexion
                   </Label>
                   <Input
                     id="username"
                     type="text"
-                    placeholder="Identifiant (non visible publiquement)"
+                    placeholder="Non visible publiquement"
                     value={formData.username}
-                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                    className="h-14 text-lg"
+                    onChange={(e) => setFormData((prev) => ({ ...prev, username: e.target.value }))}
+                    className="h-12"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Utilisé uniquement pour te connecter. Ne sera jamais affiché publiquement.
-                  </p>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="pseudo" className="flex items-center gap-2">
-                    <User className="w-4 h-4 text-muted-foreground" />
+                    <User className="h-4 w-4 text-muted-foreground" />
                     {publicNameLabel}
                   </Label>
                   <Input
@@ -705,37 +565,38 @@ export default function Signup() {
                     type="text"
                     placeholder={publicNamePlaceholder}
                     value={formData.pseudo}
-                    onChange={(e) => setFormData({ ...formData, pseudo: e.target.value })}
-                    className="h-14 text-lg"
+                    onChange={(e) => setFormData((prev) => ({ ...prev, pseudo: e.target.value }))}
+                    className="h-12"
                     data-testid="input-pseudo"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    {publicNameHelper}
-                  </p>
                 </div>
+              </div>
 
+              <p className="text-xs text-muted-foreground">{publicNameHelper}</p>
+
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="email" className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-muted-foreground" />
-                    Email {emailLocked ? "(Google vérifié)" : "(optionnel)"}
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    Email {emailLocked ? "(Google vérifié)" : "(obligatoire)"}
                   </Label>
                   <Input
                     id="email"
                     type="email"
-                    placeholder="Ton email pour récupérer ton mot de passe"
+                    placeholder="email@exemple.com"
                     value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="h-14 text-lg"
+                    onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
+                    className="h-12"
                     disabled={emailLocked}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Non affiché sur ton profil. Utilisé pour récupérer ton mot de passe et confirmer ta publication.
-                  </p>
+                  {!emailLocked && emailTrimmed.length > 0 && !emailLooksValid ? (
+                    <p className="text-xs text-destructive">Entre une adresse email valide.</p>
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="password" className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-muted-foreground" />
+                    <Lock className="h-4 w-4 text-muted-foreground" />
                     Mot de passe
                   </Label>
                   <Input
@@ -743,51 +604,56 @@ export default function Signup() {
                     type="password"
                     placeholder="Minimum 6 caractères"
                     value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="h-14 text-lg"
+                    onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))}
+                    className="h-12"
                     data-testid="input-password"
                   />
                 </div>
-
-                {turnstileRequired && (
-                  <>
-                    {!hasSiteKey ? (
-                      <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-xs text-destructive">
-                        Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare.
-                      </div>
-                    ) : (
-                      <Turnstile
-                        action="signup"
-                        className="pt-1 flex justify-center"
-                        onToken={(tok) => setTurnstileToken(tok)}
-                      />
-                    )}
-                  </>
-                )}
               </div>
-            </motion.div>
-          )}
+
+              <p className="text-xs text-muted-foreground">
+                L’identifiant sert uniquement à la connexion. L’email est requis pour confirmer ton compte et récupérer ton mot de passe.
+              </p>
+
+              {turnstileRequired && (
+                <>
+                  {!hasSiteKey ? (
+                    <div className="rounded-xl border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive">
+                      Turnstile est requis mais VITE_TURNSTILE_SITE_KEY n’est pas défini côté build Cloudflare.
+                    </div>
+                  ) : (
+                    <Turnstile
+                      action="signup"
+                      className="flex justify-center pt-1"
+                      onToken={(token) => setTurnstileToken(token)}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          </section>
 
           {submitError && (
-            <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+            <div className="rounded-xl border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
               {submitError}
             </div>
           )}
-        </AnimatePresence>
-        </div>
-      </main>
 
-      <div className="px-6 pb-8 pt-4">
-        <Button
-          onClick={handleNext}
-          disabled={!canProceed() || submitting}
-          className="w-full h-14 text-base font-medium gap-2"
-          data-testid="button-next"
-        >
-          {currentStep === 3 ? (submitting ? "Création..." : "Créer mon profil") : "Continuer"}
-          <ArrowRight className="w-5 h-5" />
-        </Button>
-      </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Button type="button" variant="outline" className="h-12 flex-1" onClick={handleBack}>
+              Retour
+            </Button>
+            <Button
+              type="submit"
+              disabled={!canSubmit || submitting}
+              className="h-12 flex-1 text-base font-medium"
+              data-testid="button-next"
+            >
+              {submitting ? "Création..." : "Créer mon profil"}
+            </Button>
+          </div>
+        </form>
+      </main>
     </div>
   );
 }

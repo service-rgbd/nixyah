@@ -130,8 +130,8 @@ export default function SiteFooter() {
               </div>
               <div className="flex flex-col gap-2">
                 <FooterLink label={lang === "en" ? "Conditions" : "Conditions"} onClick={() => setLocation("/conditions")} />
-                <FooterLink label={lang === "en" ? "Sign up" : "Inscription"} onClick={() => setLocation("/signup")} />
-                <FooterLink label={lang === "en" ? "Sign in" : "Connexion"} onClick={() => setLocation("/login")} />
+                <FooterLink label={lang === "en" ? "Privacy" : "Confidentialité"} onClick={() => setLocation("/privacy")} />
+                <FooterLink label={lang === "en" ? "Cookies" : "Cookies"} onClick={() => setLocation("/cookies")} />
               </div>
             </div>
 
@@ -141,10 +141,8 @@ export default function SiteFooter() {
               </div>
               <div className="flex flex-col gap-2">
                 <FooterLink label={lang === "en" ? "Terms of use" : "Conditions d'utilisation"} onClick={() => setLocation("/conditions")} />
-                <FooterLink label={lang === "en" ? "18+ only" : "+18 uniquement"} onClick={() => setLocation("/conditions")} />
-                <span className="text-sm text-muted-foreground">
-                  {lang === "en" ? "Privacy-first design" : "Design orienté confidentialité"}
-                </span>
+                <FooterLink label={lang === "en" ? "Privacy policy" : "Politique de confidentialité"} onClick={() => setLocation("/privacy")} />
+                <FooterLink label={lang === "en" ? "Cookie policy" : "Politique cookies"} onClick={() => setLocation("/cookies")} />
               </div>
             </div>
           </div>

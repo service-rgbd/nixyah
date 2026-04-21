@@ -1,7 +1,7 @@
 {
   "name": "Djantrah",
   "short_name": "Djantrah",
-  "description": "Plateforme de mise en relation anonyme",
+  "description": "Plateforme d'annonces et de visibilite",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1a0f1e",

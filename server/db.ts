@@ -12,7 +12,7 @@ export const pool = new pg.Pool({
   max: 10,
 });
 
-export const db = drizzle(pool, { schema });
+export const db = drizzle(pool as any, { schema });
 
 
 
