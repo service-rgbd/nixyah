@@ -11,6 +11,7 @@ import { apiGetJson } from "@/lib/queryClient";
 import { SeoHead } from "@/components/seo-head";
 import { loadAnalyticsIfConsented, trackPageView } from "@/lib/analytics";
 import { buildAbsoluteUrl, getSiteUrl, keywordArchitecture, resolveStaticSeo } from "@shared/seo";
+import { resolveThemePreference } from "@/lib/appSettings";
 
 const Home = lazy(() => import("@/pages/home"));
 const Loader = lazy(() => import("@/pages/loader"));
@@ -160,11 +161,25 @@ function Router() {
 function App() {
   const [settings] = useAppSettings();
   const { setTheme } = useTheme();
+  const effectiveTheme = resolveThemePreference(settings.theme);
 
   useEffect(() => {
-    if (settings.theme) setTheme(settings.theme);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.theme]);
+    const applyThemePreference = () => {
+      const nextTheme = resolveThemePreference(settings.theme);
+      document.documentElement.classList.toggle("dark", nextTheme === "dark");
+      document.documentElement.style.colorScheme = nextTheme;
+      setTheme(nextTheme);
+    };
+    applyThemePreference();
+    if (settings.theme !== "auto") return;
+
+    const interval = window.setInterval(applyThemePreference, 60_000);
+    return () => window.clearInterval(interval);
+  }, [settings.theme, setTheme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.themePreference = settings.theme;
+  }, [effectiveTheme, settings.theme]);
 
   // Always reconcile local session ids with the server cookie to avoid stale identity leaks.
   useEffect(() => {

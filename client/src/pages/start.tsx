@@ -34,9 +34,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Textarea } from "@/components/ui/textarea";
 import type { Salon } from "@shared/schema";
 import { StoryReel, type StoryReelGroup } from "@/components/story-reel";
-import { upcomingEvents } from "@/lib/upcoming-events";
 import { getStoredBrowserCoords, requestBrowserCoords } from "@/lib/browserLocation";
 import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
+import { rememberProfileBook } from "@/lib/profile-book";
+import { upcomingEvents } from "@/lib/upcoming-events";
 
 export default function Start() {
   const [, setLocation] = useLocation();
@@ -92,11 +93,21 @@ export default function Start() {
     accountType?: "profile" | "residence" | "salon" | "adult_shop" | null;
   };
 
+  type StartEventPreview = {
+    id: string;
+    title: string;
+    date: string;
+    city: string;
+    tag: string;
+    description: string;
+    isIllustration?: boolean;
+  };
+
   const getAccountTypeLabel = (accountType: StartProfile["accountType"]) => {
     if (accountType === "residence") return lang === "en" ? "Residence" : "Résidence";
     if (accountType === "salon") return "Salon / SPA";
     if (accountType === "adult_shop") return lang === "en" ? "Adult shop" : "Boutique adulte";
-    return lang === "en" ? "Escort profile" : "Profil escorte";
+    return lang === "en" ? "Private profile" : "Profil privé";
   };
 
   const getAvailabilityMeta = (disponibilite?: StartProfile["disponibilite"]) => {
@@ -228,11 +239,6 @@ export default function Start() {
   );
   const profileHighlights = (profilesFiltered ?? []).slice(0, 4);
 
-  const selectedEvent = useMemo(
-    () => upcomingEvents.find((e) => e.id === selectedEventId) ?? null,
-    [selectedEventId],
-  );
-
   const formatEventDate = (d: string | Date) =>
     new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "fr-FR", {
       weekday: "short",
@@ -270,7 +276,41 @@ export default function Start() {
     queryKey: ["/api/stories"],
   });
 
-  const openProfile = (id: string) => setLocation(`/profile/${id}`);
+  const { data: liveEvents } = useQuery<any[]>({
+    queryKey: ["/api/events?limit=3"],
+  });
+
+  const previewEvents = useMemo<StartEventPreview[]>(
+    () => {
+      if ((liveEvents ?? []).length > 0) {
+        return (liveEvents ?? []).map((event) => ({
+          id: event.id,
+          title: event.title,
+          date: event.startsAt,
+          city: event.city,
+          tag: event.visibility === "private" ? "Privé" : "Public",
+          description: event.description ?? "",
+          isIllustration: false,
+        }));
+      }
+
+      return upcomingEvents.slice(0, 4).map((event) => ({
+        ...event,
+        isIllustration: true,
+      }));
+    },
+    [liveEvents],
+  );
+
+  const selectedEvent = useMemo(
+    () => previewEvents.find((e) => e.id === selectedEventId) ?? null,
+    [selectedEventId, previewEvents],
+  );
+
+  const openProfile = (id: string, ids?: string[], source = "start") => {
+    if (ids?.length) rememberProfileBook(ids, source);
+    setLocation(`/profile/${id}`);
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -382,7 +422,7 @@ export default function Start() {
                 <button
                   key={a.id}
                   type="button"
-                  onClick={() => openProfile(a.profile.id)}
+                  onClick={() => openProfile(a.profile.id, topNearby.map((item) => item.profile.id), "start-nearby")}
                   className="w-full overflow-hidden rounded-[28px] border border-border/70 bg-card/80 text-left backdrop-blur transition-colors hover:bg-card/95"
                 >
                   <div className="flex">
@@ -510,8 +550,8 @@ export default function Start() {
                       className="whitespace-nowrap text-[11px] leading-relaxed text-muted-foreground"
                     >
                       {lang === "en"
-                        ? "NIXYAH • Escorts & VIP nearby • Private massages & SPA • Adult products in discretion • Create your profile anonymously."
-                        : "NIXYAH • Escorts-girls & VIP près de toi • Massages privés & salons SPA • Produits adultes en toute discrétion • Crée ton profil anonymement."}
+                        ? "NIXYAH • Private profiles nearby • Wellness spaces & residences • Private events and discreet listings • Create your profile anonymously."
+                        : "NIXYAH • Profils privés près de toi • Espaces bien-être & résidences • Évènements publiés et annonces discrètes • Crée ton profil anonymement."}
                     </p>
                   ))}
                 </motion.div>
@@ -537,7 +577,7 @@ export default function Start() {
               data-testid="button-go-profiles"
             >
               <Compass className="w-4 h-4" />
-              {lang === "en" ? "Escorts" : "Escorts girls"}
+              {lang === "en" ? "Profiles" : "Profils"}
             </Button>
             <Button
               variant="outline"
@@ -595,8 +635,8 @@ export default function Start() {
                   </span>
                   <span className="text-[10px] text-muted-foreground truncate max-w-[55%] text-right">
                     {lang === "en"
-                      ? "Escorts, residences, salons and shops"
-                      : "Escortes, résidences, salons et boutiques"}
+                      ? "Profiles, residences, salons and shops"
+                      : "Profils, résidences, salons et boutiques"}
                   </span>
                 </Button>
               </SheetTrigger>
@@ -605,8 +645,8 @@ export default function Start() {
                   <SheetTitle>{lang === "en" ? "Targeted filters" : "Filtres ciblés"}</SheetTitle>
                   <SheetDescription>
                     {lang === "en"
-                      ? "Refine what you want to see: escorts, residences, salons / SPA or adult shops."
-                      : "Affinez exactement ce que vous cherchez : escortes, résidences, salons / SPA ou boutiques adultes."}
+                      ? "Refine what you want to see: private profiles, residences, salons / SPA or adult shops."
+                      : "Affinez exactement ce que vous cherchez : profils privés, résidences, salons / SPA ou boutiques adultes."}
                   </SheetDescription>
                 </SheetHeader>
 
@@ -827,7 +867,7 @@ export default function Start() {
                     {lang === "en" ? "Elite access" : "Accès elite"}
                   </div>
                   <div className="mt-1 text-base font-semibold tracking-tight text-white">
-                    {lang === "en" ? "VIP Escorts & VIP Masseuses" : "Escortes VIP & Masseuses VIP"}
+                    {lang === "en" ? "VIP profiles & premium selection" : "Profils VIP & sélection premium"}
                   </div>
                   <div className="mt-1 text-[11px] text-white/70">
                     {lang === "en"
@@ -884,7 +924,7 @@ export default function Start() {
                     <button
                       key={profile.id}
                       type="button"
-                      onClick={() => openProfile(profile.id)}
+                      onClick={() => openProfile(profile.id, profileHighlights.map((item) => item.id), "start-highlights")}
                       className="flex h-[172px] w-[94%] shrink-0 items-center gap-3 overflow-hidden rounded-[26px] border border-border/70 bg-card/50 px-3 py-3 text-left transition-colors hover:bg-muted/10 sm:w-[76%] md:w-[56%] lg:w-[42%]"
                     >
                       <img
@@ -961,8 +1001,8 @@ export default function Start() {
                 </div>
                 <div className="text-[11px] text-muted-foreground">
                   {lang === "en"
-                    ? "Private nights and curated meetings."
-                    : "Soirées privées et rendez-vous sélectionnés."}
+                    ? "Published events, private venues and selected gatherings."
+                    : "Évènements publiés, lieux privés et rassemblements sélectionnés."}
                 </div>
               </div>
               <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/events")}>
@@ -971,7 +1011,7 @@ export default function Start() {
             </div>
 
             <div className="space-y-3">
-              {upcomingEvents.slice(0, 3).map((ev, idx) => {
+              {previewEvents.slice(0, 4).map((ev, idx) => {
                 const bg = eventBackgrounds[idx % eventBackgrounds.length];
                 return (
                   <div
@@ -1005,17 +1045,9 @@ export default function Start() {
                       <Button
                         size="sm"
                         className="mt-3 rounded-full"
-                        onClick={() => {
-                          setSelectedEventId(ev.id);
-                          setEventDialogOpen(true);
-                          setEventInfoAccepted(false);
-                          setRsvpDone(false);
-                          setRsvpName("");
-                          setRsvpContact("");
-                          setRsvpMessage("");
-                        }}
+                        onClick={() => setLocation("/events")}
                       >
-                        {lang === "en" ? "Participate" : "Participer"}
+                        {ev.isIllustration ? (lang === "en" ? "Discover" : "Découvrir") : (lang === "en" ? "Participate" : "Participer")}
                       </Button>
                     </div>
                   </div>
@@ -1088,12 +1120,12 @@ export default function Start() {
             <div className="flex items-end justify-between">
               <div>
                 <div className="text-sm font-semibold text-foreground">
-                  {lang === "en" ? "Private massages & spa" : "Massages privés & SPA"}
+                  {lang === "en" ? "Wellness spaces & residences" : "Espaces bien-être & résidences"}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {lang === "en"
-                    ? "Relax lounge: private massages, spa & residences."
-                    : "Espace détente : massages privés, SPA & résidences meublées."}
+                    ? "Nearby wellness spaces, private salons and furnished residences."
+                    : "Espaces bien-être à proximité, salons privés et résidences meublées."}
                 </div>
               </div>
             </div>
@@ -1178,8 +1210,8 @@ export default function Start() {
                               (s.type === "spa"
                                 ? "Ambiance spa, huiles chaudes et détente complète."
                                 : s.type === "private_massage"
-                                  ? "Sélection de praticiennes pour un massage discret à domicile."
-                                  : "Appartements meublés discrets pour vos séjours et rendez-vous.")}
+                                  ? "Sélection de prestations bien-être proposées dans un cadre discret."
+                                  : "Appartements meublés discrets pour séjours, passages et rendez-vous organisés.")}
                           </p>
                         </div>
                       </button>
@@ -1218,103 +1250,105 @@ export default function Start() {
                   <button
                     key={a.id}
                     type="button"
-                    onClick={() => openProfile(a.profile.id)}
+                    onClick={() => openProfile(a.profile.id, topNews.map((item) => item.profile.id), "start-latest")}
                     className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
                   >
-                    <div className="grid items-start gap-4 md:grid-cols-[156px_minmax(0,1fr)]">
-                      <div className="relative h-[132px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[170px]">
-                        <img
-                          src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
-                          alt={a.profile.pseudo}
-                          className="absolute inset-0 h-full w-full object-cover"
-                          onError={(e) => {
-                            const img = e.currentTarget;
-                            img.onerror = null;
-                            img.src = getDefaultProfilePhoto(a.profile.accountType);
-                          }}
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent" />
-                        <div className="absolute left-3 top-3 flex flex-wrap gap-2">
-                          {a.profile.isVip ? (
-                            <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] text-white">
-                              VIP
-                            </span>
-                          ) : null}
-                          <span className="rounded-full bg-black/55 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white">
-                            {getAccountTypeLabel(a.profile.accountType)}
-                          </span>
+                    <div className="grid items-start gap-3 sm:grid-cols-[118px_minmax(0,1fr)] sm:gap-4 md:grid-cols-[132px_minmax(0,1fr)]">
+                      <div className="flex items-start gap-3 sm:block">
+                        <div className="h-[112px] w-[112px] shrink-0 overflow-hidden rounded-[24px] bg-muted/20 sm:h-[132px] sm:w-full">
+                          <img
+                            src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
+                            alt={a.profile.pseudo}
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              img.onerror = null;
+                              img.src = getDefaultProfilePhoto(a.profile.accountType);
+                            }}
+                          />
                         </div>
-                        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-end gap-2">
-                          {(a.promotionMeta?.badges ?? []).includes("URGENT") ? (
-                            <span className="rounded-full bg-red-500/85 px-2.5 py-1 text-[10px] text-white">
-                              Urgent
+                        <div className="min-w-0 space-y-2 sm:hidden">
+                          <div className="text-sm font-semibold tracking-tight text-foreground line-clamp-2">
+                            {a.title}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                            <span className="rounded-full border border-border/70 px-2 py-1">{a.profile.pseudo}</span>
+                            <span className="rounded-full border border-border/70 px-2 py-1">
+                              {getAccountTypeLabel(a.profile.accountType)}
                             </span>
-                          ) : null}
+                            {a.profile.isVip ? <span className="rounded-full bg-amber-500/10 px-2 py-1 text-amber-500">VIP</span> : null}
+                          </div>
                         </div>
                       </div>
 
                       <div className="min-w-0">
-                        <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-base font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.2rem]">
+                            <div className="hidden flex-wrap items-center gap-2 text-[11px] text-muted-foreground sm:flex">
+                              <span className="rounded-full border border-border/70 px-2.5 py-1">
+                                {getAccountTypeLabel(a.profile.accountType)}
+                              </span>
+                              <span className="rounded-full border border-border/70 px-2.5 py-1">
+                                {a.profile.pseudo}
+                              </span>
+                              {a.profile.isVip ? (
+                                <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-amber-500">VIP</span>
+                              ) : null}
+                              {a.profile.isPro ? (
+                                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">PRO</span>
+                              ) : null}
+                              {(a.promotionMeta?.badges ?? []).includes("URGENT") ? (
+                                <span className="rounded-full bg-red-500/10 px-2.5 py-1 text-red-500">Urgent</span>
+                              ) : null}
+                            </div>
+                            <div className="mt-0 sm:mt-3 text-base font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.15rem]">
                               {a.title}
                             </div>
                             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                              <span className="rounded-full bg-muted/40 px-2.5 py-1">
-                                {a.profile.pseudo}
+                              <span className="inline-flex items-center gap-1.5">
+                                <MapPin className="h-3.5 w-3.5" />
+                                <span className="truncate">
+                                  {a.profile.ville}
+                                  {a.profile.lieu ? ` • ${a.profile.lieu}` : ""}
+                                  {typeof a.distanceKm === "number" ? ` • ${Math.round(a.distanceKm)} km` : ""}
+                                </span>
                               </span>
-                              {a.profile.isPro ? (
-                                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
-                                  pro
-                                </span>
-                              ) : null}
                               {a.profile.tarif ? (
-                                <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
-                                  {a.profile.tarif}
-                                </span>
+                                <span className="rounded-full bg-foreground px-2.5 py-1 text-background">{a.profile.tarif}</span>
                               ) : null}
                               {getAvailabilityMeta(a.profile.disponibilite) ? (
-                                <span className={`rounded-full px-2.5 py-1 text-[10px] ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
+                                <span className={`rounded-full px-2.5 py-1 ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
                                   {getAvailabilityMeta(a.profile.disponibilite)?.label}
                                 </span>
                               ) : null}
-                            </div>
-                            <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-                              <MapPin className="w-3.5 h-3.5" />
-                              <span className="truncate">
-                                {a.profile.ville}
-                                {a.profile.lieu ? ` • ${a.profile.lieu}` : ""}
-                                {typeof a.distanceKm === "number" ? ` • ${Math.round(a.distanceKm)} km` : ""}
-                              </span>
-                            </div>
-                            <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
-                              {a.profile.description ??
-                                (lang === "en"
-                                  ? "Open the profile to see the full details."
-                                  : "Ouvre le profil pour voir tous les détails.")}
                             </div>
                           </div>
                           <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
                         </div>
 
-                        <div className="mt-4 flex flex-wrap items-center gap-2">
-                          <div className="flex gap-1.5 flex-wrap">
-                            {(a.promotionMeta?.badges ?? [])
-                              .filter((b: string) => b !== "URGENT")
-                              .slice(0, 3)
-                              .map((b: string) => (
-                                <span
-                                  key={b}
-                                  className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-foreground/80"
-                                >
-                                  {b === "PROLONGATION" ? "Prolong." : b}
-                                </span>
-                              ))}
-                          </div>
+                        <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground line-clamp-3">
+                          {a.profile.description ??
+                            (lang === "en"
+                              ? "Open the profile to see the full details."
+                              : "Ouvre le profil pour voir tous les détails.")}
+                        </p>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {(a.promotionMeta?.badges ?? [])
+                            .filter((b: string) => b !== "URGENT")
+                            .slice(0, 2)
+                            .map((b: string) => (
+                              <span
+                                key={b}
+                                className="rounded-full border border-border/70 px-2.5 py-1 text-[10px] text-foreground/75"
+                              >
+                                {b === "PROLONGATION" ? "Prolong." : b}
+                              </span>
+                            ))}
                           {(a.profile.services ?? []).slice(0, 3).map((s: string) => (
                             <span
                               key={s}
-                              className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground"
+                              className="rounded-full bg-muted/35 px-2.5 py-1 text-[10px] text-muted-foreground"
                             >
                               {s}
                             </span>

@@ -22,6 +22,7 @@ import { useI18n } from "@/lib/i18n";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
 import { getStoredBrowserCoords, requestBrowserCoords } from "@/lib/browserLocation";
 import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
+import { rememberProfileBook } from "@/lib/profile-book";
 
 function dedupeMedia(urls: Array<string | null | undefined>) {
   const out: string[] = [];
@@ -231,6 +232,8 @@ export default function Explore() {
   >("__all__");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [page, setPage] = useState(0);
+  const [immersiveIndex, setImmersiveIndex] = useState(0);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
   useEffect(() => {
     setCoords(getStoredBrowserCoords());
   }, []);
@@ -310,7 +313,22 @@ export default function Explore() {
     [vipData, ageRange, zone, quartier, accountType],
   );
 
-  const openProfile = (id: string) => setLocation(`/profile/${id}`);
+  const openProfile = (id: string) => {
+    rememberProfileBook(filtered.map((profile) => profile.id), viewMode === "immersive" ? "explore-immersive" : "explore-list");
+    setLocation(`/profile/${id}`);
+  };
+
+  const immersiveProfile = filtered[immersiveIndex] ?? null;
+  const canGoPreviousImmersive = immersiveIndex > 0;
+  const canGoNextImmersive = immersiveIndex < filtered.length - 1;
+
+  const goToPreviousImmersive = () => {
+    setImmersiveIndex((current) => Math.max(0, current - 1));
+  };
+
+  const goToNextImmersive = () => {
+    setImmersiveIndex((current) => Math.min(filtered.length - 1, current + 1));
+  };
 
   const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -328,6 +346,12 @@ export default function Explore() {
   useEffect(() => {
     if (page !== pageSafe) setPage(pageSafe);
   }, [page, pageSafe]);
+  useEffect(() => {
+    setImmersiveIndex((current) => {
+      if (!filtered.length) return 0;
+      return Math.min(current, filtered.length - 1);
+    });
+  }, [filtered.length]);
 
   if (viewMode === "immersive") {
     return (
@@ -567,7 +591,7 @@ export default function Explore() {
           </div>
         </div>
 
-        <main className="h-[100svh] overflow-y-auto snap-y snap-mandatory overscroll-contain">
+        <main className="h-[100svh] overflow-hidden overscroll-contain">
           {isLoading ? (
             <div className="h-[100svh] flex items-center justify-center text-sm text-muted-foreground">
               {lang === "en" ? "Loading…" : "Chargement…"}
@@ -584,63 +608,112 @@ export default function Explore() {
                 ? "No profiles for current filters."
                 : "Aucun profil avec les filtres actuels."}
             </div>
-          ) : (
-            filtered.map((p) => (
-              <section key={p.id} className="snap-start snap-stop-always h-[100svh] relative">
-                <img
-                  src={getProfilePhoto(p.photoUrl, p.accountType)}
-                  alt={p.pseudo}
-                  className="absolute inset-0 w-full h-full object-cover bg-muted"
-                  onError={(e) => {
-                    const img = e.currentTarget;
-                    img.onerror = null;
-                    img.src = getDefaultProfilePhoto(p.accountType);
-                  }}
-                />
-                <div className="absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/92 via-black/40 to-transparent pointer-events-none" />
-                <div className="absolute bottom-0 left-0 right-0 p-4">
-                  <div className="rounded-3xl bg-black/70 border border-white/12 backdrop-blur-xl px-5 py-5 space-y-3">
-                    <div className="text-foreground dark:text-white text-lg font-semibold tracking-tight line-clamp-1">
-                      {p.latestAnnonce?.title ?? (lang === "en" ? "Private listing" : "Annonce privée")}
-                    </div>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-foreground dark:text-white text-2xl font-semibold tracking-tight truncate">
-                          {p.pseudo} <span className="text-muted-foreground dark:text-white/70 font-light">{p.age}</span>
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 text-muted-foreground dark:text-white/75 text-sm">
-                          <MapPin className="w-4 h-4" />
-                          <span className="truncate">
-                            {p.ville}
-                            {p.lieu ? ` • ${p.lieu}` : ""}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="shrink-0 flex flex-col items-end gap-2">
-                        {p.tarif ? (
-                          <span className="px-3 py-1 rounded-full text-[11px] bg-primary/90 text-white border border-white/10">
-                            {p.tarif}
-                          </span>
-                        ) : null}
-                        {p.isVip && (
-                          <span className="px-3 py-1 rounded-full text-[11px] bg-amber-400/20 text-amber-200 border border-amber-400/30 flex items-center gap-2">
-                            <Crown className="w-4 h-4" />
+          ) : immersiveProfile ? (
+            <section
+              className="relative h-[100svh]"
+              onTouchStart={(event) => setTouchStartX(event.changedTouches[0]?.clientX ?? null)}
+              onTouchEnd={(event) => {
+                const endX = event.changedTouches[0]?.clientX ?? null;
+                if (touchStartX === null || endX === null) return;
+                const delta = endX - touchStartX;
+                setTouchStartX(null);
+                if (Math.abs(delta) < 45) return;
+                if (delta < 0) goToNextImmersive();
+                if (delta > 0) goToPreviousImmersive();
+              }}
+            >
+              <img
+                src={getProfilePhoto(immersiveProfile.photoUrl, immersiveProfile.accountType)}
+                alt={immersiveProfile.pseudo}
+                className="absolute inset-0 h-full w-full object-cover bg-muted"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  img.onerror = null;
+                  img.src = getDefaultProfilePhoto(immersiveProfile.accountType);
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/58 via-black/10 to-transparent pointer-events-none" />
+
+              <div className="absolute inset-x-4 top-[calc(env(safe-area-inset-top)+4.5rem)] z-20 flex items-center justify-between">
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="rounded-full border border-white/12 bg-black/28 text-white backdrop-blur-md hover:bg-black/36"
+                  disabled={!canGoPreviousImmersive}
+                  onClick={goToPreviousImmersive}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <div className="rounded-full border border-white/12 bg-black/24 px-3 py-1 text-[11px] text-white/82 backdrop-blur-md">
+                  {immersiveIndex + 1} / {filtered.length}
+                </div>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="rounded-full border border-white/12 bg-black/28 text-white backdrop-blur-md hover:bg-black/36"
+                  disabled={!canGoNextImmersive}
+                  onClick={goToNextImmersive}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5">
+                <div className="mx-auto max-w-2xl rounded-[28px] border border-white/10 bg-black/22 px-4 py-4 backdrop-blur-md">
+                  <div className="flex items-end justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-white/74">
+                        <span className="rounded-full border border-white/12 px-2.5 py-1 uppercase tracking-[0.16em]">
+                          {getAccountTypeLabel(immersiveProfile.accountType, lang)}
+                        </span>
+                        {immersiveProfile.isVip ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/14 px-2.5 py-1 text-amber-100/90">
+                            <Crown className="h-3 w-3" />
                             VIP
                           </span>
-                        )}
+                        ) : null}
+                        {immersiveProfile.verified ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/14 px-2.5 py-1 text-emerald-100/90">
+                            <BadgeCheck className="h-3 w-3" />
+                            {lang === "en" ? "Certified" : "Certifie"}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-end gap-2">
+                        <div className="truncate text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+                          {immersiveProfile.pseudo}
+                        </div>
+                        <div className="pb-1 text-sm font-light text-white/74 sm:text-base">
+                          {immersiveProfile.age}
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2 text-sm text-white/70">
+                        <MapPin className="h-4 w-4 shrink-0" />
+                        <span className="truncate">
+                          {immersiveProfile.ville}
+                          {immersiveProfile.lieu ? ` • ${immersiveProfile.lieu}` : ""}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-muted-foreground dark:text-white/70 text-sm line-clamp-2">{p.description ?? "—"}</div>
-                    <div className="flex items-center justify-end">
-                      <Button className="rounded-2xl" onClick={() => openProfile(p.id)}>
+
+                    <div className="shrink-0 space-y-2 text-right">
+                      {immersiveProfile.tarif ? (
+                        <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-black">
+                          {immersiveProfile.tarif}
+                        </div>
+                      ) : null}
+                      <Button className="rounded-full bg-white text-black hover:bg-white/90" onClick={() => openProfile(immersiveProfile.id)}>
                         {lang === "en" ? "Open" : "Voir"}
-                        <ChevronRight className="w-4 h-4 ml-1" />
                       </Button>
                     </div>
                   </div>
                 </div>
-              </section>
-            ))
+              </div>
+            </section>
+          ) : (
+            <div className="h-[100svh] flex items-center justify-center px-6 text-center text-sm text-muted-foreground">
+              {lang === "en" ? "No immersive profile available." : "Aucun profil immersif disponible."}
+            </div>
           )}
         </main>
       </div>

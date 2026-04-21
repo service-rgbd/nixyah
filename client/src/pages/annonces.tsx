@@ -22,6 +22,7 @@ import { useI18n } from "@/lib/i18n";
 import { annonceServiceOptions } from "@/lib/serviceOptions";
 import { getStoredBrowserCoords } from "@/lib/browserLocation";
 import { getDefaultProfilePhoto, getProfilePhoto } from "@/lib/profile-photo";
+import { rememberProfileBook } from "@/lib/profile-book";
 
 type AnnonceItem = {
   id: string;
@@ -72,6 +73,11 @@ export default function AnnoncesPage() {
   const [settings, setSettings] = useAppSettings();
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
+  const openProfile = (profileId: string, ids: string[]) => {
+    rememberProfileBook(ids, "annonces");
+    setLocation(`/profile/${profileId}`);
+  };
+
   useEffect(() => {
     setCoords(getStoredBrowserCoords());
   }, []);
@@ -80,7 +86,7 @@ export default function AnnoncesPage() {
     if (accountType === "residence") return lang === "en" ? "Residence" : "Résidence";
     if (accountType === "salon") return "Salon / SPA";
     if (accountType === "adult_shop") return lang === "en" ? "Adult shop" : "Boutique adulte";
-    return lang === "en" ? "Escort profile" : "Profil escorte";
+    return lang === "en" ? "Private profile" : "Profil privé";
   };
 
   const getAvailabilityMeta = (disponibilite?: AnnonceItem["profile"]["disponibilite"]) => {
@@ -270,7 +276,7 @@ export default function AnnoncesPage() {
               <button
                 key={a.id}
                 type="button"
-                onClick={() => setLocation(`/profile/${a.profile.id}`)}
+                onClick={() => openProfile(a.profile.id, (data ?? []).map((item) => item.profile.id))}
                 className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
               >
                 <div className="grid items-start gap-4 md:grid-cols-[156px_minmax(0,1fr)]">

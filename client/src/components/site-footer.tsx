@@ -50,8 +50,8 @@ export default function SiteFooter() {
               </div>
               <p className="text-sm text-muted-foreground max-w-xl">
                 {lang === "en"
-                  ? "Create your space, manage your visibility, and explore nearby profiles with privacy-first settings."
-                  : "Crée ton espace, gère ta visibilité, et explore autour de toi avec des réglages orientés confidentialité."}
+                  ? "Create your space, manage your visibility, and discover nearby profiles, venues and listings with privacy-first settings."
+                  : "Crée ton espace, gère ta visibilité, et découvre autour de toi des profils, lieux et annonces avec des réglages orientés confidentialité."}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
@@ -74,8 +74,8 @@ export default function SiteFooter() {
             <div className="text-2xl font-black tracking-tight text-gradient">NIXYAH</div>
             <p className="text-sm text-muted-foreground">
               {lang === "en"
-                ? "A modern interface to present profiles, private spaces and adult products — with responsible, privacy-first design."
-                : "Une interface moderne pour présenter des profils, des espaces privés et des produits adultes — avec une conception responsable et orientée confidentialité."}
+                ? "A modern interface to present profiles, venues, listings and adult products, with responsible, privacy-first design."
+                : "Une interface moderne pour présenter des profils, des lieux, des annonces et des produits adultes, avec une conception responsable et orientée confidentialité."}
             </p>
             <div className="flex flex-col gap-2 pt-2">
               {email && (

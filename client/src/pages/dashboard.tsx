@@ -930,72 +930,91 @@ export default function Dashboard() {
               <div className="text-base font-semibold text-foreground">{lang === "en" ? "Quick actions" : "Actions rapides"}</div>
               <div className="text-sm text-muted-foreground">{lang === "en" ? "Do the essentials fast" : "L’essentiel, en 1 clic"}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                className="h-auto min-h-16 justify-start gap-3 rounded-[26px] border-border/70 bg-muted/10 px-4 py-4 text-left hover:bg-muted/20"
                 onClick={() => {
                   setShowTokensDialog(true);
                 }}
               >
-                <Coins className="w-4 h-4" />
-                {lang === "en" ? "Buy tokens" : "Acheter des jetons"}
+                <Coins className="h-4 w-4 shrink-0" />
+                <span className="line-clamp-2 whitespace-normal">
+                  {lang === "en" ? "Buy tokens" : "Acheter des jetons"}
+                </span>
               </Button>
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                className="h-auto min-h-16 justify-start gap-3 rounded-[26px] border-border/70 bg-muted/10 px-4 py-4 text-left hover:bg-muted/20"
                 onClick={() => {
                   if (!ensureEmailVerifiedForPublishing()) return;
                   setLocation("/annonce/new?mode=edit");
                 }}
               >
-                <Rocket className="w-4 h-4" />
-                {lang === "en" ? "Boost an ad" : "Booster une annonce"}
+                <Rocket className="h-4 w-4 shrink-0" />
+                <span className="line-clamp-2 whitespace-normal">
+                  {lang === "en" ? "Boost an ad" : "Booster une annonce"}
+                </span>
               </Button>
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                className="h-auto min-h-16 justify-start gap-3 rounded-[26px] border-border/70 bg-muted/10 px-4 py-4 text-left hover:bg-muted/20"
                 onClick={() => setLocation("/stories/new")}
               >
-                <Clapperboard className="w-4 h-4" />
-                {lang === "en" ? "Post a story" : "Poster une story"}
+                <Clapperboard className="h-4 w-4 shrink-0" />
+                <span className="line-clamp-2 whitespace-normal">
+                  {lang === "en" ? "Post a story" : "Poster une story"}
+                </span>
               </Button>
               {canManageEvents ? (
                 <Button
                   variant="outline"
-                  className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                  className="h-auto min-h-16 justify-start gap-3 rounded-[26px] border-border/70 bg-muted/10 px-4 py-4 text-left hover:bg-muted/20"
                   onClick={() => setLocation("/events/new")}
                 >
-                  <CalendarDays className="w-4 h-4" />
-                  Créer un évènement
+                  <CalendarDays className="h-4 w-4 shrink-0" />
+                  <span className="line-clamp-2 whitespace-normal">Créer un évènement</span>
                 </Button>
               ) : null}
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                className="h-auto min-h-16 justify-start gap-3 rounded-[26px] border-border/70 bg-muted/10 px-4 py-4 text-left hover:bg-muted/20"
                 onClick={() => scrollToId("section-advanced")}
               >
-                <Eye className="w-4 h-4" />
-                {lang === "en" ? "Visibility" : "Visibilité"}
+                <Eye className="h-4 w-4 shrink-0" />
+                <span className="line-clamp-2 whitespace-normal">
+                  {lang === "en" ? "Visibility" : "Visibilité"}
+                </span>
               </Button>
               <Button
                 variant="outline"
-                className="h-14 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                className="h-auto min-h-16 justify-start gap-3 rounded-[26px] border-border/70 bg-muted/10 px-4 py-4 text-left hover:bg-muted/20"
                 onClick={() => setLocation("/settings")}
               >
-                <Settings2 className="w-4 h-4" />
-                {lang === "en" ? "Settings" : "Paramètres"}
+                <Settings2 className="h-4 w-4 shrink-0" />
+                <span className="line-clamp-2 whitespace-normal">
+                  {lang === "en" ? "Settings" : "Paramètres"}
+                </span>
               </Button>
             </div>
           </section>
 
-          <details id="section-advanced" className="border-b border-border/70 pb-4">
-            <summary className="cursor-pointer select-none py-4">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-foreground">
-                  {lang === "en" ? "Advanced" : "Avancé"}
+          <details id="section-advanced" className="group border-b border-border/70 pb-4">
+            <summary className="list-none cursor-pointer select-none py-4">
+              <div className="rounded-[28px] border border-border/70 bg-gradient-to-br from-muted/20 via-background to-primary/5 px-4 py-4 transition-colors group-open:border-primary/20">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">
+                      {lang === "en" ? "Advanced" : "Avancé"}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {lang === "en" ? "Control visibility, contact and location." : "Gère visibilité, contact et localisation."}
+                    </div>
+                  </div>
+                  <span className="rounded-full border border-border/70 px-3 py-1 text-[11px] text-foreground/70 transition group-open:border-primary/25 group-open:text-primary">
+                    {lang === "en" ? "Configurer" : "Configurer"}
+                  </span>
                 </div>
-                <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
               </div>
             </summary>
             <div className="space-y-4 pb-4">
@@ -1010,14 +1029,16 @@ export default function Dashboard() {
                 />
               </div>
 
-              <details id="section-contact" className="border-b border-border/70 pb-4">
-                <summary className="cursor-pointer select-none py-4">
-                  <div className="flex items-center justify-between">
+              <details id="section-contact" className="group border-b border-border/70 pb-4">
+                <summary className="list-none cursor-pointer select-none py-4">
+                  <div className="flex items-center justify-between rounded-[24px] border border-border/70 bg-muted/10 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       <Phone className="w-4 h-4 text-muted-foreground" />
                       <span>{lang === "en" ? "Contact" : "Contact"}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
+                    <span className="rounded-full border border-border/70 px-3 py-1 text-[11px] text-foreground/70 group-open:border-primary/25 group-open:text-primary">
+                      {lang === "en" ? "Modifier" : "Modifier"}
+                    </span>
                   </div>
                 </summary>
                 <div className="space-y-4 pb-1">
@@ -1091,14 +1112,16 @@ export default function Dashboard() {
                 </div>
               </details>
 
-              <details id="section-location" className="pb-1">
-                <summary className="cursor-pointer select-none py-4">
-                  <div className="flex items-center justify-between">
+              <details id="section-location" className="group pb-1">
+                <summary className="list-none cursor-pointer select-none py-4">
+                  <div className="flex items-center justify-between rounded-[24px] border border-border/70 bg-muted/10 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       <MapPin className="w-4 h-4 text-muted-foreground" />
                       <span>{lang === "en" ? "Location" : "Localisation"}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
+                    <span className="rounded-full border border-border/70 px-3 py-1 text-[11px] text-foreground/70 group-open:border-primary/25 group-open:text-primary">
+                      {lang === "en" ? "Régler" : "Régler"}
+                    </span>
                   </div>
                 </summary>
                 <div className="space-y-3 pb-1">
@@ -1212,14 +1235,26 @@ export default function Dashboard() {
                 </span>
               </Button>
 
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <Button variant="outline" className="h-10 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" onClick={() => setLocation("/conditions")}>
-                  <HelpCircle className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs">{lang === "en" ? "Terms of use" : "Conditions d'utilisation"}</span>
+              <div className="space-y-2 pt-1">
+                <Button
+                  variant="ghost"
+                  className="h-auto w-full justify-start gap-2 rounded-none border-0 px-0 py-2 text-left hover:bg-transparent"
+                  onClick={() => setLocation("/conditions")}
+                >
+                  <HelpCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="whitespace-normal break-words text-xs leading-relaxed">
+                    {lang === "en" ? "Terms of use" : "Conditions d'utilisation"}
+                  </span>
                 </Button>
-                <Button variant="outline" className="h-10 justify-start gap-2 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" onClick={() => setLocation("/privacy")}>
-                  <Info className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-xs">{lang === "en" ? "Privacy & cookies" : "Confidentialité & cookies"}</span>
+                <Button
+                  variant="ghost"
+                  className="h-auto w-full justify-start gap-2 rounded-none border-0 px-0 py-2 text-left hover:bg-transparent"
+                  onClick={() => setLocation("/privacy")}
+                >
+                  <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="whitespace-normal break-words text-xs leading-relaxed">
+                    {lang === "en" ? "Privacy & cookies" : "Confidentialité & cookies"}
+                  </span>
                 </Button>
               </div>
             </div>

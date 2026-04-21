@@ -1,6 +1,6 @@
 import { useParams, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, BadgeCheck, MapPin, Calendar, MapPinned, MessageCircle, Share2, Heart, Scale, Wine, Cigarette, Palette, PersonStanding, Sparkles, PhoneCall, Send, Lock } from "lucide-react";
+import { ArrowLeft, BadgeCheck, MapPin, Calendar, MapPinned, MessageCircle, Share2, Heart, Scale, Wine, Cigarette, Palette, PersonStanding, Sparkles, PhoneCall, Send, Lock, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ import { StoryReel, type StoryReelGroup } from "@/components/story-reel";
 import { getStoredBrowserCoords, requestBrowserCoords } from "@/lib/browserLocation";
 import { getDefaultProfilePhoto } from "@/lib/profile-photo";
 import { SeoHead, buildBreadcrumbJsonLd } from "@/components/seo-head";
+import { getProfileBookNeighbors } from "@/lib/profile-book";
 
 function dedupeMedia(urls: Array<string | null | undefined>) {
   const out: string[] = [];
@@ -32,7 +33,7 @@ function getAccountTypeLabel(accountType: ApiProfileDetail["accountType"]) {
   if (accountType === "residence") return "Résidence meublée";
   if (accountType === "salon") return "SPA / salon privé";
   if (accountType === "adult_shop") return "Boutique produits adultes";
-  return "Escorte";
+  return "Profil privé";
 }
 
 type ApiProfileDetail = {
@@ -271,12 +272,17 @@ export default function ProfileDetail() {
   const contactDescription = hasContact
     ? isResidence
       ? `Cette résidence échange via ${contactSummary}. Utilise le canal le plus direct pour organiser ton passage.`
-      : `Ce profil accepte les échanges via ${contactSummary}. Choisis le canal le plus direct pour organiser le rendez-vous.`
+      : `Ce profil accepte les échanges via ${contactSummary}. Choisis le canal le plus direct pour organiser la prise de contact.`
     : isResidence
       ? "Les coordonnées directes de cette résidence ne sont pas encore activées."
       : "Les coordonnées directes ne sont pas encore activées pour ce profil.";
   const availabilityLabel = isResidence ? "Disponibilité du lieu" : "Disponibilité";
   const locationTitle = isResidence ? "Adresse du lieu" : "Adresse";
+  const profilePager = getProfileBookNeighbors(profile.id);
+  const goToNeighbor = (targetId: string | null) => {
+    if (!targetId) return;
+    setLocation(`/profile/${targetId}`);
+  };
   const structuredData = (() => {
     const origin = typeof window !== "undefined" ? window.location.origin : "https://www.nixyah.com";
     const profileUrl = `${origin}/profile/${profile.id}`;
@@ -342,14 +348,14 @@ export default function ProfileDetail() {
         title={`${profile.pseudo} à ${profile.ville}`}
         description={
           profile.description ||
-          `${profile.pseudo} à ${profile.ville}. Consulte les disponibilités, services, médias et informations de contact sur NIXYAH.`
+          `${profile.pseudo} à ${profile.ville}. Consulte les disponibilités, informations pratiques, médias et modalités de contact sur NIXYAH.`
         }
         canonicalPath={`/profile/${profile.id}`}
         image={galleryUrls[0] ?? profile.photoUrl ?? undefined}
         keywords={[
           `${profile.pseudo} ${profile.ville}`,
-          "profil adulte premium",
-          "services privés francophones",
+          "profil privé",
+          "annonce et informations pratiques",
           getAccountTypeLabel(profile.accountType),
         ]}
         type="profile"
@@ -369,26 +375,50 @@ export default function ProfileDetail() {
               onIndexChange={setActiveMediaIndex}
             />
           </div>
-          <div className={`absolute inset-0 ${isResidence ? "bg-gradient-to-t from-black/58 via-black/10 to-transparent" : "bg-gradient-to-t from-black/90 via-black/25 to-transparent"}`} />
+          <div className={`absolute inset-0 ${isResidence ? "bg-gradient-to-t from-black/58 via-black/12 to-transparent" : "bg-gradient-to-t from-black/82 via-black/18 to-transparent"}`} />
           
           <motion.button
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             onClick={() => setLocation("/explore")}
-            className={`absolute left-4 top-4 flex h-10 w-10 items-center justify-center rounded-full ${isResidence ? "border border-border/70 bg-background/85" : "border border-white/25 bg-black/55 shadow-md"}`}
+            className="absolute left-4 top-4 flex h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-background/80 text-foreground shadow-lg shadow-black/10 backdrop-blur-md dark:border-white/15 dark:bg-black/45 dark:text-white"
             data-testid="button-back"
           >
-            <ArrowLeft className={`w-5 h-5 ${isResidence ? "text-foreground" : "text-white"}`} />
+            <ArrowLeft className="w-5 h-5" />
           </motion.button>
 
           <motion.button
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            className={`absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full ${isResidence ? "border border-border/70 bg-background/85" : "border border-white/25 bg-black/55 shadow-md"}`}
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-background/80 text-foreground shadow-lg shadow-black/10 backdrop-blur-md dark:border-white/15 dark:bg-black/45 dark:text-white"
             data-testid="button-share"
           >
-            <Share2 className={`w-5 h-5 ${isResidence ? "text-foreground" : "text-white"}`} />
+            <Share2 className="w-5 h-5" />
           </motion.button>
+
+          <div className="absolute right-4 top-16">
+            <span className="inline-flex rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-foreground shadow-lg shadow-black/10 backdrop-blur-md dark:border-white/15 dark:bg-black/45 dark:text-white/88">
+              {accountLabel}
+            </span>
+          </div>
+
+          {profile.annonce ? (
+            <div className="absolute inset-x-4 bottom-8 sm:inset-x-6 lg:inset-x-8">
+              <div className="max-w-lg rounded-[24px] border border-border/55 bg-background/74 p-4 text-foreground shadow-[0_18px_60px_-35px_rgba(0,0,0,0.35)] backdrop-blur-md dark:border-white/12 dark:bg-black/32 dark:text-white">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-foreground/65 dark:text-white/65">
+                  {annonceEyebrow}
+                </div>
+                <div className="mt-2 text-lg font-semibold tracking-tight">
+                  {profile.annonce.title}
+                </div>
+                {profile.annonce.body ? (
+                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-foreground/72 dark:text-white/72">
+                    {profile.annonce.body}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
         </div>
 
@@ -396,7 +426,13 @@ export default function ProfileDetail() {
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-            className={`relative ${isResidence ? "-mt-10 pb-10" : "-mt-16 pb-32"}`}
+            className={`relative ${
+              isResidence
+                ? "-mt-10 pb-10"
+                : profile.annonce
+                  ? "pt-4 pb-32"
+                  : "-mt-16 pb-32"
+            }`}
         >
           <div className="mx-auto w-full max-w-[1120px] px-4 sm:px-6 lg:px-8">
             <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -405,9 +441,6 @@ export default function ProfileDetail() {
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-center gap-3">
-                        <span className="rounded-full bg-muted/40 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-foreground/70">
-                          {accountLabel}
-                        </span>
                         {profile.verified && (
                           <Badge variant="secondary" className="gap-1 bg-primary/10 text-primary">
                             <BadgeCheck className="w-3 h-3" />
@@ -563,7 +596,6 @@ export default function ProfileDetail() {
                 {profile.annonce && (
                   <section className="space-y-3 border-b border-border/70 pb-7">
                     <p className="text-[11px] uppercase tracking-[0.18em] text-foreground/60">{annonceEyebrow}</p>
-                    <p className="text-xl font-semibold text-foreground">{profile.annonce.title}</p>
                     {profile.annonce.body && (
                       <p className="max-w-3xl text-sm leading-7 text-foreground/72">{profile.annonce.body}</p>
                     )}
@@ -811,6 +843,41 @@ export default function ProfileDetail() {
                     </p>
                   )}
                 </section>
+
+                {profilePager ? (
+                  <section className="border-b border-border/70 pb-5">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-foreground/60">Feuilleter</p>
+                    <h3 className="mt-1 text-lg font-semibold text-foreground">Passer au profil suivant sans revenir en arriere</h3>
+                    <p className="mt-2 text-sm leading-6 text-foreground/72">
+                      Profil {profilePager.currentIndex + 1} sur {profilePager.total}
+                      {profilePager.source ? ` • source ${profilePager.source}` : ""}
+                    </p>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <Button
+                        variant="outline"
+                        className="h-11 justify-between rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                        disabled={!profilePager.previousId}
+                        onClick={() => goToNeighbor(profilePager.previousId)}
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <ChevronLeft className="h-4 w-4" />
+                          Precedent
+                        </span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="h-11 justify-between rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20"
+                        disabled={!profilePager.nextId}
+                        onClick={() => goToNeighbor(profilePager.nextId)}
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          Suivant
+                          <ChevronRight className="h-4 w-4" />
+                        </span>
+                      </Button>
+                    </div>
+                  </section>
+                ) : null}
               </aside>
             </div>
           </div>
@@ -819,14 +886,26 @@ export default function ProfileDetail() {
 
       <div className={`${isResidence ? "border-t border-border/70 bg-background px-4 py-4" : "fixed bottom-0 left-0 right-0 border-t border-border/70 bg-background/88 p-4 backdrop-blur-xl"}`}>
         <div className="mx-auto flex max-w-[1120px] items-center gap-3 px-0 sm:px-2 lg:px-4">
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-card"
-            data-testid="button-like-profile"
-          >
-            <Heart className="w-5 h-5 text-primary" />
-          </motion.button>
+          {profilePager ? (
+            <Button
+              variant="outline"
+              className="h-12 rounded-full px-4"
+              disabled={!profilePager.previousId}
+              onClick={() => goToNeighbor(profilePager.previousId)}
+            >
+              <ChevronLeft className="mr-1 h-4 w-4" />
+              Prec.
+            </Button>
+          ) : (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-card"
+              data-testid="button-like-profile"
+            >
+              <Heart className="w-5 h-5 text-primary" />
+            </motion.button>
+          )}
 
           <div className="min-w-0 flex-1">
             <Button className="h-12 w-full gap-2 text-base font-medium" onClick={openPreferredContact} data-testid="button-contact">
@@ -837,6 +916,18 @@ export default function ProfileDetail() {
               {hasContact ? `Modalités actives: ${contactSummary}` : "Modalités de contact non activées pour le moment"}
             </p>
           </div>
+
+          {profilePager ? (
+            <Button
+              variant="outline"
+              className="h-12 rounded-full px-4"
+              disabled={!profilePager.nextId}
+              onClick={() => goToNeighbor(profilePager.nextId)}
+            >
+              Suiv.
+              <ChevronRight className="ml-1 h-4 w-4" />
+            </Button>
+          ) : null}
         </div>
       </div>
     </div>

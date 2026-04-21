@@ -157,14 +157,14 @@ export default function EventsPage() {
   return (
     <div className="min-h-screen bg-background">
       <SeoHead
-        title="Évènements privés et soirées premium"
-        description="Retrouve les évènements privés, soirées premium et rencontres sélectionnées proposés sur NIXYAH."
+        title="Évènements publiés et lieux privés"
+        description="Retrouve les évènements, soirées, anniversaires et rendez-vous organisés publiés sur NIXYAH, avec leurs informations pratiques et conditions d'accès."
         canonicalPath="/events"
         keywords={[
-          "évènements privés adultes",
-          "soirées premium francophones",
-          "agenda évènements privés",
-          "rencontres sélectionnées",
+          "évènements privés publiés",
+          "soirées et anniversaires",
+          "agenda évènements à venir",
+          "lieux privés et rendez-vous organisés",
         ]}
         structuredData={eventStructuredData}
       />
@@ -185,8 +185,8 @@ export default function EventsPage() {
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 {lang === "en"
-                  ? "Private nights, meetings and curated experiences."
-                  : "Soirées privées, rencontres et expériences sélectionnées."}
+                  ? "Published nights, birthdays and organized gatherings."
+                  : "Soirées, anniversaires et rassemblements organisés publiés."}
               </p>
             </div>
             <div className="hidden rounded-full border border-border bg-card/70 px-3 py-1.5 text-xs text-muted-foreground sm:block">
