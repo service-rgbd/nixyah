@@ -37,9 +37,10 @@ router.post("/subscribe", requireAuth, pushSubscriptionLimiter as any, async (re
 
     const { endpoint, keys, platform, token } = parsedBody.data;
     const normalizedPlatform = String(platform ?? "web");
-    const subscriptionEndpoint = normalizedPlatform === "expo" ? String(token ?? endpoint ?? "") : String(endpoint ?? "");
-    const p256dh = normalizedPlatform === "expo" ? "expo" : String(keys?.p256dh ?? "");
-    const auth = normalizedPlatform === "expo" ? "expo" : String(keys?.auth ?? "");
+    const usesTokenEndpoint = normalizedPlatform === "expo" || normalizedPlatform === "android-fcm";
+    const subscriptionEndpoint = usesTokenEndpoint ? String(token ?? endpoint ?? "") : String(endpoint ?? "");
+    const p256dh = usesTokenEndpoint ? normalizedPlatform : String(keys?.p256dh ?? "");
+    const auth = usesTokenEndpoint ? normalizedPlatform : String(keys?.auth ?? "");
 
     if (!subscriptionEndpoint || !p256dh || !auth) {
       return res.status(400).json({ error: "Invalid subscription payload" });

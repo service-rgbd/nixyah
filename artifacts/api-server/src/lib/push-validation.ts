@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { nonEmptyTrimmedString, safeUrlString } from "./validation.js";
 
-const pushPlatformSchema = z.enum(["web", "expo"]);
+const pushPlatformSchema = z.enum(["web", "expo", "android-fcm"]);
 
 const subscribeBodyBaseSchema = z.object({
   endpoint: z.string().trim().max(4096).optional(),
@@ -18,9 +18,9 @@ const subscribeBodyBaseSchema = z.object({
 
 export const subscribeBodySchema = subscribeBodyBaseSchema.superRefine((value, ctx) => {
   const platform = value.platform ?? "web";
-  if (platform === "expo") {
+  if (platform === "expo" || platform === "android-fcm") {
     if (!value.token && !value.endpoint) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Token expo requis" });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Token push requis" });
     }
     return;
   }
@@ -40,7 +40,20 @@ export const subscribeBodySchema = subscribeBodyBaseSchema.superRefine((value, c
 });
 
 export const unsubscribeBodySchema = z.object({
-  endpoint: safeUrlString,
+  endpoint: z.string().trim().max(4096),
+  platform: pushPlatformSchema.optional(),
+}).superRefine((value, ctx) => {
+  const platform = value.platform ?? "web";
+  if (platform === "expo" || platform === "android-fcm") {
+    if (!value.endpoint) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Token push requis" });
+    }
+    return;
+  }
+
+  if (!safeUrlString.safeParse(value.endpoint).success) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Endpoint de souscription invalide" });
+  }
 });
 
 export const sendPushBodySchema = z.object({
