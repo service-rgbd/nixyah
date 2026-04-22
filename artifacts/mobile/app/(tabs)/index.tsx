@@ -323,10 +323,10 @@ export default function HomeScreen() {
         .slice(0, 6)
     );
   }, [quickDishes]);
-  // Content area already excludes the tab bar — bottom:0 = flush above nav bar
+  // The tab bar now reserves its own layout space, so this panel can sit flush.
   const panelHeight = compactHome ? 218 : 234;
   const panelBottomOffset = 0;
-  const heroBottomReserve = panelHeight + 4;
+  const heroBottomReserve = panelHeight + panelBottomOffset + 8;
 
   const onlineCount = chefs.filter((chef) => chef.isOnline).length;
 

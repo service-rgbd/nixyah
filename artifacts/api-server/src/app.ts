@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import router from "./routes";
+import wellKnownRouter from "./routes/well-known.js";
 
 const app: Express = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -72,6 +73,7 @@ app.use(globalLimiter as any);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(wellKnownRouter);
 
 // Apply a stricter limiter for auth routes (prevent brute-force)
 const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 6, standardHeaders: true, legacyHeaders: false, message: { error: "TooManyRequests", message: "Trop de requêtes, réessayez plus tard" } });

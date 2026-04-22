@@ -24,6 +24,8 @@ import {
 import { notifyUsers } from "../lib/notifications.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
 import { maybeGrantReferralReward } from "../lib/fulfillment.js";
+import { expirePendingMealOrders, hasOrderPendingWindowExpired } from "../lib/order-window.js";
+import { notifyChefFollowersAboutPublication } from "../lib/chef-followers.js";
 
 const router = express.Router();
 
@@ -170,6 +172,7 @@ const CHEF_ORDER_TRANSITIONS: Record<string, string[]> = {
   preparing: ["ready"],
   ready: [],
   delivered: [],
+  cancelled: [],
 };
 
 const CHEF_ORDER_NOTIFICATIONS: Record<string, { title: string; message: string }> = {
@@ -186,6 +189,17 @@ const CHEF_ORDER_NOTIFICATIONS: Record<string, { title: string; message: string 
     message: "Votre commande est prete. La cuisiniere peut maintenant lancer la recherche d'un livreur.",
   },
 };
+
+function hasNotableDishUpdate(previousDish: typeof dishesTable.$inferSelect, updatedDish: typeof dishesTable.$inferSelect) {
+  return (
+    previousDish.name !== updatedDish.name ||
+    previousDish.description !== updatedDish.description ||
+    normalizeDiscountPercent(previousDish.discountPercent) !== normalizeDiscountPercent(updatedDish.discountPercent) ||
+    sanitizeDiscountLabel(previousDish.discountLabel) !== sanitizeDiscountLabel(updatedDish.discountLabel) ||
+    Boolean(previousDish.isPopular) !== Boolean(updatedDish.isPopular) ||
+    (previousDish.imageUrl ?? null) !== (updatedDish.imageUrl ?? null)
+  );
+}
 
 // GET /api/chef/:id/dishes - Get dishes for a specific chef
 router.get("/:id/dishes", async (req, res) => {
@@ -234,11 +248,14 @@ router.get("/:id/stats", requireChef, async (req: AuthRequest, res) => {
 
     const profileId = chefProfile[0].id;
 
+    await expirePendingMealOrders({ chefProfileId: profileId });
+
     // Get total orders
     const totalOrders = await db
       .select()
       .from(ordersTable)
       .where(eq(ordersTable.chefProfileId, profileId));
+    const billableOrders = totalOrders.filter((order) => order.status !== "cancelled");
 
     // Get reviews
     const reviews = await db
@@ -251,18 +268,18 @@ router.get("/:id/stats", requireChef, async (req: AuthRequest, res) => {
       .where(eq(complaintsTable.chefProfileId, profileId));
 
     // Calculate stats
-    const totalRevenue = totalOrders.reduce((sum, order) => sum + order.total, 0);
+    const totalRevenue = billableOrders.reduce((sum, order) => sum + order.total, 0);
     const averageRating = reviews.length > 0 
       ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length 
       : 0;
-    const completionRate = totalOrders.length > 0
-      ? (totalOrders.filter((o) => o.status === "delivered").length / totalOrders.length) * 100
+    const completionRate = billableOrders.length > 0
+      ? (billableOrders.filter((o) => o.status === "delivered").length / billableOrders.length) * 100
       : 0;
 
     // This month stats
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthOrders = totalOrders.filter((o) => new Date(o.createdAt) >= monthStart);
+    const monthOrders = billableOrders.filter((o) => new Date(o.createdAt) >= monthStart);
     const monthRevenue = monthOrders.reduce((sum, o) => sum + o.total, 0);
     const breakdown = {
       pending: totalOrders.filter((o) => o.status === "pending").length,
@@ -270,22 +287,23 @@ router.get("/:id/stats", requireChef, async (req: AuthRequest, res) => {
       preparing: totalOrders.filter((o) => o.status === "preparing").length,
       ready: totalOrders.filter((o) => o.status === "ready").length,
       delivered: totalOrders.filter((o) => o.status === "delivered").length,
+      cancelled: totalOrders.filter((o) => o.status === "cancelled").length,
     };
     const complaintBreakdown = complaints.reduce<Record<string, number>>((accumulator, complaint) => {
       accumulator[complaint.category] = (accumulator[complaint.category] ?? 0) + 1;
       return accumulator;
     }, {});
-    const freeDeliveryOrders = totalOrders.filter((order) => order.freeDeliveryApplied).length;
-    const referralOrders = totalOrders.filter((order) => order.referralCreditUsed).length;
-    const deliveryRevenue = totalOrders.reduce((sum, order) => sum + Number(order.deliveryFee ?? 0), 0);
+    const freeDeliveryOrders = billableOrders.filter((order) => order.freeDeliveryApplied).length;
+    const referralOrders = billableOrders.filter((order) => order.referralCreditUsed).length;
+    const deliveryRevenue = billableOrders.reduce((sum, order) => sum + Number(order.deliveryFee ?? 0), 0);
 
     return res.json({
-      totalOrders: totalOrders.length,
+      totalOrders: billableOrders.length,
       totalRevenue,
       averageRating: Number(averageRating.toFixed(1)),
       completionRate: Number(completionRate.toFixed(0)),
       activeOrders: breakdown.accepted + breakdown.preparing,
-      averageBasket: totalOrders.length > 0 ? Number((totalRevenue / totalOrders.length).toFixed(0)) : 0,
+      averageBasket: billableOrders.length > 0 ? Number((totalRevenue / billableOrders.length).toFixed(0)) : 0,
       breakdown,
       thisMonth: {
         orders: monthOrders.length,
@@ -325,7 +343,7 @@ router.get("/notifications/list", requireAuth, async (req: AuthRequest, res) => 
     return res.json({
       notifications: notifications.map((n) => ({
         id: String(n.id),
-        type: n.type,
+          type: n.type,
         title: n.title,
         message: n.message,
         orderId: n.orderId ? String(n.orderId) : null,
@@ -344,6 +362,8 @@ router.get("/notifications/list", requireAuth, async (req: AuthRequest, res) => 
 router.get("/orders", requireChef, async (req: AuthRequest, res) => {
   try {
     const chefProfileId = req.chefProfileId!;
+    await expirePendingMealOrders({ chefProfileId });
+
     const rows = await db
       .select()
       .from(ordersTable)
@@ -386,6 +406,14 @@ router.patch("/orders/:orderId/status", requireOperationalChef, async (req: Auth
 
     if (!CHEF_ORDER_TRANSITIONS[order.status]?.includes(nextStatus)) {
       return res.status(400).json({ error: "BadRequest", message: "Transition de statut non autorisee" });
+    }
+
+    if (order.status === "pending" && nextStatus === "accepted" && hasOrderPendingWindowExpired(order.createdAt)) {
+      await expirePendingMealOrders({ orderIds: [order.id] });
+      return res.status(409).json({
+        error: "AcceptanceWindowExpired",
+        message: "Cette commande ne peut plus etre acceptee: la fenetre de 5 minutes est depassee.",
+      });
     }
 
     const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
@@ -465,6 +493,23 @@ router.post("/:id/dishes", requireOperationalChef, async (req: AuthRequest, res:
       imageUrls: normalizedImageUrls,
     }).returning();
 
+    const [chefUser] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
+    try {
+      await notifyChefFollowersAboutPublication({
+        chefProfileId: profileId,
+        title: `${chefUser?.name ?? "Votre cuisinière"} publie un nouveau plat`,
+        message: String(name),
+        data: {
+          type: "chef-dish-created",
+          screen: "chef",
+          chefId: String(profileId),
+          dishId: String(inserted[0].id),
+        },
+      });
+    } catch (notificationError) {
+      console.warn("dish publication notification failed", notificationError);
+    }
+
     return res.status(201).json({ dish: serializeDish(inserted[0]) });
   } catch (error) {
     console.error("Error creating dish:", error);
@@ -515,6 +560,26 @@ router.patch("/:id/dishes/:dishId", requireOperationalChef, async (req: AuthRequ
 
     await db.update(dishesTable).set(updates).where(eq(dishesTable.id, dish.id));
     const [updatedDish] = await db.select().from(dishesTable).where(eq(dishesTable.id, dish.id)).limit(1);
+
+    if (hasNotableDishUpdate(dish, updatedDish)) {
+      const [chefUser] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
+      try {
+        await notifyChefFollowersAboutPublication({
+          chefProfileId: dish.chefProfileId,
+          title: `${chefUser?.name ?? "Votre cuisinière"} met son menu à jour`,
+          message: updatedDish.name,
+          data: {
+            type: "chef-dish-updated",
+            screen: "chef",
+            chefId: String(dish.chefProfileId),
+            dishId: String(updatedDish.id),
+          },
+        });
+      } catch (notificationError) {
+        console.warn("dish update notification failed", notificationError);
+      }
+    }
+
     return res.json({ dish: serializeDish(updatedDish) });
   } catch (error) {
     console.error("Error updating dish:", error);

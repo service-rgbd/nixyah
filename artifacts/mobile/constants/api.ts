@@ -2,6 +2,28 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
+const API_CACHE_STORAGE_PREFIX = "nixyah_api_cache:v1";
+const memoryApiCache = new Map<string, ApiCacheEntry<unknown>>();
+const inFlightApiRequests = new Map<string, Promise<unknown>>();
+
+type ApiCacheEntry<T> = {
+  data: T;
+  updatedAt: number;
+  expiresAt: number;
+};
+
+export type ApiCacheConfig = {
+  ttlMs: number;
+  key?: string;
+  scope?: string;
+  fallbackToStaleOnError?: boolean;
+};
+
+type ApiFetchOptions = RequestInit & {
+  token?: string;
+  cacheConfig?: ApiCacheConfig;
+};
+
 export class ApiError extends Error {
   code?: string;
   body?: any;
@@ -84,37 +106,163 @@ const API_BASE_URL = (() => {
 
 export { API_BASE_URL };
 
+function normalizeRequestMethod(method?: string) {
+  return (method ?? "GET").toUpperCase();
+}
+
+function buildApiCacheStorageKey(path: string, cache: ApiCacheConfig) {
+  const scope = cache.scope?.trim() || "public";
+  const key = cache.key?.trim() || path;
+  return `${API_CACHE_STORAGE_PREFIX}:${scope}:${key}`;
+}
+
+async function readPersistedApiCache<T>(storageKey: string): Promise<ApiCacheEntry<T> | null> {
+  const fromMemory = memoryApiCache.get(storageKey);
+  if (fromMemory) {
+    return fromMemory as ApiCacheEntry<T>;
+  }
+
+  try {
+    const rawValue = await AsyncStorage.getItem(storageKey);
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsed = JSON.parse(rawValue) as ApiCacheEntry<T>;
+    if (!parsed || typeof parsed !== "object" || !("expiresAt" in parsed)) {
+      await AsyncStorage.removeItem(storageKey);
+      return null;
+    }
+
+    memoryApiCache.set(storageKey, parsed as ApiCacheEntry<unknown>);
+    return parsed;
+  } catch (error) {
+    console.warn("Failed to read API cache entry", storageKey, error);
+    return null;
+  }
+}
+
+async function writePersistedApiCache<T>(storageKey: string, entry: ApiCacheEntry<T>) {
+  memoryApiCache.set(storageKey, entry as ApiCacheEntry<unknown>);
+  try {
+    await AsyncStorage.setItem(storageKey, JSON.stringify(entry));
+  } catch (error) {
+    console.warn("Failed to write API cache entry", storageKey, error);
+  }
+}
+
+function isApiCacheEntryFresh(entry: ApiCacheEntry<unknown>, now = Date.now()) {
+  return entry.expiresAt > now;
+}
+
+export async function readApiCache<T>(
+  path: string,
+  cache: ApiCacheConfig,
+  options?: { allowExpired?: boolean }
+): Promise<T | null> {
+  const storageKey = buildApiCacheStorageKey(path, cache);
+  const entry = await readPersistedApiCache<T>(storageKey);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (!options?.allowExpired && !isApiCacheEntryFresh(entry)) {
+    return null;
+  }
+
+  return entry.data;
+}
+
+export async function invalidateApiCache(path: string, cache: Pick<ApiCacheConfig, "key" | "scope"> = {}) {
+  const storageKey = buildApiCacheStorageKey(path, { ttlMs: 0, ...cache });
+  memoryApiCache.delete(storageKey);
+  inFlightApiRequests.delete(storageKey);
+  try {
+    await AsyncStorage.removeItem(storageKey);
+  } catch (error) {
+    console.warn("Failed to invalidate API cache entry", storageKey, error);
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
-  options?: RequestInit & { token?: string }
+  options?: ApiFetchOptions
 ): Promise<T> {
-  const { token, ...rest } = options ?? {};
+  const { token, cacheConfig, ...rest } = options ?? {};
+  const method = normalizeRequestMethod(rest.method);
+  const canUseCache = method === "GET" && Boolean(cacheConfig);
+  const cacheStorageKey = canUseCache && cacheConfig ? buildApiCacheStorageKey(path, cacheConfig) : null;
+  const cachedEntry = cacheStorageKey ? await readPersistedApiCache<T>(cacheStorageKey) : null;
+
+  if (cacheStorageKey && cachedEntry && isApiCacheEntryFresh(cachedEntry)) {
+    return cachedEntry.data;
+  }
+
+  if (cacheStorageKey) {
+    const inFlight = inFlightApiRequests.get(cacheStorageKey);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+  }
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(rest.headers as Record<string, string> ?? {}),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...rest, headers });
-  if (!res.ok) {
-    const rawBody = await res.text().catch(() => "");
-    let body: any = null;
+  const requestPromise = (async () => {
     try {
-      body = rawBody ? JSON.parse(rawBody) : null;
-    } catch {
-      body = rawBody ? { message: rawBody } : null;
+      const res = await fetch(`${API_BASE_URL}${path}`, { ...rest, method, headers });
+      if (!res.ok) {
+        const rawBody = await res.text().catch(() => "");
+        let body: any = null;
+        try {
+          body = rawBody ? JSON.parse(rawBody) : null;
+        } catch {
+          body = rawBody ? { message: rawBody } : null;
+        }
+
+        const fallbackMessage = res.status === 0
+          ? "Erreur réseau"
+          : body?.message ?? body?.error ?? `${res.status} ${res.statusText}`.trim();
+
+        const error = new ApiError(fallbackMessage || `HTTP ${res.status}`);
+        error.code = body?.error;
+        error.body = body;
+        throw error;
+      }
+
+      const data = await res.json();
+
+      if (cacheStorageKey && cacheConfig) {
+        await writePersistedApiCache<T>(cacheStorageKey, {
+          data,
+          updatedAt: Date.now(),
+          expiresAt: Date.now() + cacheConfig.ttlMs,
+        });
+      }
+
+      return data as T;
+    } catch (error) {
+      if (cacheStorageKey && cachedEntry && (cacheConfig?.fallbackToStaleOnError ?? true)) {
+        console.warn("Serving stale API cache after request failure", path, error);
+        return cachedEntry.data;
+      }
+      throw error;
+    } finally {
+      if (cacheStorageKey) {
+        inFlightApiRequests.delete(cacheStorageKey);
+      }
     }
+  })();
 
-    const fallbackMessage = res.status === 0
-      ? "Erreur réseau"
-      : body?.message ?? body?.error ?? `${res.status} ${res.statusText}`.trim();
-
-    const error = new ApiError(fallbackMessage || `HTTP ${res.status}`);
-    error.code = body.error;
-    error.body = body;
-    throw error;
+  if (cacheStorageKey) {
+    inFlightApiRequests.set(cacheStorageKey, requestPromise as Promise<unknown>);
   }
-  return res.json();
+
+  return requestPromise;
 }
 
 // Upload helper: presign -> PUT -> return publicUrl (or key)
@@ -128,7 +276,7 @@ export async function uploadFile({
   fileUri: string;
   filename: string;
   contentType: string;
-  purpose: "avatar" | "story" | "dish";
+  purpose: "avatar" | "story" | "dish" | "courier-document";
   token?: string;
 }) {
   // 1) get presigned url from backend

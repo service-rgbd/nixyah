@@ -1,34 +1,32 @@
-import { Feather, Ionicons } from "@expo/vector-icons";
-import Gradient from "@/components/SafeGradient";
+import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useState } from "react";
+import { Pressable } from "react-native";
 import {
-  ActivityIndicator,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+  AuthAlert,
+  AuthButton,
+  AuthCard,
+  AuthChipGroup,
+  AuthInput,
+  AuthLinkRow,
+  AuthScaffold,
+} from "@/components/auth/AuthUI";
 import Colors from "@/constants/colors";
+import { getPasswordPolicyError, PASSWORD_POLICY_HINT } from "@/constants/password-policy";
 import { useApp } from "@/contexts/AppContext";
 
 const VEHICLES = ["moto", "velo", "voiture"];
-const courierIllustration = require("../../assets/images/courier-delivery-illustration.png");
+const courierHeroVideo = require("../../assets/images/0_Delivery_Food_Delivery_1920x1080.mp4");
 
 export default function RegisterCourierScreen() {
-  const insets = useSafeAreaInsets();
   const { registerCourier } = useApp();
+  const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [referralCode, setReferralCode] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [location, setLocation] = useState("Abidjan");
   const [zone, setZone] = useState("");
   const [vehicleType, setVehicleType] = useState("moto");
@@ -36,26 +34,55 @@ export default function RegisterCourierScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const handleContinue = () => {
+    setError("");
+
+    if (!name.trim()) {
+      setError("Nom requis");
+      return;
+    }
+    if (!email.trim()) {
+      setError("Votre email est requis pour securiser votre compte");
+      return;
+    }
+    setStep(2);
+  };
+
+  const handleSecurityContinue = () => {
+    setError("");
+
+    const passwordError = getPasswordPolicyError(password);
+    if (passwordError) {
+      setError(passwordError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Les mots de passe ne correspondent pas");
+      return;
+    }
+
+    setStep(3);
+  };
+
+  const handleLocationContinue = () => {
+    setError("");
+
+    if (!location.trim()) {
+      setError("La localisation est requise");
+      return;
+    }
+
+    setStep(4);
+  };
+
   const handleSubmit = async () => {
     setError("");
-    if (!name.trim() || !password.trim() || !location.trim()) {
-      setError("Nom, mot de passe et localisation requis");
-      return;
-    }
-    if (!email.trim() && !phone.trim()) {
-      setError("Email ou téléphone requis");
-      return;
-    }
-    if (password.length < 6) {
-      setError("Minimum 6 caractères");
-      return;
-    }
 
     setLoading(true);
     try {
       const result = await registerCourier({
         name: name.trim(),
-        email: email.trim() || undefined,
+        email: email.trim(),
         phone: phone.trim() || undefined,
         referralCode: referralCode.trim() || undefined,
         password,
@@ -63,10 +90,11 @@ export default function RegisterCourierScreen() {
         zone: zone.trim() || undefined,
         vehicleType,
       });
+
       if (result.requiresEmailConfirmation && result.email) {
         router.replace({ pathname: "/auth/confirm", params: { email: result.email } });
       } else {
-        router.replace("/(tabs)");
+        router.replace("/courier/verification");
       }
     } catch (e: any) {
       setError(e.message ?? "Erreur lors de l'inscription");
@@ -76,146 +104,113 @@ export default function RegisterCourierScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <Gradient colors={["#0F766E", "#115E59"]} style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <View style={styles.headerMedia} pointerEvents="none">
-          <Image source={courierIllustration} style={styles.headerMediaImage} resizeMode="cover" />
-          <View style={styles.headerOverlay} />
-        </View>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={20} color="#fff" />
-        </Pressable>
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Devenir livreur</Text>
-          <Text style={styles.headerSub}>Recevez des missions et livrez les commandes Nixyah</Text>
-          <View style={styles.heroIcon}>
-            <Ionicons name="bicycle" size={42} color="#fff" />
-          </View>
-        </View>
-      </Gradient>
+    <AuthScaffold
+      palette={{
+        accent: "#0F766E",
+        accentDark: "#115E59",
+        accentSoft: Colors.light.backgroundTertiary,
+      }}
+      eyebrow="Livreur"
+      title={step === 1 ? "Profil livreur" : step === 2 ? "Mot de passe" : step === 3 ? "Votre zone" : "Véhicule"}
+      subtitle={step === 1 ? "Vos coordonnées." : step === 2 ? "Accès sécurisé." : step === 3 ? "Ville et secteur." : "Mode de livraison."}
+      progress={{ current: step, total: 4 }}
+      onBack={() => (step > 1 ? setStep((current) => current - 1) : router.back())}
+      heroVideoSource={courierHeroVideo}
+      heroOverlayOpacity={0}
+      footer={<AuthLinkRow prompt="Déjà un compte ?" action="Se connecter" onPress={() => router.push("/auth/login")} color="#0F766E" />}
+    >
+      <AuthAlert message={error} />
 
-      <ScrollView style={styles.body} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <View style={styles.form}>
-          {error ? (
-            <View style={styles.errorBox}>
-              <Feather name="alert-circle" size={15} color={Colors.light.error} />
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
+      {step === 1 ? (
+        <AuthCard>
+          <AuthInput label="Nom complet" icon="user" value={name} onChangeText={setName} placeholder="Nom et prénom" autoCapitalize="words" />
+          <AuthInput
+            label="Email"
+            icon="mail"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="email@exemple.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            hint="Email obligatoire pour la connexion securisee et la reinitialisation."
+          />
+          <AuthInput
+            label="Téléphone"
+            icon="phone"
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="+225 ..."
+            keyboardType="phone-pad"
+            hint="Optionnel. Il reste utile pour vos contacts de livraison."
+          />
+          <AuthInput
+            label="Code de parrainage"
+            icon="gift"
+            value={referralCode}
+            onChangeText={setReferralCode}
+            placeholder="Ex: NIXYAH1234"
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
 
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Nom complet</Text>
-            <View style={styles.inputRow}>
-              <Feather name="user" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Nom et prénom" placeholderTextColor={Colors.light.textTertiary} />
-            </View>
-          </View>
+          <AuthButton label="Continuer" onPress={handleContinue} icon="arrow-right" backgroundColor="#0F766E" />
+        </AuthCard>
+      ) : null}
 
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Email</Text>
-            <View style={styles.inputRow}>
-              <Feather name="mail" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="email@exemple.com" placeholderTextColor={Colors.light.textTertiary} autoCapitalize="none" />
-            </View>
-          </View>
-
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Téléphone</Text>
-            <View style={styles.inputRow}>
-              <Feather name="phone" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={styles.input} value={phone} onChangeText={setPhone} placeholder="+225 ..." placeholderTextColor={Colors.light.textTertiary} />
-            </View>
-          </View>
-
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Code de parrainage</Text>
-            <View style={styles.inputRow}>
-              <Feather name="gift" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={styles.input} value={referralCode} onChangeText={setReferralCode} placeholder="Ex: NIXYAH1234" placeholderTextColor={Colors.light.textTertiary} autoCapitalize="characters" autoCorrect={false} />
-            </View>
-          </View>
-
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Mot de passe</Text>
-            <View style={styles.inputRow}>
-              <Feather name="lock" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={[styles.input, { flex: 1 }]} value={password} onChangeText={setPassword} placeholder="Minimum 6 caractères" placeholderTextColor={Colors.light.textTertiary} secureTextEntry={!showPassword} />
+      {step === 2 ? (
+        <AuthCard>
+          <AuthInput
+            label="Mot de passe"
+            icon="lock"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Choisissez un mot de passe fort"
+            secureTextEntry={!showPassword}
+            hint={PASSWORD_POLICY_HINT}
+            trailing={
               <Pressable onPress={() => setShowPassword((prev) => !prev)}>
-                <Feather name={showPassword ? "eye-off" : "eye"} size={16} color={Colors.light.textTertiary} />
+                <Feather name={showPassword ? "eye-off" : "eye"} size={18} color={Colors.light.textTertiary} />
               </Pressable>
-            </View>
-          </View>
+            }
+          />
+          <AuthInput
+            label="Confirmer le mot de passe"
+            icon="shield"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            placeholder="Répétez votre mot de passe"
+            secureTextEntry={!showPassword}
+          />
 
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Localisation</Text>
-            <View style={styles.inputRow}>
-              <Feather name="map-pin" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={styles.input} value={location} onChangeText={setLocation} placeholder="Abidjan" placeholderTextColor={Colors.light.textTertiary} />
-            </View>
-          </View>
+          <AuthButton label="Continuer" onPress={handleSecurityContinue} icon="arrow-right" backgroundColor="#0F766E" />
+        </AuthCard>
+      ) : null}
 
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Zone</Text>
-            <View style={styles.inputRow}>
-              <Feather name="navigation" size={16} color={Colors.light.textTertiary} />
-              <TextInput style={styles.input} value={zone} onChangeText={setZone} placeholder="Cocody, Yopougon..." placeholderTextColor={Colors.light.textTertiary} />
-            </View>
-          </View>
+      {step === 3 ? (
+        <AuthCard>
+          <AuthInput label="Localisation" icon="map-pin" value={location} onChangeText={setLocation} placeholder="Abidjan" />
+          <AuthInput label="Zone" icon="navigation" value={zone} onChangeText={setZone} placeholder="Cocody, Yopougon..." />
 
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Vehicule</Text>
-            <View style={styles.chipsRow}>
-              {VEHICLES.map((vehicle) => (
-                <Pressable key={vehicle} style={[styles.vehicleChip, vehicleType === vehicle && styles.vehicleChipActive]} onPress={() => setVehicleType(vehicle)}>
-                  <Text style={[styles.vehicleChipText, vehicleType === vehicle && styles.vehicleChipTextActive]}>{vehicle}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
+          <AuthButton label="Continuer" onPress={handleLocationContinue} icon="arrow-right" backgroundColor="#0F766E" />
+        </AuthCard>
+      ) : null}
 
-          <Pressable style={[styles.submitBtn, loading && { opacity: 0.7 }]} onPress={handleSubmit} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Créer mon compte livreur</Text>}
-          </Pressable>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      {step === 4 ? (
+        <AuthCard>
+          <AuthChipGroup
+            options={VEHICLES.map((item) => ({
+              key: item,
+              label: item.toUpperCase(),
+              icon: item === "moto" ? "truck" : item === "velo" ? "navigation" : "briefcase",
+            }))}
+            value={vehicleType}
+            onChange={(value) => setVehicleType(String(value))}
+            accentColor="#0F766E"
+          />
+
+          <AuthButton label="Créer mon compte livreur" onPress={handleSubmit} loading={loading} icon="check" backgroundColor="#0F766E" />
+        </AuthCard>
+      ) : null}
+    </AuthScaffold>
   );
 }
-
-const styles = StyleSheet.create({
-  header: { paddingHorizontal: 24, paddingBottom: 28, minHeight: 320, overflow: "hidden" },
-  headerMedia: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  headerMediaImage: {
-    width: "100%",
-    height: "100%",
-  },
-  headerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(7, 64, 59, 0.45)",
-  },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center", marginBottom: 20 },
-  headerContent: {
-    position: "relative",
-    zIndex: 1,
-  },
-  headerTitle: { fontSize: 28, fontFamily: "Poppins_700Bold", color: "#fff" },
-  headerSub: { fontSize: 14, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.88)", marginTop: 6 },
-  heroIcon: { marginTop: 20, width: 88, height: 88, borderRadius: 44, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center" },
-  body: { flex: 1, backgroundColor: Colors.light.background },
-  form: { padding: 24, gap: 16 },
-  errorBox: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#FEF2F2", borderRadius: 12, padding: 12, borderWidth: 1, borderColor: "#FCA5A5" },
-  errorText: { flex: 1, fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.error },
-  fieldGroup: { gap: 8 },
-  label: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
-  inputRow: { flexDirection: "row", alignItems: "center", backgroundColor: Colors.light.backgroundSecondary, borderRadius: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, paddingHorizontal: 14, paddingVertical: 13, gap: 10 },
-  input: { flex: 1, fontSize: 14, fontFamily: "Poppins_400Regular", color: Colors.light.text, padding: 0 },
-  chipsRow: { flexDirection: "row", gap: 10 },
-  vehicleChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: Colors.light.backgroundSecondary, borderWidth: 1, borderColor: Colors.light.cardBorder },
-  vehicleChipActive: { backgroundColor: "#0F766E", borderColor: "#0F766E" },
-  vehicleChipText: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
-  vehicleChipTextActive: { color: "#fff" },
-  submitBtn: { backgroundColor: "#0F766E", borderRadius: 16, paddingVertical: 16, alignItems: "center", marginTop: 8 },
-  submitBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#fff" },
-});

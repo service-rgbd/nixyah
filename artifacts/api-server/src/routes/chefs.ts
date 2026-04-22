@@ -1,10 +1,81 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { usersTable, chefProfilesTable, dishesTable, storiesTable } from "@workspace/db/schema";
-import { eq } from "drizzle-orm";
+import * as dbSchema from "../../../../lib/db/src/schema/index.js";
+import { and, eq } from "drizzle-orm";
 import { getDishEffectivePrice, getDishSavingsAmount, normalizeChefMenuCategory, normalizeDiscountPercent, sanitizeDiscountLabel } from "../lib/menu.js";
+import { requireClient, type AuthRequest } from "../middlewares/auth.js";
 
 const router: IRouter = Router();
+const { usersTable, chefProfilesTable, dishesTable, storiesTable, chefFollowersTable } = dbSchema;
+
+router.get("/chefs/favorites", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const followers = await db
+      .select({ chefProfileId: chefFollowersTable.chefProfileId })
+      .from(chefFollowersTable)
+      .where(eq(chefFollowersTable.clientUserId, req.userId!));
+
+    res.json({
+      chefIds: followers.map((row) => String(row.chefProfileId)),
+    });
+  } catch (err) {
+    console.error("list chef favorites error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/chefs/:id/favorite", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const chefId = Number(req.params.id);
+    if (!Number.isInteger(chefId) || chefId <= 0) {
+      res.status(400).json({ error: "BadRequest", message: "Cuisinière invalide" });
+      return;
+    }
+
+    const [chefProfile] = await db.select({ id: chefProfilesTable.id }).from(chefProfilesTable).where(eq(chefProfilesTable.id, chefId)).limit(1);
+    if (!chefProfile) {
+      res.status(404).json({ error: "NotFound", message: "Cuisinière introuvable" });
+      return;
+    }
+
+    const [existing] = await db
+      .select({ id: chefFollowersTable.id })
+      .from(chefFollowersTable)
+      .where(and(eq(chefFollowersTable.clientUserId, req.userId!), eq(chefFollowersTable.chefProfileId, chefId)))
+      .limit(1);
+
+    if (!existing) {
+      await db.insert(chefFollowersTable).values({
+        clientUserId: req.userId!,
+        chefProfileId: chefId,
+      });
+    }
+
+    res.status(201).json({ chefId: String(chefId), isFavorite: true });
+  } catch (err) {
+    console.error("favorite chef error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.delete("/chefs/:id/favorite", requireClient, async (req: AuthRequest, res) => {
+  try {
+    const chefId = Number(req.params.id);
+    if (!Number.isInteger(chefId) || chefId <= 0) {
+      res.status(400).json({ error: "BadRequest", message: "Cuisinière invalide" });
+      return;
+    }
+
+    await db
+      .delete(chefFollowersTable)
+      .where(and(eq(chefFollowersTable.clientUserId, req.userId!), eq(chefFollowersTable.chefProfileId, chefId)));
+
+    res.json({ chefId: String(chefId), isFavorite: false });
+  } catch (err) {
+    console.error("unfavorite chef error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
 
 router.get("/chefs", async (req, res) => {
   try {

@@ -1,12 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
   Linking,
+  LayoutChangeEvent,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -19,6 +21,7 @@ import MapView, { Marker, Polyline, type LatLng, type Region } from "react-nativ
 import Colors from "@/constants/colors";
 import { apiFetch } from "@/constants/api";
 import { saveDeliveryAddress } from "@/constants/delivery-address";
+import { shouldUseNativeMaps } from "@/constants/native-maps";
 import { useApp } from "@/contexts/AppContext";
 import { ApiError } from "@/constants/api";
 
@@ -56,8 +59,32 @@ type DeliveryJobDetail = {
   } | null;
 };
 
+type RouteSnapshot = {
+  coordinates: LatLng[];
+  distanceKm: number | null;
+  durationMinutes: number | null;
+};
+
 const DELIVERY_JOB_REFRESH_INTERVAL_MS = 15000;
 const LIVE_DELIVERY_JOB_STATUSES: DeliveryJobDetail["status"][] = ["broadcasting", "available", "accepted", "picked_up", "on_the_way"];
+const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim() || "";
+const DIRECTIONS_PROVIDER = (process.env.EXPO_PUBLIC_DIRECTIONS_PROVIDER?.trim().toLowerCase() || (MAPBOX_ACCESS_TOKEN ? "mapbox" : "osrm")) as "mapbox" | "osrm";
+const MAPBOX_DIRECTIONS_PROFILE = process.env.EXPO_PUBLIC_MAPBOX_DIRECTIONS_PROFILE?.trim() || "driving-traffic";
+const OSRM_API_BASE_URL = process.env.EXPO_PUBLIC_DIRECTIONS_API_URL?.trim() || "https://router.project-osrm.org";
+const OSRM_DIRECTIONS_PROFILE = process.env.EXPO_PUBLIC_DIRECTIONS_PROFILE?.trim() || "driving";
+
+function normalizeTelemetryMetric(value: number | null | undefined, max: number) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  const numericValue = Number(value);
+  if (numericValue < 0 || numericValue > max) {
+    return null;
+  }
+
+  return numericValue;
+}
 
 function formatDistanceKm(distanceKm: number | null) {
   if (distanceKm === null) {
@@ -188,6 +215,57 @@ function formatEta(distanceKm: number | null, speedKmPerHour: number): string | 
   return `${minutes} min`;
 }
 
+async function fetchRoadRoute(origin: LatLng, destination: LatLng): Promise<RouteSnapshot | null> {
+  const query = new URLSearchParams({
+    overview: "full",
+    geometries: "geojson",
+    alternatives: "false",
+    steps: "false",
+  });
+
+  let url: string;
+  if (DIRECTIONS_PROVIDER === "mapbox" && MAPBOX_ACCESS_TOKEN) {
+    query.set("access_token", MAPBOX_ACCESS_TOKEN);
+    url = `https://api.mapbox.com/directions/v5/mapbox/${MAPBOX_DIRECTIONS_PROFILE}/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?${query.toString()}`;
+  } else {
+    url = `${OSRM_API_BASE_URL}/route/v1/${OSRM_DIRECTIONS_PROFILE}/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?${query.toString()}`;
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Directions API ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const route = payload?.routes?.[0];
+  const coordinates = Array.isArray(route?.geometry?.coordinates)
+    ? route.geometry.coordinates
+        .map((point: unknown) => {
+          if (!Array.isArray(point) || point.length < 2) {
+            return null;
+          }
+
+          const [longitude, latitude] = point;
+          if (typeof latitude !== "number" || typeof longitude !== "number") {
+            return null;
+          }
+
+          return { latitude, longitude };
+        })
+        .filter((point: LatLng | null): point is LatLng => point !== null)
+    : [];
+
+  if (coordinates.length < 2) {
+    return null;
+  }
+
+  return {
+    coordinates,
+    distanceKm: typeof route.distance === "number" ? route.distance / 1000 : null,
+    durationMinutes: typeof route.duration === "number" ? Math.max(1, Math.round(route.duration / 60)) : null,
+  };
+}
+
 function formatJobClock(value?: string | null) {
   if (!value) {
     return "--:--";
@@ -245,8 +323,15 @@ export default function DeliveryJobScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [updatingClientLocation, setUpdatingClientLocation] = useState(false);
   const [jobAccessBlocked, setJobAccessBlocked] = useState(false);
+  const [roadRoute, setRoadRoute] = useState<RouteSnapshot | null>(null);
+  const [isMapFullscreen, setIsMapFullscreen] = useState(false);
+  const mapRef = useRef<MapView | null>(null);
+  const fullscreenMapRef = useRef<MapView | null>(null);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const [mapCardOffsetY, setMapCardOffsetY] = useState(0);
   const isCourier = user?.type === "courier";
   const isClient = user?.type === "client";
+  const nativeMapsEnabled = shouldUseNativeMaps();
 
   const loadJob = async () => {
     if (!token || !jobId || jobAccessBlocked) return;
@@ -306,9 +391,9 @@ export default function DeliveryJobScreen() {
           body: JSON.stringify({
             latitude: nextPoint.latitude,
             longitude: nextPoint.longitude,
-            accuracy: position.coords.accuracy,
-            heading: position.coords.heading,
-            speed: position.coords.speed,
+            accuracy: normalizeTelemetryMetric(position.coords.accuracy, 10000),
+            heading: normalizeTelemetryMetric(position.coords.heading, 360),
+            speed: normalizeTelemetryMetric(position.coords.speed, 300),
           }),
         });
       } catch (error) {
@@ -327,7 +412,7 @@ export default function DeliveryJobScreen() {
     };
   }, [isCourier, job, token]);
 
-  const canClientEditLocation = Boolean(isClient && job && !["delivered", "cancelled"].includes(job.status));
+  const canClientEditLocation = Boolean(isClient && job && ["broadcasting", "available", "accepted"].includes(job.status));
 
   const restaurantPoint = useMemo(
     () => toPoint(job?.restaurantLatitude, job?.restaurantLongitude),
@@ -342,13 +427,61 @@ export default function DeliveryJobScreen() {
     () => toPoint(job?.latestLocation?.latitude, job?.latestLocation?.longitude) ?? (isCourier ? deviceLocation : null),
     [deviceLocation, isCourier, job?.latestLocation?.latitude, job?.latestLocation?.longitude],
   );
+  const routeEndpoints = useMemo(() => {
+    if (!job) {
+      return null;
+    }
+
+    if (job.status === "accepted" && courierPoint && restaurantPoint) {
+      return { origin: courierPoint, destination: restaurantPoint };
+    }
+
+    if (["picked_up", "on_the_way"].includes(job.status) && courierPoint && clientPoint) {
+      return { origin: courierPoint, destination: clientPoint };
+    }
+
+    if (restaurantPoint && clientPoint) {
+      return { origin: restaurantPoint, destination: clientPoint };
+    }
+
+    return null;
+  }, [clientPoint, courierPoint, job, restaurantPoint]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!routeEndpoints) {
+      setRoadRoute(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void fetchRoadRoute(routeEndpoints.origin, routeEndpoints.destination)
+      .then((snapshot) => {
+        if (!cancelled) {
+          setRoadRoute(snapshot);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("Failed to fetch road route:", error);
+          setRoadRoute(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeEndpoints]);
+
   const historyPoints = useMemo(
     () => locations.map((location) => ({ latitude: location.latitude, longitude: location.longitude })),
     [locations],
   );
   const activeLegPoints = useMemo(
-    () => getActiveLeg(job, courierPoint, restaurantPoint, clientPoint),
-    [clientPoint, courierPoint, job, restaurantPoint],
+    () => roadRoute?.coordinates.length ? roadRoute.coordinates : getActiveLeg(job, courierPoint, restaurantPoint, clientPoint),
+    [clientPoint, courierPoint, job, restaurantPoint, roadRoute],
   );
   const missionPoints = useMemo(
     () => dedupePoints([restaurantPoint, clientPoint]),
@@ -356,6 +489,10 @@ export default function DeliveryJobScreen() {
   );
   const mapRegion = useMemo(
     () => buildMapRegion(dedupePoints([...missionPoints, ...historyPoints, ...activeLegPoints, courierPoint])),
+    [activeLegPoints, courierPoint, historyPoints, missionPoints],
+  );
+  const mapTracePoints = useMemo(
+    () => dedupePoints([...activeLegPoints, ...historyPoints, ...missionPoints, courierPoint]),
     [activeLegPoints, courierPoint, historyPoints, missionPoints],
   );
   const itinerary = useMemo(() => {
@@ -373,6 +510,8 @@ export default function DeliveryJobScreen() {
     const courierToRestaurantDistance = getDistanceKm(courierPoint, restaurantPoint);
     const courierToClientDistance = getDistanceKm(courierPoint, clientPoint);
     const restaurantToClientDistance = getDistanceKm(restaurantPoint, clientPoint);
+    const routeDistanceLabel = formatDistanceKm(roadRoute?.distanceKm ?? null);
+    const routeEtaLabel = roadRoute?.durationMinutes != null ? `${roadRoute.durationMinutes} min` : null;
 
     if (job.status === "accepted") {
       return {
@@ -380,8 +519,8 @@ export default function DeliveryJobScreen() {
         route: "Rejoindre le restaurant",
         origin: "Votre position",
         destination: job.restaurantName,
-        distance: formatDistanceKm(courierToRestaurantDistance),
-        eta: formatEta(courierToRestaurantDistance, 22),
+        distance: roadRoute ? routeDistanceLabel : formatDistanceKm(courierToRestaurantDistance),
+        eta: routeEtaLabel ?? formatEta(courierToRestaurantDistance, 22),
       };
     }
 
@@ -391,8 +530,8 @@ export default function DeliveryJobScreen() {
         route: "Livrer la cliente",
         origin: job.restaurantName,
         destination: job.clientName,
-        distance: formatDistanceKm(courierToClientDistance),
-        eta: formatEta(courierToClientDistance, 26),
+        distance: roadRoute ? routeDistanceLabel : formatDistanceKm(courierToClientDistance),
+        eta: routeEtaLabel ?? formatEta(courierToClientDistance, 26),
       };
     }
 
@@ -404,47 +543,7 @@ export default function DeliveryJobScreen() {
       distance: formatDistanceKm(restaurantToClientDistance),
       eta: formatEta(restaurantToClientDistance, 24),
     };
-  }, [courierPoint, job, pendingClientPoint, restaurantPoint]);
-
-  const navigationTarget = useMemo(() => {
-    if (!job) {
-      return null;
-    }
-
-    if (isCourier && job.status === "accepted" && restaurantPoint) {
-      return {
-        point: restaurantPoint,
-        label: job.restaurantName,
-        caption: "Ouvrir le trajet vers le restaurant",
-      };
-    }
-
-    if (isCourier && ["picked_up", "on_the_way"].includes(job.status) && clientPoint) {
-      return {
-        point: clientPoint,
-        label: job.clientName,
-        caption: "Ouvrir le trajet vers la cliente",
-      };
-    }
-
-    if (clientPoint) {
-      return {
-        point: clientPoint,
-        label: job.clientName,
-        caption: "Ouvrir le point de livraison",
-      };
-    }
-
-    if (restaurantPoint) {
-      return {
-        point: restaurantPoint,
-        label: job.restaurantName,
-        caption: "Ouvrir le point du restaurant",
-      };
-    }
-
-    return null;
-  }, [clientPoint, isCourier, job, restaurantPoint]);
+  }, [courierPoint, job, pendingClientPoint, restaurantPoint, roadRoute]);
 
   const hasPendingClientChange = useMemo(() => {
     if (!pendingClientPoint) {
@@ -519,22 +618,165 @@ export default function DeliveryJobScreen() {
     }
   };
 
-  const openNavigation = async () => {
-    if (!navigationTarget) {
+  const focusEmbeddedMap = () => {
+    if (!nativeMapsEnabled) {
+      Alert.alert("Carte Android désactivée", "La carte native Android est temporairement masquée dans cette version pour éviter les crashs.");
       return;
     }
 
-    const { point, label } = navigationTarget;
-    const encodedLabel = encodeURIComponent(label);
-    const url = Platform.OS === "ios"
-      ? `http://maps.apple.com/?daddr=${point.latitude},${point.longitude}&q=${encodedLabel}`
-      : `geo:0,0?q=${point.latitude},${point.longitude}(${encodedLabel})`;
-
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert("Navigation indisponible", "Impossible d'ouvrir l'application de cartographie.");
+    if (!mapRegion) {
+      Alert.alert("Carte indisponible", "La carte s'affiche dès que le restaurant et la destination ont des coordonnées exploitables.");
+      return;
     }
+
+    scrollRef.current?.scrollTo({ y: Math.max(0, mapCardOffsetY - 24), animated: true });
+    if (mapTracePoints.length > 1) {
+      mapRef.current?.fitToCoordinates(mapTracePoints, {
+        edgePadding: { top: 80, right: 60, bottom: 80, left: 60 },
+        animated: true,
+      });
+      return;
+    }
+
+    mapRef.current?.animateToRegion(mapRegion, 400);
+  };
+
+  const focusFullscreenMap = () => {
+    if (!nativeMapsEnabled || !mapRegion) {
+      return;
+    }
+
+    if (mapTracePoints.length > 1) {
+      fullscreenMapRef.current?.fitToCoordinates(mapTracePoints, {
+        edgePadding: { top: 110, right: 70, bottom: 110, left: 70 },
+        animated: true,
+      });
+      return;
+    }
+
+    fullscreenMapRef.current?.animateToRegion(mapRegion, 400);
+  };
+
+  const handleMapCardLayout = (event: LayoutChangeEvent) => {
+    setMapCardOffsetY(event.nativeEvent.layout.y);
+  };
+
+  useEffect(() => {
+    if (!nativeMapsEnabled || !mapRegion) {
+      return;
+    }
+
+    const fitInlineMap = () => {
+      if (mapTracePoints.length > 1) {
+        mapRef.current?.fitToCoordinates(mapTracePoints, {
+          edgePadding: { top: 80, right: 60, bottom: 80, left: 60 },
+          animated: true,
+        });
+      } else {
+        mapRef.current?.animateToRegion(mapRegion, 250);
+      }
+    };
+
+    const fitFullscreenMap = () => {
+      if (!isMapFullscreen) {
+        return;
+      }
+
+      if (mapTracePoints.length > 1) {
+        fullscreenMapRef.current?.fitToCoordinates(mapTracePoints, {
+          edgePadding: { top: 110, right: 70, bottom: 110, left: 70 },
+          animated: true,
+        });
+      } else {
+        fullscreenMapRef.current?.animateToRegion(mapRegion, 250);
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      fitInlineMap();
+      fitFullscreenMap();
+    }, 180);
+
+    return () => clearTimeout(timeoutId);
+  }, [isMapFullscreen, mapRegion, mapTracePoints, nativeMapsEnabled]);
+
+  const renderMissionMap = (options?: { fullscreen?: boolean }) => {
+    const fullscreen = options?.fullscreen ?? false;
+    const currentMapRef = fullscreen ? fullscreenMapRef : mapRef;
+
+    if (!mapRegion || !nativeMapsEnabled) {
+      return (
+        <View style={styles.mapEmptyState}>
+          <Feather name="map-pin" size={28} color={Colors.light.tint} />
+          <Text style={styles.mapEmptyTitle}>{mapRegion ? "Carte Android désactivée" : "Carte indisponible"}</Text>
+          <Text style={styles.mapEmptyText}>
+            {mapRegion
+              ? "Le trajet reste disponible, mais la carte native Android est temporairement masquée dans cette version pour éviter les crashs."
+              : "Les coordonnees du trajet ne sont pas encore disponibles pour cette mission."}
+          </Text>
+        </View>
+      );
+    }
+
+    return (
+      <MapView
+        ref={currentMapRef}
+        style={fullscreen ? styles.fullscreenMap : styles.map}
+        initialRegion={mapRegion}
+        showsUserLocation={Boolean(isCourier || isClient)}
+        onPress={canClientEditLocation ? (event) => {
+          setIsEditingClientPoint(true);
+          setPendingClientPoint(event.nativeEvent.coordinate);
+        } : undefined}
+      >
+        {missionPoints.length > 1 ? (
+          <Polyline
+            coordinates={missionPoints}
+            strokeColor={Colors.light.terracotta}
+            strokeWidth={fullscreen ? 4 : 3}
+            lineDashPattern={[8, 8]}
+          />
+        ) : null}
+
+        {activeLegPoints.length > 1 ? (
+          <Polyline
+            coordinates={activeLegPoints}
+            strokeColor="#0F766E"
+            strokeWidth={fullscreen ? 7 : 5}
+          />
+        ) : null}
+
+        {historyPoints.length > 1 ? (
+          <Polyline
+            coordinates={historyPoints}
+            strokeColor={Colors.light.tint}
+            strokeWidth={fullscreen ? 5 : 4}
+          />
+        ) : null}
+
+        {restaurantPoint ? (
+          <Marker coordinate={restaurantPoint} title={job?.restaurantName ?? "Restaurant"} description={job?.restaurantAddress} pinColor={Colors.light.tint} />
+        ) : null}
+
+        {clientPoint ? (
+          <Marker
+            coordinate={clientPoint}
+            title={job?.clientName ?? "Client"}
+            description={job?.deliveryAddress}
+            pinColor="#0F766E"
+            draggable={canClientEditLocation}
+            onDragEnd={canClientEditLocation ? (event) => {
+              setIsEditingClientPoint(true);
+              setPendingClientPoint(event.nativeEvent.coordinate);
+            } : undefined}
+          />
+        ) : null}
+
+        {courierPoint ? (
+          <Marker coordinate={courierPoint} title={job?.courier?.name ?? "Livreur"} description={job?.latestLocation?.createdAt ? `Position mise a jour ${new Date(job.latestLocation.createdAt).toLocaleTimeString()}` : "Position en direct"} pinColor={Colors.light.warning} />
+        ) : null}
+      </MapView>
+    );
   };
 
   const callPhoneNumber = async (phone?: string | null, contactLabel?: string) => {
@@ -554,9 +796,31 @@ export default function DeliveryJobScreen() {
     if (!token || !job) return;
     setActionLoading(true);
     try {
+      let body: string | undefined;
+      if (action === "complete") {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== "granted") {
+          Alert.alert("Permission requise", "La position du livreur est requise pour confirmer la remise au bon endroit.");
+          return;
+        }
+
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const nextPoint = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+        setDeviceLocation(nextPoint);
+        body = JSON.stringify({
+          latitude: nextPoint.latitude,
+          longitude: nextPoint.longitude,
+          accuracy: normalizeTelemetryMetric(position.coords.accuracy, 10000),
+        });
+      }
+
       await apiFetch(`/delivery/jobs/${job.id}/${action === "pickup" ? "pickup" : "complete"}`, {
         method: "POST",
         token,
+        body,
       });
       await loadJob();
     } catch (error: any) {
@@ -596,7 +860,7 @@ export default function DeliveryJobScreen() {
           <ActivityIndicator color={Colors.light.tint} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}>
+        <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: Platform.OS === "web" ? 120 : 100 }}>
           <View style={styles.summaryHeroCard}>
             <View style={styles.summaryHeroIconWrap}>
               <Feather name="package" size={34} color="#F24C1A" />
@@ -610,79 +874,33 @@ export default function DeliveryJobScreen() {
               <Feather name="headphones" size={24} color="#1F1A17" />
               <Text style={styles.topActionText}>Aide</Text>
             </Pressable>
-            <Pressable style={styles.topActionCard} onPress={navigationTarget ? openNavigation : () => loadJob()}>
-              <Feather name={navigationTarget ? "navigation" : "repeat"} size={24} color="#1F1A17" />
-              <Text style={styles.topActionText}>{navigationTarget ? "Trajet" : "Répéter"}</Text>
+            <Pressable style={styles.topActionCard} onPress={mapRegion && nativeMapsEnabled ? focusEmbeddedMap : () => loadJob()}>
+              <Feather name={mapRegion && nativeMapsEnabled ? "map" : "repeat"} size={24} color="#1F1A17" />
+              <Text style={styles.topActionText}>{mapRegion && nativeMapsEnabled ? "Carte" : "Répéter"}</Text>
             </Pressable>
           </View>
 
-          <View style={styles.mapCard}>
-            {mapRegion ? (
-              <MapView
-                style={styles.map}
-                initialRegion={mapRegion}
-                showsUserLocation={Boolean(isCourier || isClient)}
-                onPress={canClientEditLocation ? (event) => {
-                  setIsEditingClientPoint(true);
-                  setPendingClientPoint(event.nativeEvent.coordinate);
-                } : undefined}
-              >
-                {missionPoints.length > 1 ? (
-                  <Polyline
-                    coordinates={missionPoints}
-                    strokeColor={Colors.light.terracotta}
-                    strokeWidth={3}
-                    lineDashPattern={[8, 8]}
-                  />
-                ) : null}
-
-                {activeLegPoints.length > 1 ? (
-                  <Polyline
-                    coordinates={activeLegPoints}
-                    strokeColor="#0F766E"
-                    strokeWidth={5}
-                  />
-                ) : null}
-
-                {historyPoints.length > 1 ? (
-                  <Polyline
-                    coordinates={historyPoints}
-                    strokeColor={Colors.light.tint}
-                    strokeWidth={4}
-                  />
-                ) : null}
-
-                {restaurantPoint ? (
-                  <Marker coordinate={restaurantPoint} title={job?.restaurantName ?? "Restaurant"} description={job?.restaurantAddress} pinColor={Colors.light.tint} />
-                ) : null}
-
-                {clientPoint ? (
-                  <Marker
-                    coordinate={clientPoint}
-                    title={job?.clientName ?? "Client"}
-                    description={job?.deliveryAddress}
-                    pinColor="#0F766E"
-                    draggable={canClientEditLocation}
-                    onDragEnd={canClientEditLocation ? (event) => {
-                      setIsEditingClientPoint(true);
-                      setPendingClientPoint(event.nativeEvent.coordinate);
-                    } : undefined}
-                  />
-                ) : null}
-
-                {courierPoint ? (
-                  <Marker coordinate={courierPoint} title={job?.courier?.name ?? "Livreur"} description={job?.latestLocation?.createdAt ? `Position mise a jour ${new Date(job.latestLocation.createdAt).toLocaleTimeString()}` : "Position en direct"} pinColor={Colors.light.warning} />
-                ) : null}
-              </MapView>
-            ) : (
-              <View style={styles.mapEmptyState}>
-                <Feather name="map-pin" size={28} color={Colors.light.tint} />
-                <Text style={styles.mapEmptyTitle}>Carte indisponible</Text>
-                <Text style={styles.mapEmptyText}>
-                  Les coordonnees du trajet ne sont pas encore disponibles pour cette mission.
-                </Text>
+          <View style={styles.mapCard} onLayout={handleMapCardLayout}>
+            {renderMissionMap()}
+            {nativeMapsEnabled && mapRegion ? (
+              <View style={styles.mapOverlayActions}>
+                <Pressable style={styles.mapOverlayBtn} onPress={focusEmbeddedMap}>
+                  <Feather name="crosshair" size={16} color="#1F1A17" />
+                  <Text style={styles.mapOverlayBtnText}>Recentrer</Text>
+                </Pressable>
+                <Pressable style={styles.mapOverlayBtn} onPress={() => setIsMapFullscreen(true)}>
+                  <Feather name="maximize-2" size={16} color="#1F1A17" />
+                  <Text style={styles.mapOverlayBtnText}>Plein écran</Text>
+                </Pressable>
               </View>
-            )}
+            ) : null}
+          </View>
+
+          <View style={styles.mapRoleCard}>
+            <Text style={styles.mapRoleTitle}>Quand la carte agit dans l'app</Text>
+            <Text style={styles.mapRoleText}>
+              Avant la prise en charge, elle montre le trajet restaurant → cliente. Dès qu'un livreur accepte, elle suit son approche vers le restaurant. Après le pickup, elle devient la carte de livraison en direct jusqu'à la destination, sans sortir de l'application.
+            </Text>
           </View>
 
           <View style={styles.legendRow}>
@@ -708,6 +926,7 @@ export default function DeliveryJobScreen() {
               </View>
               <Text style={styles.itineraryRoute}>{itinerary.route}</Text>
               {itinerary.eta ? <Text style={styles.itineraryEta}>ETA approx. {itinerary.eta}</Text> : null}
+              {roadRoute ? <Text style={styles.itineraryHint}>Trajet routier mis a jour sur la carte en temps reel.</Text> : null}
               <View style={styles.itinerarySteps}>
                 <View style={styles.itineraryStepRow}>
                   <View style={styles.itineraryDotStart} />
@@ -717,6 +936,24 @@ export default function DeliveryJobScreen() {
                 <View style={styles.itineraryStepRow}>
                   <View style={styles.itineraryDotEnd} />
                   <Text style={styles.itineraryStepText}>{itinerary.destination}</Text>
+                </View>
+              </View>
+              <View style={styles.deliveryFactsRow}>
+                <View style={styles.deliveryFactItem}>
+                  <Text style={styles.deliveryFactLabel}>Statut</Text>
+                  <Text style={styles.deliveryFactValue}>{statusMeta.label}</Text>
+                </View>
+                <View style={styles.deliveryFactItem}>
+                  <Text style={styles.deliveryFactLabel}>Arrivée</Text>
+                  <Text style={styles.deliveryFactValue}>
+                    {job?.estimatedArrivalAt ? formatArrivalWindow(job.estimatedArrivalAt) : itinerary.eta ?? "Calcul"}
+                  </Text>
+                </View>
+                <View style={styles.deliveryFactItem}>
+                  <Text style={styles.deliveryFactLabel}>Suivi</Text>
+                  <Text style={styles.deliveryFactValue}>
+                    {job?.latestLocation?.createdAt ? formatJobClock(job.latestLocation.createdAt) : "Direct"}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -893,6 +1130,24 @@ export default function DeliveryJobScreen() {
           ) : null}
         </ScrollView>
       )}
+
+      <Modal visible={isMapFullscreen && nativeMapsEnabled} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setIsMapFullscreen(false)}>
+        <View style={styles.fullscreenMapScreen}>
+          <View style={[styles.fullscreenMapHeader, { paddingTop: insets.top + 12 }]}> 
+            <Pressable style={styles.fullscreenCloseBtn} onPress={() => setIsMapFullscreen(false)}>
+              <Feather name="arrow-left" size={18} color="#1F1A17" />
+            </Pressable>
+            <View style={styles.fullscreenHeaderTextWrap}>
+              <Text style={styles.fullscreenHeaderTitle}>Suivi du trajet</Text>
+              <Text style={styles.fullscreenHeaderSub}>Carte en direct dans l'application</Text>
+            </View>
+            <Pressable style={styles.fullscreenFitBtn} onPress={focusFullscreenMap}>
+              <Feather name="crosshair" size={16} color="#1F1A17" />
+            </Pressable>
+          </View>
+          <View style={styles.fullscreenMapWrap}>{renderMissionMap({ fullscreen: true })}</View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -912,14 +1167,11 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: 28,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "rgba(31,26,23,0.12)",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 1,
-    shadowRadius: 22,
-    elevation: 6,
+    borderWidth: 1,
+    borderColor: "rgba(242,76,26,0.12)",
   },
   summaryHeroTitle: { marginTop: 16, fontSize: 26, fontFamily: "Poppins_700Bold", color: "#1F1A17" },
   summaryHeroStatus: { marginTop: 4, fontSize: 15, fontFamily: "Poppins_400Regular" },
@@ -927,15 +1179,40 @@ const styles = StyleSheet.create({
   topActionCard: {
     flex: 1,
     minHeight: 88,
-    borderRadius: 20,
-    backgroundColor: "#F1EEEA",
+    borderRadius: 0,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   topActionText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
-  mapCard: { margin: 18, borderRadius: 20, overflow: "hidden", borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.card, height: 300 },
+  mapCard: { margin: 18, borderRadius: 18, overflow: "hidden", height: 420, position: "relative", borderBottomWidth: 1, borderBottomColor: "rgba(104,83,69,0.10)" },
   map: { flex: 1 },
+  fullscreenMap: { flex: 1 },
+  mapOverlayActions: {
+    position: "absolute",
+    right: 14,
+    top: 14,
+    gap: 10,
+  },
+  mapOverlayBtn: {
+    minHeight: 38,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "rgba(31,26,23,0.08)",
+  },
+  mapOverlayBtnText: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#1F1A17",
+  },
   mapEmptyState: {
     flex: 1,
     alignItems: "center",
@@ -968,12 +1245,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 7,
-    backgroundColor: Colors.light.card,
+    backgroundColor: "transparent",
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderColor: "rgba(104,83,69,0.12)",
   },
   legendSwatch: {
     width: 10,
@@ -985,15 +1262,78 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_500Medium",
     color: Colors.light.text,
   },
+  mapRoleCard: {
+    marginHorizontal: 18,
+    marginBottom: 14,
+    paddingVertical: 14,
+    gap: 6,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(242,76,26,0.10)",
+  },
+  mapRoleTitle: {
+    fontSize: 14,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  mapRoleText: {
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  fullscreenMapScreen: {
+    flex: 1,
+    backgroundColor: Colors.light.background,
+  },
+  fullscreenMapHeader: {
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "rgba(255,255,255,0.96)",
+  },
+  fullscreenCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F2EFEC",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullscreenHeaderTextWrap: {
+    flex: 1,
+  },
+  fullscreenHeaderTitle: {
+    fontSize: 18,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  fullscreenHeaderSub: {
+    fontSize: 12,
+    fontFamily: "Poppins_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  fullscreenFitBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F2EFEC",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullscreenMapWrap: {
+    flex: 1,
+  },
   itineraryCard: {
     marginHorizontal: 18,
     marginBottom: 14,
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    padding: 16,
+    paddingVertical: 16,
     gap: 10,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   itineraryHeader: {
     flexDirection: "row",
@@ -1019,6 +1359,11 @@ const styles = StyleSheet.create({
   itineraryEta: {
     fontSize: 13,
     fontFamily: "Poppins_500Medium",
+    color: Colors.light.textSecondary,
+  },
+  itineraryHint: {
+    marginTop: 6,
+    fontSize: 12,
     color: Colors.light.textSecondary,
   },
   itinerarySteps: {
@@ -1052,6 +1397,31 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.light.cardBorder,
     marginLeft: 4,
     marginVertical: 6,
+  },
+  deliveryFactsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    paddingTop: 8,
+  },
+  deliveryFactItem: {
+    flex: 1,
+    minWidth: 88,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
+    gap: 2,
+  },
+  deliveryFactLabel: {
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+    color: Colors.light.textTertiary,
+    textTransform: "uppercase",
+  },
+  deliveryFactValue: {
+    fontSize: 13,
+    fontFamily: "Poppins_600SemiBold",
+    color: Colors.light.text,
   },
   clientArrivalCard: {
     marginHorizontal: 18,
@@ -1093,12 +1463,11 @@ const styles = StyleSheet.create({
   routeActionsCard: {
     marginHorizontal: 18,
     marginBottom: 14,
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    padding: 16,
+    paddingVertical: 16,
     gap: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   routeActionsTitle: {
     fontSize: 12,
@@ -1119,7 +1488,7 @@ const styles = StyleSheet.create({
   },
   routeActionBtn: {
     minHeight: 48,
-    borderRadius: 14,
+    borderRadius: 999,
     backgroundColor: Colors.light.tint,
     flexDirection: "row",
     alignItems: "center",
@@ -1136,10 +1505,10 @@ const styles = StyleSheet.create({
   },
   secondaryActionBtn: {
     minHeight: 48,
-    borderRadius: 14,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: Colors.light.tint,
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "transparent",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -1153,11 +1522,10 @@ const styles = StyleSheet.create({
   addressCard: {
     marginHorizontal: 18,
     marginBottom: 18,
-    backgroundColor: Colors.light.card,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
     overflow: "hidden",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   addressRow: {
     flexDirection: "row",
@@ -1190,6 +1558,9 @@ const styles = StyleSheet.create({
   infoSectionPlain: {
     paddingHorizontal: 18,
     marginBottom: 22,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   infoPrimaryText: {
     fontSize: 16,
@@ -1206,12 +1577,11 @@ const styles = StyleSheet.create({
   contactCard: {
     marginHorizontal: 18,
     marginBottom: 18,
-    backgroundColor: Colors.light.card,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    padding: 16,
+    paddingVertical: 16,
     gap: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   contactHeaderRow: {
     flexDirection: "row",
@@ -1236,7 +1606,7 @@ const styles = StyleSheet.create({
   },
   contactCallBtn: {
     minHeight: 42,
-    borderRadius: 12,
+    borderRadius: 999,
     paddingHorizontal: 14,
     backgroundColor: "#0F766E",
     flexDirection: "row",
@@ -1266,12 +1636,11 @@ const styles = StyleSheet.create({
   priceCard: {
     marginHorizontal: 18,
     marginBottom: 22,
-    backgroundColor: Colors.light.card,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    padding: 18,
+    paddingVertical: 18,
     gap: 18,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   priceRow: {
     flexDirection: "row",
@@ -1302,10 +1671,11 @@ const styles = StyleSheet.create({
     color: "#1F1A17",
   },
   paymentMethodCard: {
-    borderRadius: 18,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 18,
+    paddingHorizontal: 0,
     paddingVertical: 18,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   paymentMethodText: {
     fontSize: 15,
@@ -1317,6 +1687,6 @@ const styles = StyleSheet.create({
   sectionValue: { fontSize: 17, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   sectionSub: { fontSize: 14, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, marginTop: 4, lineHeight: 20 },
   actionsRow: { paddingHorizontal: 18, gap: 12 },
-  actionBtn: { backgroundColor: Colors.light.tint, borderRadius: 16, paddingVertical: 16, alignItems: "center" },
+  actionBtn: { backgroundColor: Colors.light.tint, borderRadius: 999, paddingVertical: 16, alignItems: "center" },
   actionBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#fff" },
 });

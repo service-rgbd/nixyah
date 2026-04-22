@@ -3,7 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
 export const userTypeEnum = pgEnum("user_type", ["client", "chef", "courier", "merchant", "admin"]);
-export const orderStatusEnum = pgEnum("order_status", ["pending", "accepted", "preparing", "ready", "delivered"]);
+export const orderStatusEnum = pgEnum("order_status", ["pending", "accepted", "preparing", "ready", "delivered", "cancelled"]);
 export const customRequestStatusEnum = pgEnum("custom_request_status", ["pending", "quoted", "accepted", "rejected", "cancelled"]);
 export const deliveryStatusEnum = pgEnum("delivery_status", [
   "broadcasting",
@@ -19,6 +19,8 @@ export const complaintTargetEnum = pgEnum("complaint_target", ["chef", "courier"
 export const complaintStatusEnum = pgEnum("complaint_status", ["open", "investigating", "resolved", "dismissed"]);
 export const commerceUniverseEnum = pgEnum("commerce_universe", ["courses", "supermarkets", "boutiques"]);
 export const commerceStoreStatusEnum = pgEnum("commerce_store_status", ["draft", "pending_review", "approved", "suspended", "rejected"]);
+export const passkeyChallengeTypeEnum = pgEnum("passkey_challenge_type", ["register", "authenticate"]);
+export const supportThreadRoleEnum = pgEnum("support_thread_role", ["chef", "courier", "platform"]);
 
 export const usersTable = pgTable(
   "users",
@@ -31,6 +33,10 @@ export const usersTable = pgTable(
     emailConfirmToken: text("email_confirm_token"),
     emailConfirmExpires: timestamp("email_confirm_expires"),
     passwordHash: text("password_hash").notNull(),
+    failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
+    loginLockedAt: timestamp("login_locked_at"),
+    passwordResetToken: text("password_reset_token"),
+    passwordResetExpires: timestamp("password_reset_expires"),
     type: userTypeEnum("type").notNull().default("client"),
     referralCode: text("referral_code"),
     referredByUserId: integer("referred_by_user_id").references((): any => usersTable.id),
@@ -76,6 +82,42 @@ export const chefProfilesTable = pgTable(
   }),
 );
 
+export const passkeyCredentialsTable = pgTable(
+  "passkey_credentials",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => usersTable.id),
+    credentialId: text("credential_id").notNull(),
+    publicKey: text("public_key").notNull(),
+    counter: integer("counter").notNull().default(0),
+    deviceName: text("device_name").notNull().default(""),
+    backedUp: boolean("backed_up").notNull().default(false),
+    transports: text("transports").array().default([]),
+    lastUsedAt: timestamp("last_used_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    credentialIdUnique: uniqueIndex("passkey_credentials_credential_id_unique").on(table.credentialId),
+  }),
+);
+
+export const passkeyChallengesTable = pgTable(
+  "passkey_challenges",
+  {
+    id: serial("id").primaryKey(),
+    challenge: text("challenge").notNull(),
+    challengeType: passkeyChallengeTypeEnum("challenge_type").notNull(),
+    userId: integer("user_id").references(() => usersTable.id),
+    email: text("email"),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    challengeUnique: uniqueIndex("passkey_challenges_challenge_unique").on(table.challenge),
+  }),
+);
+
 export const courierProfilesTable = pgTable(
   "courier_profiles",
   {
@@ -88,6 +130,8 @@ export const courierProfilesTable = pgTable(
     vehicleRegistrationUrl: text("vehicle_registration_url"),
     vehiclePhotoUrl: text("vehicle_photo_url"),
     selfiePhotoUrl: text("selfie_photo_url"),
+    rejectionReason: text("rejection_reason"),
+    rejectionReasonUpdatedAt: timestamp("rejection_reason_updated_at"),
     dossierSubmittedAt: timestamp("dossier_submitted_at"),
     isAvailable: boolean("is_available").notNull().default(true),
     isVerified: boolean("is_verified").notNull().default(false),
@@ -156,6 +200,19 @@ export const storiesTable = pgTable("stories", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   expiresAt: timestamp("expires_at").notNull(),
 });
+
+export const chefFollowersTable = pgTable(
+  "chef_followers",
+  {
+    id: serial("id").primaryKey(),
+    clientUserId: integer("client_user_id").notNull().references(() => usersTable.id),
+    chefProfileId: integer("chef_profile_id").notNull().references(() => chefProfilesTable.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    clientChefUnique: uniqueIndex("chef_followers_client_user_id_chef_profile_id_unique").on(table.clientUserId, table.chefProfileId),
+  }),
+);
 
 export const ordersTable = pgTable("orders", {
   id: serial("id").primaryKey(),
@@ -284,6 +341,32 @@ export const chatsTable = pgTable(
 export const messagesTable = pgTable("messages", {
   id: serial("id").primaryKey(),
   chatId: integer("chat_id").notNull().references(() => chatsTable.id),
+  senderId: integer("sender_id").notNull().references(() => usersTable.id),
+  text: text("text").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const supportThreadsTable = pgTable(
+  "support_threads",
+  {
+    id: serial("id").primaryKey(),
+    orderId: integer("order_id").notNull().references(() => ordersTable.id),
+    clientUserId: integer("client_user_id").notNull().references(() => usersTable.id),
+    chefProfileId: integer("chef_profile_id").references(() => chefProfilesTable.id),
+    courierUserId: integer("courier_user_id").references(() => usersTable.id),
+    targetRole: supportThreadRoleEnum("target_role").notNull(),
+    subject: text("subject").notNull().default(""),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    orderRoleUnique: uniqueIndex("support_threads_order_id_target_role_unique").on(table.orderId, table.targetRole),
+  }),
+);
+
+export const supportMessagesTable = pgTable("support_messages", {
+  id: serial("id").primaryKey(),
+  threadId: integer("thread_id").notNull().references(() => supportThreadsTable.id),
   senderId: integer("sender_id").notNull().references(() => usersTable.id),
   text: text("text").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -513,11 +596,16 @@ export type StoryComment = typeof storyCommentsTable.$inferSelect;
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true });
 export const insertChefProfileSchema = createInsertSchema(chefProfilesTable).omit({ id: true, createdAt: true });
 export const insertCourierProfileSchema = createInsertSchema(courierProfilesTable).omit({ id: true, createdAt: true });
+export const insertPasskeyCredentialSchema = createInsertSchema(passkeyCredentialsTable).omit({ id: true, createdAt: true, lastUsedAt: true });
+export const insertPasskeyChallengeSchema = createInsertSchema(passkeyChallengesTable).omit({ id: true, createdAt: true, usedAt: true });
 export const insertDishSchema = createInsertSchema(dishesTable).omit({ id: true, createdAt: true });
 export const insertStorySchema = createInsertSchema(storiesTable).omit({ id: true });
+export const insertChefFollowerSchema = createInsertSchema(chefFollowersTable).omit({ id: true, createdAt: true });
 export const insertOrderSchema = createInsertSchema(ordersTable).omit({ id: true, createdAt: true });
 export const insertCustomRequestSchema = createInsertSchema(customRequestsTable).omit({ id: true, createdAt: true, updatedAt: true, respondedAt: true });
 export const insertMessageSchema = createInsertSchema(messagesTable).omit({ id: true, createdAt: true });
+export const insertSupportThreadSchema = createInsertSchema(supportThreadsTable).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertSupportMessageSchema = createInsertSchema(supportMessagesTable).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notificationsTable).omit({ id: true, createdAt: true });
 export const insertReviewSchema = createInsertSchema(reviewsTable).omit({ id: true, createdAt: true });
 export const insertComplaintSchema = createInsertSchema(complaintsTable).omit({ id: true, createdAt: true, updatedAt: true, resolvedAt: true });
@@ -531,12 +619,22 @@ export type ChefProfile = typeof chefProfilesTable.$inferSelect;
 export type InsertChefProfile = z.infer<typeof insertChefProfileSchema>;
 export type CourierProfile = typeof courierProfilesTable.$inferSelect;
 export type InsertCourierProfile = z.infer<typeof insertCourierProfileSchema>;
+export type PasskeyCredential = typeof passkeyCredentialsTable.$inferSelect;
+export type InsertPasskeyCredential = z.infer<typeof insertPasskeyCredentialSchema>;
+export type PasskeyChallenge = typeof passkeyChallengesTable.$inferSelect;
+export type InsertPasskeyChallenge = z.infer<typeof insertPasskeyChallengeSchema>;
 export type InsertMerchantProfile = z.infer<typeof insertMerchantProfileSchema>;
 export type Dish = typeof dishesTable.$inferSelect;
 export type Story = typeof storiesTable.$inferSelect;
+export type ChefFollower = typeof chefFollowersTable.$inferSelect;
+export type InsertChefFollower = z.infer<typeof insertChefFollowerSchema>;
 export type Order = typeof ordersTable.$inferSelect;
 export type CustomRequest = typeof customRequestsTable.$inferSelect;
 export type Message = typeof messagesTable.$inferSelect;
+export type SupportThread = typeof supportThreadsTable.$inferSelect;
+export type InsertSupportThread = z.infer<typeof insertSupportThreadSchema>;
+export type SupportMessage = typeof supportMessagesTable.$inferSelect;
+export type InsertSupportMessage = z.infer<typeof insertSupportMessageSchema>;
 export type Notification = typeof notificationsTable.$inferSelect;
 export type Review = typeof reviewsTable.$inferSelect;
 export type Complaint = typeof complaintsTable.$inferSelect;

@@ -5,12 +5,14 @@ import { Platform } from "react-native";
 import { apiFetch } from "@/constants/api";
 
 const PUSH_NOTIFICATIONS_ENABLED_KEY = "nixyah_push_notifications_enabled";
-const EXPO_PUSH_TOKEN_KEY = "nixyah_expo_push_token";
+const PUSH_TOKEN_KEY = "nixyah_push_token";
+const PUSH_PLATFORM_KEY = "nixyah_push_platform";
 
 type PushPermissionStatus = "undetermined" | "denied" | "granted" | "unsupported";
+type PushPlatform = "expo" | "android-fcm";
 
 export type PushRegistrationResult =
-  | { ok: true; permissionStatus: PushPermissionStatus; expoPushToken: string }
+  | { ok: true; permissionStatus: PushPermissionStatus; pushToken: string; platform: PushPlatform }
   | { ok: false; permissionStatus: PushPermissionStatus; reason: "unsupported-runtime" | "permission-denied" | "missing-project-id" | "missing-token" };
 
 export function isRemotePushSupportedInCurrentRuntime(): boolean {
@@ -22,7 +24,7 @@ export function isRemotePushSupportedInCurrentRuntime(): boolean {
   const executionEnvironment = (Constants as any).executionEnvironment;
   const isExpoGo = appOwnership === "expo" || executionEnvironment === "storeClient";
 
-  return !(Platform.OS === "android" && isExpoGo);
+  return !isExpoGo;
 }
 
 export function getExpoProjectId(): string | undefined {
@@ -53,16 +55,29 @@ export async function setPushNotificationsEnabled(enabled: boolean): Promise<voi
   await AsyncStorage.setItem(PUSH_NOTIFICATIONS_ENABLED_KEY, enabled ? "true" : "false");
 }
 
-export async function getStoredExpoPushToken(): Promise<string | null> {
-  return AsyncStorage.getItem(EXPO_PUSH_TOKEN_KEY);
+async function getStoredPushRegistration(): Promise<{ token: string; platform: PushPlatform } | null> {
+  const [token, platform] = await Promise.all([
+    AsyncStorage.getItem(PUSH_TOKEN_KEY),
+    AsyncStorage.getItem(PUSH_PLATFORM_KEY),
+  ]);
+  if (!token || (platform !== "expo" && platform !== "android-fcm")) {
+    return null;
+  }
+  return { token, platform };
 }
 
-async function setStoredExpoPushToken(token: string): Promise<void> {
-  await AsyncStorage.setItem(EXPO_PUSH_TOKEN_KEY, token);
+async function setStoredPushRegistration(token: string, platform: PushPlatform): Promise<void> {
+  await Promise.all([
+    AsyncStorage.setItem(PUSH_TOKEN_KEY, token),
+    AsyncStorage.setItem(PUSH_PLATFORM_KEY, platform),
+  ]);
 }
 
-export async function clearStoredExpoPushToken(): Promise<void> {
-  await AsyncStorage.removeItem(EXPO_PUSH_TOKEN_KEY);
+export async function clearStoredPushRegistration(): Promise<void> {
+  await Promise.all([
+    AsyncStorage.removeItem(PUSH_TOKEN_KEY),
+    AsyncStorage.removeItem(PUSH_PLATFORM_KEY),
+  ]);
 }
 
 export async function getPushPermissionStatus(): Promise<PushPermissionStatus> {
@@ -109,13 +124,24 @@ export async function registerExpoPushSubscription(authToken: string): Promise<P
     return { ok: false, permissionStatus: finalStatus, reason: "permission-denied" };
   }
 
-  const projectId = getExpoProjectId();
-  if (!projectId) {
-    return { ok: false, permissionStatus: finalStatus, reason: "missing-project-id" };
+  let pushToken = "";
+  let platform: PushPlatform = "expo";
+
+  if (Platform.OS === "android") {
+    const devicePushToken = await Notifications.getDevicePushTokenAsync();
+    pushToken = typeof devicePushToken.data === "string" ? devicePushToken.data : "";
+    platform = "android-fcm";
+  } else {
+    const projectId = getExpoProjectId();
+    if (!projectId) {
+      return { ok: false, permissionStatus: finalStatus, reason: "missing-project-id" };
+    }
+
+    pushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    platform = "expo";
   }
 
-  const expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-  if (!expoPushToken) {
+  if (!pushToken) {
     return { ok: false, permissionStatus: finalStatus, reason: "missing-token" };
   }
 
@@ -123,32 +149,32 @@ export async function registerExpoPushSubscription(authToken: string): Promise<P
     method: "POST",
     token: authToken,
     body: JSON.stringify({
-      platform: "expo",
-      token: expoPushToken,
+      platform,
+      token: pushToken,
     }),
   });
 
-  await setStoredExpoPushToken(expoPushToken);
+  await setStoredPushRegistration(pushToken, platform);
   await setPushNotificationsEnabled(true);
 
-  return { ok: true, permissionStatus: finalStatus, expoPushToken };
+  return { ok: true, permissionStatus: finalStatus, pushToken, platform };
 }
 
 export async function unregisterExpoPushSubscription(authToken?: string | null): Promise<void> {
-  const endpoint = await getStoredExpoPushToken();
+  const registration = await getStoredPushRegistration();
 
-  if (authToken && endpoint) {
+  if (authToken && registration) {
     try {
       await apiFetch("/push/unsubscribe", {
         method: "POST",
         token: authToken,
-        body: JSON.stringify({ endpoint }),
+        body: JSON.stringify({ endpoint: registration.token, platform: registration.platform }),
       });
     } catch (error) {
       console.warn("push unsubscribe failed", error);
     }
   }
 
-  await clearStoredExpoPushToken();
+  await clearStoredPushRegistration();
   await setPushNotificationsEnabled(false);
 }

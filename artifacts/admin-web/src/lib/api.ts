@@ -307,6 +307,8 @@ export interface AdminCourier {
   activeInvestigationCount: number;
   bonusEarnedAmount: number;
   isDossierComplete: boolean;
+  rejectionReason: string | null;
+  rejectionReasonUpdatedAt: string | null;
   dossierSubmittedAt: string | null;
   lastLocationAt: string | null;
   verificationDocuments: {
@@ -603,17 +605,17 @@ export const apiClient = {
     return request<{ couriers: AdminCourier[] }>(`/admin/couriers${query ? `?${query}` : ""}`, undefined, token);
   },
 
-  updateAdminCourierStatus(token: string, courierId: number, status: CourierStatus) {
+  updateAdminCourierStatus(token: string, courierId: number, status: CourierStatus, rejectionReason?: string | null) {
     return request<{ courier: AdminCourier }>(`/admin/couriers/${courierId}/status`, {
       method: "POST",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, rejectionReason }),
     }, token);
   },
 
-  verifyAdminCourier(token: string, courierId: number, isVerified: boolean) {
+  verifyAdminCourier(token: string, courierId: number, isVerified: boolean, rejectionReason?: string | null) {
     return request<{ courier: AdminCourier }>(`/admin/couriers/${courierId}/verify`, {
       method: "POST",
-      body: JSON.stringify({ isVerified }),
+      body: JSON.stringify({ isVerified, rejectionReason }),
     }, token);
   },
 

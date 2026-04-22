@@ -11,12 +11,14 @@
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#D4611A"
+      "backgroundColor": "#F7E8D2"
     },
     "ios": {
       "supportsTablet": false
     },
-    "android": {},
+    "android": {
+      "package": "com.vini2427.nixyah"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
@@ -25,6 +27,15 @@
         "expo-router",
         {
           "origin": "https://replit.com/"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 280,
+          "resizeMode": "contain",
+          "backgroundColor": "#F7E8D2"
         }
       ],
       "expo-font",

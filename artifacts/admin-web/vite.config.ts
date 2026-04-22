@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 
 const port = Number(process.env.PORT ?? "4173");
 const basePath = process.env.BASE_PATH ?? "/";
+const apiProxyTarget = (process.env.VITE_API_PROXY_TARGET ?? process.env.API_PROXY_TARGET ?? "http://127.0.0.1:3333").trim();
 
 export default defineConfig({
   base: basePath,
@@ -22,6 +23,13 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    proxy: {
+      "/api": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: apiProxyTarget.startsWith("https://"),
+      },
+    },
   },
   preview: {
     port,

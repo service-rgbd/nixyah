@@ -80,7 +80,7 @@ export default function NotificationSettingsScreen() {
     }
 
     if (permissionStatus === "unsupported") {
-      return "Limitees dans Expo Go";
+      return "Indisponibles dans Expo Go";
     }
 
     return "A confirmer";
@@ -111,7 +111,7 @@ export default function NotificationSettingsScreen() {
         if (!supportsRemotePush) {
           Alert.alert(
             "Build requis",
-            "Les notifications push réelles ne sont pas entièrement prises en charge dans Expo Go sur cet appareil. Utilisez un development build pour les tester proprement.",
+            "Les notifications push ne sont pas prises en charge proprement dans Expo Go. Utilisez un development build pour demander la permission et recevoir les notifications sur cet appareil.",
           );
           setPermissionStatus(await getPushPermissionStatus());
           setEnabled(false);
@@ -203,8 +203,8 @@ export default function NotificationSettingsScreen() {
         <View style={[styles.noticeCard, styles.noticeWarning]}>
           <Feather name="alert-triangle" size={18} color={Colors.light.warning} />
           <View style={styles.noticeCopy}>
-            <Text style={styles.noticeTitle}>Expo Go est limite ici</Text>
-            <Text style={styles.noticeText}>Pour tester les notifications push réelles, utilisez un development build au lieu d'Expo Go sur cet appareil.</Text>
+            <Text style={styles.noticeTitle}>Expo Go n'est pas suffisant ici</Text>
+            <Text style={styles.noticeText}>Pour demander la permission système et recevoir les notifications push, utilisez un development build au lieu d'Expo Go.</Text>
           </View>
         </View>
       ) : null}
@@ -231,8 +231,8 @@ export default function NotificationSettingsScreen() {
         </View>
       </View>
 
-      {user?.type === "chef" ? (
-        <Pressable style={styles.primaryButton} onPress={() => router.push("/chef/notifications")}>
+      {user ? (
+        <Pressable style={styles.primaryButton} onPress={() => router.push("/notifications")}>
           <Text style={styles.primaryButtonText}>Voir le centre de notifications</Text>
         </Pressable>
       ) : null}

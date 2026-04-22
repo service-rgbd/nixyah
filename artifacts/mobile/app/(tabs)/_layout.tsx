@@ -16,15 +16,25 @@ function TabIcon({
   focused,
   color,
   isDark,
+  activeBackground,
 }: {
   name: IoniconsName;
   nameActive: IoniconsName;
   focused: boolean;
   color: string;
   isDark: boolean;
+  activeBackground: string;
 }) {
   return (
-    <View style={[tabStyles.wrap, isDark && tabStyles.wrapDark, focused && tabStyles.wrapActive, focused && isDark && tabStyles.wrapActiveDark]}>
+    <View
+      style={[
+        tabStyles.wrap,
+        isDark && tabStyles.wrapDark,
+        focused && tabStyles.wrapActive,
+        focused && { backgroundColor: activeBackground },
+        focused && isDark && tabStyles.wrapActiveDark,
+      ]}
+    >
       <Ionicons name={focused ? nameActive : name} size={22} color={color} />
     </View>
   );
@@ -32,11 +42,11 @@ function TabIcon({
 
 const tabStyles = StyleSheet.create({
   wrap: {
-    width: 48,
-    height: 32,
+    width: 44,
+    height: 30,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 16,
+    borderRadius: 15,
   },
   wrapDark: {
     backgroundColor: "rgba(255,255,255,0.04)",
@@ -62,11 +72,16 @@ export default function TabLayout() {
   const { user } = useApp();
   const isChef = user?.type === "chef";
   const isCourier = user?.type === "courier";
-  const isStoriesActive = pathname === "/stories";
-  const tabBarSurface = isStoriesActive ? "rgba(8,8,10,0.96)" : "rgba(255,250,245,0.94)";
-  const tabBarBorder = isStoriesActive ? "rgba(255,255,255,0.08)" : "rgba(77,53,40,0.08)";
-  const activeTint = isStoriesActive ? "#FFFFFF" : Colors.light.tint;
-  const inactiveTint = isStoriesActive ? "rgba(255,255,255,0.58)" : Colors.light.tabIconDefault;
+  const normalizedPathname = pathname?.replace(/\/+$/, "") ?? "";
+  const isStoriesActive = normalizedPathname === "/stories" || normalizedPathname.startsWith("/story/");
+  const roleAccent = isCourier ? "#2D8C78" : isChef ? Colors.light.terracotta : Colors.light.tint;
+  const roleSurface = isCourier ? "rgba(244,252,249,0.98)" : isChef ? "rgba(255,246,239,0.98)" : "rgba(255,250,245,0.98)";
+  const roleActiveBackground = isCourier ? "#DDF4EE" : isChef ? "#FFE4D3" : Colors.light.backgroundSecondary;
+  const tabBarSurface = isStoriesActive ? "rgba(8,8,10,0.96)" : roleSurface;
+  const activeTint = isStoriesActive ? "#FFFFFF" : roleAccent;
+  const inactiveTint = isStoriesActive ? "rgba(255,255,255,0.58)" : "rgba(123,95,73,0.72)";
+  const tabBarBottomInset = Platform.OS === "ios" ? Math.max(insets.bottom - 6, 10) : Math.max(insets.bottom, 8);
+  const tabBarHeight = Platform.OS === "web" ? 66 : 50 + tabBarBottomInset;
 
   return (
     <Tabs
@@ -76,39 +91,32 @@ export default function TabLayout() {
         tabBarInactiveTintColor: inactiveTint,
         tabBarLabelStyle: {
           fontFamily: "Poppins_600SemiBold",
-          fontSize: 10,
+          fontSize: 9,
           letterSpacing: 0.2,
-          marginBottom: Platform.OS === "ios" ? 0 : 3,
+          marginBottom: Platform.OS === "ios" ? 0 : 2,
+        },
+        tabBarItemStyle: {
+          paddingTop: 2,
+          paddingBottom: 2,
         },
         tabBarStyle: {
           backgroundColor: tabBarSurface,
-          borderTopLeftRadius: 28,
-          borderTopRightRadius: 28,
-          paddingTop: 10,
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 10,
-          borderTopColor: tabBarBorder,
-          borderTopWidth: 1,
+          borderTopLeftRadius: 22,
+          borderTopRightRadius: 22,
+          height: tabBarHeight,
+          paddingTop: 4,
+          paddingBottom: tabBarBottomInset,
+          borderTopColor: "transparent",
+          borderTopWidth: 0,
           shadowColor: isStoriesActive ? "#000000" : "#1A120A",
-          shadowOffset: { width: 0, height: -10 },
-          shadowOpacity: isStoriesActive ? 0.34 : 0.09,
-          shadowRadius: isStoriesActive ? 28 : 22,
-          elevation: 22,
-          ...(Platform.OS === "web" ? { height: 84, paddingBottom: 12 } : {}),
+          shadowOffset: { width: 0, height: -6 },
+          shadowOpacity: isStoriesActive ? 0.18 : 0.06,
+          shadowRadius: isStoriesActive ? 16 : 12,
+          elevation: 10,
+          overflow: "hidden",
+          ...(Platform.OS === "web" ? { paddingBottom: 8, paddingTop: 4, height: 66 } : {}),
         },
-        tabBarBackground: () => (
-          <View
-            style={[
-              StyleSheet.absoluteFill,
-              {
-                backgroundColor: tabBarSurface,
-                borderTopLeftRadius: 28,
-                borderTopRightRadius: 28,
-                borderTopWidth: 1,
-                borderTopColor: tabBarBorder,
-              },
-            ]}
-          />
-        ),
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tabs.Screen
@@ -122,6 +130,7 @@ export default function TabLayout() {
               focused={focused}
               color={color}
               isDark={isStoriesActive}
+              activeBackground={isStoriesActive ? "rgba(255,255,255,0.14)" : roleActiveBackground}
             />
           ),
         }}
@@ -138,6 +147,7 @@ export default function TabLayout() {
               focused={focused}
               color={color}
               isDark={isStoriesActive}
+              activeBackground={isStoriesActive ? "rgba(255,255,255,0.14)" : roleActiveBackground}
             />
           ),
         }}
@@ -154,6 +164,7 @@ export default function TabLayout() {
               focused={focused}
               color={color}
               isDark={isStoriesActive}
+              activeBackground={isStoriesActive ? "rgba(255,255,255,0.14)" : roleActiveBackground}
             />
           ),
         }}
@@ -169,6 +180,7 @@ export default function TabLayout() {
               focused={focused}
               color={color}
               isDark={isStoriesActive}
+              activeBackground={isStoriesActive ? "rgba(255,255,255,0.14)" : roleActiveBackground}
             />
           ),
         }}
@@ -184,6 +196,7 @@ export default function TabLayout() {
               focused={focused}
               color={color}
               isDark={isStoriesActive}
+              activeBackground={isStoriesActive ? "rgba(255,255,255,0.14)" : roleActiveBackground}
             />
           ),
         }}

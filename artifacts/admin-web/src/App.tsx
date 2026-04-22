@@ -973,7 +973,7 @@ function AdminDashboard({
   couriers: AdminCourier[];
   couriersFilter: CourierStatus | "all";
   setCouriersFilter: (value: CourierStatus | "all") => void;
-  onUpdateCourierStatus: (courierId: number, status: CourierStatus) => void;
+  onUpdateCourierStatus: (courierId: number, status: CourierStatus, rejectionReason?: string | null) => void;
   onVerifyCourier: (courierId: number, isVerified: boolean) => void;
   allUsers: AdminUser[];
   busy: boolean;
@@ -1253,6 +1253,28 @@ function AdminDashboard({
   function openStorePreview(storeId: number) {
     closeAllPreviews();
     setSelectedStoreId(storeId);
+  }
+
+  function requestCourierRejectionReason(currentReason?: string | null) {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const response = window.prompt(
+      "Indiquez le motif de rejet a transmettre au livreur.",
+      currentReason ?? "",
+    );
+    if (response === null) {
+      return null;
+    }
+
+    const nextReason = response.trim();
+    if (!nextReason) {
+      window.alert("Le motif de rejet est obligatoire.");
+      return null;
+    }
+
+    return nextReason;
   }
 
   function downloadCsvReport() {
@@ -1836,6 +1858,17 @@ function AdminDashboard({
                     </div>
                   </section>
                 ) : null}
+                {selectedCourierRecord?.rejectionReason ? (
+                  <section className="admin-preview-section">
+                    <div className="admin-preview-section-head">
+                      <div>
+                        <strong>Motif de rejet</strong>
+                        <span>{formatDateOnly(selectedCourierRecord.rejectionReasonUpdatedAt)}</span>
+                      </div>
+                    </div>
+                    <p className="preview-copy">{selectedCourierRecord.rejectionReason}</p>
+                  </section>
+                ) : null}
                 <div className="preview-actions">
                   {selectedCourierRecord ? (
                     selectedCourierRecord.isVerified ? (
@@ -1846,7 +1879,21 @@ function AdminDashboard({
                   ) : null}
                   {selectedCourierRecord && selectedCourierRecord.status !== "active" ? <button className="secondary-button" type="button" onClick={() => onUpdateCourierStatus(selectedCourierRecord.id, "active")}>Activer</button> : null}
                   {selectedCourierRecord && selectedCourierRecord.status !== "suspended" ? <button className="ghost-button" type="button" onClick={() => onUpdateCourierStatus(selectedCourierRecord.id, "suspended")}>Suspendre</button> : null}
-                  {selectedCourierRecord && selectedCourierRecord.status !== "rejected" ? <button className="ghost-button danger" type="button" onClick={() => onUpdateCourierStatus(selectedCourierRecord.id, "rejected")}>Rejeter</button> : null}
+                  {selectedCourierRecord && selectedCourierRecord.status !== "rejected" ? (
+                    <button
+                      className="ghost-button danger"
+                      type="button"
+                      onClick={() => {
+                        const rejectionReason = requestCourierRejectionReason(selectedCourierRecord.rejectionReason);
+                        if (!rejectionReason) {
+                          return;
+                        }
+                        onUpdateCourierStatus(selectedCourierRecord.id, "rejected", rejectionReason);
+                      }}
+                    >
+                      Rejeter
+                    </button>
+                  ) : null}
                   <button className="ghost-button" type="button" onClick={() => setZoneFilter(selectedCourierRecord?.zone ?? selectedCourier.zone)}>Isoler la zone</button>
                   <button className="ghost-button" type="button" onClick={closeAllPreviews}>Fermer</button>
                 </div>
@@ -2277,11 +2324,26 @@ function AdminDashboard({
                   {courier.phone ? <span>{courier.phone}</span> : null}
                   <span>Inscrit le {formatDateOnly(courier.createdAt)}</span>
                 </div>
+                {courier.rejectionReason ? <p className="chef-bio">Motif de rejet: {courier.rejectionReason}</p> : null}
                 <div className="action-row chef-action-row">
                   {courier.isVerified ? <button className="ghost-button danger" type="button" onClick={() => onVerifyCourier(courier.id, false)}><UserX size={14} />Retirer badge</button> : <button className="primary-button" type="button" onClick={() => onVerifyCourier(courier.id, true)}><UserCheck size={14} />Verifier</button>}
                   {courier.status !== "active" && <button className="secondary-button" type="button" onClick={() => onUpdateCourierStatus(courier.id, "active")}>Activer</button>}
                   {courier.status !== "suspended" && <button className="ghost-button" type="button" onClick={() => onUpdateCourierStatus(courier.id, "suspended")}>Suspendre</button>}
-                  {courier.status !== "rejected" && <button className="ghost-button danger" type="button" onClick={() => onUpdateCourierStatus(courier.id, "rejected")}>Rejeter</button>}
+                  {courier.status !== "rejected" && (
+                    <button
+                      className="ghost-button danger"
+                      type="button"
+                      onClick={() => {
+                        const rejectionReason = requestCourierRejectionReason(courier.rejectionReason);
+                        if (!rejectionReason) {
+                          return;
+                        }
+                        onUpdateCourierStatus(courier.id, "rejected", rejectionReason);
+                      }}
+                    >
+                      Rejeter
+                    </button>
+                  )}
                   <button className="ghost-button" type="button" onClick={() => openCourierPreview(courier.id)}>Voir profil</button>
                 </div>
               </article>
@@ -2731,16 +2793,24 @@ export default function App() {
     });
   }
 
-  async function handleUpdateCourierStatus(courierId: number, status: CourierStatus) {
+  async function handleUpdateCourierStatus(courierId: number, status: CourierStatus, rejectionReason?: string | null) {
     if (!session || session.user.type !== "admin") return;
     setFatalError(null);
     startBusyTransition(() => {
       void (async () => {
         try {
-          await apiClient.updateAdminCourierStatus(session.token, courierId, status);
+          await apiClient.updateAdminCourierStatus(session.token, courierId, status, rejectionReason);
           const resp = await apiClient.getAdminCouriers(session.token, { status: adminCouriersFilter });
           setAdminCouriers(resp.couriers);
-          setNotice("Statut livreur mis a jour.");
+          setNotice(
+            status === "active"
+              ? "Livreur active et notifie."
+              : status === "rejected"
+                ? "Livreur rejete et notifie."
+                : status === "pending_verification"
+                  ? "Livreur remis en verification."
+                  : "Statut livreur mis a jour.",
+          );
         } catch (error) {
           setFatalError(error instanceof Error ? error.message : "Mise a jour livreur impossible.");
         }

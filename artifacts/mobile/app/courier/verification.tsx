@@ -46,6 +46,7 @@ export default function CourierVerificationScreen() {
   const [saving, setSaving] = useState(false);
 
   const verificationDocuments = user?.courierProfile?.verificationDocuments;
+  const rejectionReason = user?.courierProfile?.rejectionReason ?? null;
   const completedCount = useMemo(
     () => REQUIRED_DOCUMENTS.filter((item) => Boolean(verificationDocuments?.[item.key])).length,
     [verificationDocuments]
@@ -153,6 +154,18 @@ export default function CourierVerificationScreen() {
           </View>
         </View>
 
+        {rejectionReason ? (
+          <View style={styles.rejectionCard}>
+            <View style={styles.rejectionIconWrap}>
+              <Feather name="alert-triangle" size={18} color="#B45309" />
+            </View>
+            <View style={styles.rejectionCopy}>
+              <Text style={styles.rejectionTitle}>Motif de rejet</Text>
+              <Text style={styles.rejectionText}>{rejectionReason}</Text>
+            </View>
+          </View>
+        ) : null}
+
         {REQUIRED_DOCUMENTS.map((item) => {
           const documentUrl = verificationDocuments?.[item.key] ?? null;
           const isUploading = uploadingKey === item.key;
@@ -227,6 +240,38 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontFamily: "Poppins_700Bold",
     color: Colors.light.text,
+  },
+  rejectionCard: {
+    borderRadius: 22,
+    backgroundColor: "#FFF7ED",
+    borderWidth: 1,
+    borderColor: "#FED7AA",
+    padding: 16,
+    flexDirection: "row",
+    gap: 12,
+  },
+  rejectionIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFEDD5",
+  },
+  rejectionCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  rejectionTitle: {
+    fontSize: 13,
+    fontFamily: "Poppins_700Bold",
+    color: "#9A3412",
+  },
+  rejectionText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_400Regular",
+    color: "#9A3412",
   },
   subtitle: {
     fontSize: 13,

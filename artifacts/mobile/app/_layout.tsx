@@ -8,15 +8,14 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
-import Constants from "expo-constants";
+import React, { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { apiFetch } from "@/constants/api";
-import { getPushNotificationsEnabled, registerExpoPushSubscription, isRemotePushSupportedInCurrentRuntime } from "@/constants/push-notifications";
+import { getPushNotificationsEnabled, getPushPermissionStatus, registerExpoPushSubscription, isRemotePushSupportedInCurrentRuntime } from "@/constants/push-notifications";
 import { AppProvider, useApp } from "@/contexts/AppContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -25,7 +24,23 @@ const queryClient = new QueryClient();
 let notificationsHandlerConfigured = false;
 
 function PushNotificationsBootstrap() {
-  const { token, user } = useApp();
+  const {
+    token,
+    user,
+    notifications,
+    fetchNotifications,
+    refreshOrders,
+    fetchCustomRequests,
+    fetchChefOrders,
+    fetchChefCustomRequests,
+  } = useApp();
+  const knownNotificationIdsRef = useRef<Set<string> | null>(null);
+  const recentlyReceivedNotificationIdsRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    knownNotificationIdsRef.current = null;
+    recentlyReceivedNotificationIdsRef.current.clear();
+  }, [user?.id]);
 
   useEffect(() => {
     const supportsRemotePushInCurrentRuntime = isRemotePushSupportedInCurrentRuntime();
@@ -35,7 +50,16 @@ function PushNotificationsBootstrap() {
     }
 
     let isMounted = true;
+    let notificationSubscription: { remove: () => void } | null = null;
     let responseSubscription: { remove: () => void } | null = null;
+
+    const rememberNotificationReceipt = (data?: Record<string, unknown> | null) => {
+      if (!data || !("notificationId" in data) || !data.notificationId) {
+        return;
+      }
+
+      recentlyReceivedNotificationIdsRef.current.set(String(data.notificationId), Date.now());
+    };
 
     const handleNotificationResponse = async (response: {
       notification: {
@@ -46,6 +70,7 @@ function PushNotificationsBootstrap() {
               storyId?: string;
               orderId?: string | number;
               deliveryJobId?: string | number;
+              threadId?: string | number;
               customRequestId?: string | number;
               screen?: string;
             };
@@ -54,6 +79,7 @@ function PushNotificationsBootstrap() {
       };
     } | null | undefined) => {
       const data = response?.notification.request.content.data;
+      rememberNotificationReceipt(data);
 
       if (data?.type === "story-video" && data.storyId) {
         const { router } = await import("expo-router");
@@ -82,6 +108,12 @@ function PushNotificationsBootstrap() {
       if ((data?.screen === "delivery-tracking" || data?.deliveryJobId) && data?.deliveryJobId) {
         const { router } = await import("expo-router");
         router.push({ pathname: "/delivery/job/[id]", params: { id: String(data.deliveryJobId) } });
+        return;
+      }
+
+      if (data?.screen === "support-thread" && data?.threadId) {
+        const { router } = await import("expo-router");
+        router.push({ pathname: "/help/thread/[threadId]", params: { threadId: String(data.threadId) } });
         return;
       }
 
@@ -126,9 +158,14 @@ function PushNotificationsBootstrap() {
         }
 
         const lastResponse = await Notifications.getLastNotificationResponseAsync();
+        rememberNotificationReceipt(lastResponse?.notification.request.content.data);
         await handleNotificationResponse(lastResponse);
 
+        notificationSubscription = Notifications.addNotificationReceivedListener((event) => {
+          rememberNotificationReceipt(event.request.content.data as { notificationId?: string | number } | undefined);
+        });
         responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+          rememberNotificationReceipt(response.notification.request.content.data as { notificationId?: string | number } | undefined);
           void handleNotificationResponse(response);
         });
 
@@ -145,9 +182,106 @@ function PushNotificationsBootstrap() {
 
     return () => {
       isMounted = false;
+      notificationSubscription?.remove();
       responseSubscription?.remove();
     };
   }, [token, user]);
+
+  useEffect(() => {
+    if (!token || !user) {
+      knownNotificationIdsRef.current = null;
+      recentlyReceivedNotificationIdsRef.current.clear();
+      return;
+    }
+
+    const nextIds = new Set(notifications.map((notification) => notification.id));
+    if (knownNotificationIdsRef.current === null) {
+      knownNotificationIdsRef.current = nextIds;
+      return;
+    }
+
+    const previousIds = knownNotificationIdsRef.current;
+    const newNotifications = notifications.filter((notification) => !previousIds.has(notification.id));
+    knownNotificationIdsRef.current = nextIds;
+
+    if (newNotifications.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const [notificationId, receivedAt] of recentlyReceivedNotificationIdsRef.current.entries()) {
+      if (now - receivedAt > 60_000) {
+        recentlyReceivedNotificationIdsRef.current.delete(notificationId);
+      }
+    }
+
+    if (user.type === "client") {
+      void Promise.all([refreshOrders(), fetchCustomRequests(), fetchNotifications({ silent: true })]);
+    } else if (user.type === "chef") {
+      void Promise.all([fetchChefOrders(), fetchChefCustomRequests(), fetchNotifications({ silent: true })]);
+    } else {
+      void fetchNotifications({ silent: true });
+    }
+
+    if (Platform.OS === "web") {
+      return;
+    }
+
+    let cancelled = false;
+    const scheduleFallbackNotifications = async () => {
+      try {
+        const [notificationsEnabled, permissionStatus] = await Promise.all([
+          getPushNotificationsEnabled(),
+          getPushPermissionStatus(),
+        ]);
+
+        if (!notificationsEnabled || permissionStatus !== "granted") {
+          return;
+        }
+
+        const Notifications = await import("expo-notifications");
+        const sortedNotifications = [...newNotifications].sort(
+          (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+        );
+
+        for (const notification of sortedNotifications) {
+          if (cancelled || recentlyReceivedNotificationIdsRef.current.has(notification.id)) {
+            continue;
+          }
+
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: notification.title,
+              body: notification.message,
+              data: {
+                notificationId: notification.id,
+                orderId: notification.orderId ?? null,
+                deliveryJobId: notification.deliveryJobId ?? null,
+              },
+            },
+            trigger: null,
+          });
+        }
+      } catch (error) {
+        console.warn("local notification fallback failed", error);
+      }
+    };
+
+    void scheduleFallbackNotifications();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    fetchChefCustomRequests,
+    fetchChefOrders,
+    fetchCustomRequests,
+    fetchNotifications,
+    notifications,
+    refreshOrders,
+    token,
+    user,
+  ]);
 
   return null;
 }
@@ -193,6 +327,14 @@ function RootLayoutNav() {
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       <Stack.Screen
+        name="auth/forgot-password"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="auth/reset-password"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
         name="chef/post-story"
         options={{ headerShown: false, animation: "slide_from_bottom", presentation: "modal" }}
       />
@@ -209,7 +351,15 @@ function RootLayoutNav() {
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       <Stack.Screen
+        name="notifications"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
         name="delivery/job/[id]"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="courier/verification"
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       <Stack.Screen
@@ -229,11 +379,19 @@ function RootLayoutNav() {
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       <Stack.Screen
+        name="help/thread/[threadId]"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
         name="help/general"
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       <Stack.Screen
         name="settings/notifications"
+        options={{ headerShown: false, animation: "slide_from_right" }}
+      />
+      <Stack.Screen
+        name="settings/passkeys"
         options={{ headerShown: false, animation: "slide_from_right" }}
       />
       
@@ -262,10 +420,12 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
-            <AppProvider>
-              <PushNotificationsBootstrap />
-              <RootLayoutNav />
-            </AppProvider>
+            <KeyboardProvider>
+              <AppProvider>
+                <PushNotificationsBootstrap />
+                <RootLayoutNav />
+              </AppProvider>
+            </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>
       </ErrorBoundary>

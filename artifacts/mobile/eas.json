@@ -1,0 +1,52 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "android-preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_USE_LOCAL_API": "0",
+        "EXPO_PUBLIC_API_URL": "https://api.nixyah.com/api",
+        "EXPO_PUBLIC_EXPO_PROJECT_ID": "8d45b27c-1dd3-47b7-b34c-46c7eb7d0303",
+        "EXPO_PUBLIC_DIRECTIONS_PROVIDER": "mapbox",
+        "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN": "your_mapbox_public_token",
+        "EXPO_PUBLIC_MAPBOX_DIRECTIONS_PROFILE": "driving-traffic"
+      }
+    },
+    "android-production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_USE_LOCAL_API": "0",
+        "EXPO_PUBLIC_API_URL": "https://api.nixyah.com/api",
+        "EXPO_PUBLIC_EXPO_PROJECT_ID": "8d45b27c-1dd3-47b7-b34c-46c7eb7d0303",
+        "EXPO_PUBLIC_DIRECTIONS_PROVIDER": "mapbox",
+        "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN": "your_mapbox_public_token",
+        "EXPO_PUBLIC_MAPBOX_DIRECTIONS_PROFILE": "driving-traffic"
+      }
+    }
+  },
+  "submit": {
+    "android-internal": {
+      "android": {
+        "serviceAccountKeyPath": "./keys/google-play-service-account.json",
+        "track": "internal",
+        "releaseStatus": "completed"
+      }
+    },
+    "android-production": {
+      "android": {
+        "serviceAccountKeyPath": "./keys/google-play-service-account.json",
+        "track": "production",
+        "releaseStatus": "draft"
+      }
+    }
+  }
+}

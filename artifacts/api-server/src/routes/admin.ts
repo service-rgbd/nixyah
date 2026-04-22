@@ -22,6 +22,7 @@ import {
   adminCourierStatusSchema,
   adminCourierVerifySchema,
 } from "../lib/request-schemas.js";
+import { notifyUsers } from "../lib/notifications.js";
 
 const router = express.Router();
 
@@ -117,6 +118,9 @@ function formatOrderStatus(status: string, deliveryStatus?: string | null) {
   if (status === "delivered") {
     return "Livree";
   }
+  if (status === "cancelled") {
+    return "Annulee";
+  }
   return status;
 }
 
@@ -162,6 +166,8 @@ function buildAdminCourier(profile: typeof courierProfilesTable.$inferSelect, us
     activeInvestigationCount: profile.activeInvestigationCount,
     bonusEarnedAmount: profile.bonusEarnedAmount,
     isDossierComplete: isCourierDossierComplete(profile),
+    rejectionReason: profile.rejectionReason ?? null,
+    rejectionReasonUpdatedAt: profile.rejectionReasonUpdatedAt?.toISOString() ?? null,
     dossierSubmittedAt: profile.dossierSubmittedAt?.toISOString() ?? null,
     lastLocationAt: profile.lastLocationAt?.toISOString() ?? null,
     verificationDocuments: {
@@ -173,6 +179,52 @@ function buildAdminCourier(profile: typeof courierProfilesTable.$inferSelect, us
     },
     status: resolveCourierStatus(profile),
     createdAt: profile.createdAt?.toISOString() ?? null,
+  };
+}
+
+function buildCourierStatusNotification(status: "active" | "suspended" | "pending_verification" | "rejected", rejectionReason?: string | null) {
+  if (status === "active") {
+    return {
+      title: "Profil livreur active",
+      message: "Votre dossier livreur a ete valide. Vous pouvez reprendre les missions.",
+    };
+  }
+
+  if (status === "suspended") {
+    return {
+      title: "Profil livreur suspendu",
+      message: "Votre acces livreur est temporairement suspendu. Contactez le support si besoin.",
+    };
+  }
+
+  if (status === "pending_verification") {
+    return {
+      title: "Dossier livreur en revision",
+      message: "Votre dossier livreur est de nouveau en attente de verification.",
+    };
+  }
+
+  return {
+    title: "Dossier livreur rejete",
+    message: rejectionReason
+      ? `Votre dossier livreur a ete rejete. Motif: ${rejectionReason}`
+      : "Votre dossier livreur a ete rejete. Consultez votre espace dossier pour corriger les pieces demandees.",
+  };
+}
+
+function buildCourierBadgeNotification(isVerified: boolean, rejectionReason?: string | null) {
+  if (isVerified) {
+    return {
+      title: "Badge livreur confirme",
+      message: "Votre badge livreur a ete accorde par l equipe Nixyah.",
+    };
+  }
+
+  return {
+    title: "Badge livreur retire",
+    message: rejectionReason
+      ? `Votre badge livreur a ete retire. Motif: ${rejectionReason}`
+      : "Votre badge livreur a ete retire. Votre dossier peut etre revu a nouveau si necessaire.",
   };
 }
 
@@ -721,24 +773,50 @@ router.post("/admin/couriers/:id/status", requireAdmin, async (req: AuthRequest,
     if (!parsedBody.success) return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
 
     const courierId = parsedCourierId.data;
-    const { status } = parsedBody.data;
+    const { status, rejectionReason } = parsedBody.data;
 
     const [currentProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.id, courierId)).limit(1);
     if (!currentProfile) return res.status(404).json({ error: "NotFound", message: "Livreur introuvable" });
     if ((status === "active" || status === "suspended") && !isCourierDossierComplete(currentProfile)) {
       return res.status(400).json({ error: "BadRequest", message: "Le dossier du livreur doit être complet avant validation." });
     }
+    if (status === "rejected" && !rejectionReason) {
+      return res.status(400).json({ error: "BadRequest", message: "Un motif de rejet est requis." });
+    }
 
-    let updateFields: Partial<{ isVerified: boolean; isAvailable: boolean }> = {};
-    if (status === "active") updateFields = { isVerified: true, isAvailable: true };
-    else if (status === "suspended") updateFields = { isVerified: true, isAvailable: false };
-    else if (status === "rejected") updateFields = { isVerified: false, isAvailable: false };
-    else if (status === "pending_verification") updateFields = { isVerified: false, isAvailable: true };
+    let updateFields: Partial<typeof courierProfilesTable.$inferInsert> = {};
+    if (status === "active") updateFields = { isVerified: true, isAvailable: true, rejectionReason: null, rejectionReasonUpdatedAt: null };
+    else if (status === "suspended") updateFields = { isVerified: true, isAvailable: false, rejectionReason: null, rejectionReasonUpdatedAt: null };
+    else if (status === "rejected") {
+      updateFields = {
+        isVerified: false,
+        isAvailable: false,
+        rejectionReason,
+        rejectionReasonUpdatedAt: new Date(),
+      };
+    }
+    else if (status === "pending_verification") updateFields = { isVerified: false, isAvailable: true, rejectionReason: null, rejectionReasonUpdatedAt: null };
     else return res.status(400).json({ error: "BadRequest", message: "Statut inconnu" });
 
     const [updated] = await db.update(courierProfilesTable).set(updateFields).where(eq(courierProfilesTable.id, courierId)).returning();
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+
+    const notification = buildCourierStatusNotification(status, rejectionReason);
+    await notifyUsers({
+      userIds: [updated.userId],
+      type: "system",
+      title: notification.title,
+      message: notification.message,
+      data: {
+        screen: "courier/verification",
+        courierStatus: status,
+        rejectionReason: rejectionReason ?? null,
+      },
+      pushOptions: { channelId: "system", priority: "high" },
+    }).catch((error) => {
+      console.error("admin update courier status notify error", error);
+    });
 
     return res.json({ courier: buildAdminCourier(updated, user ?? null) });
   } catch (error) {
@@ -755,7 +833,7 @@ router.post("/admin/couriers/:id/verify", requireAdmin, async (req: AuthRequest,
     if (!parsedBody.success) return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
 
     const courierId = parsedCourierId.data;
-    const { isVerified } = parsedBody.data;
+    const { isVerified, rejectionReason } = parsedBody.data;
 
     const [currentProfile] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.id, courierId)).limit(1);
     if (!currentProfile) return res.status(404).json({ error: "NotFound", message: "Livreur introuvable" });
@@ -763,9 +841,29 @@ router.post("/admin/couriers/:id/verify", requireAdmin, async (req: AuthRequest,
       return res.status(400).json({ error: "BadRequest", message: "Le dossier du livreur doit être complet avant validation." });
     }
 
-    const [updated] = await db.update(courierProfilesTable).set({ isVerified }).where(eq(courierProfilesTable.id, courierId)).returning();
+    const [updated] = await db.update(courierProfilesTable).set({
+      isVerified,
+      rejectionReason: isVerified ? null : currentProfile.rejectionReason ?? rejectionReason ?? null,
+      rejectionReasonUpdatedAt: isVerified ? null : currentProfile.rejectionReasonUpdatedAt ?? null,
+    }).where(eq(courierProfilesTable.id, courierId)).returning();
 
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, updated.userId));
+
+    const notification = buildCourierBadgeNotification(isVerified, rejectionReason);
+    await notifyUsers({
+      userIds: [updated.userId],
+      type: "system",
+      title: notification.title,
+      message: notification.message,
+      data: {
+        screen: "courier/verification",
+        isVerified,
+        rejectionReason: rejectionReason ?? null,
+      },
+      pushOptions: { channelId: "system", priority: "high" },
+    }).catch((error) => {
+      console.error("admin verify courier notify error", error);
+    });
 
     return res.json({ courier: buildAdminCourier(updated, user ?? null) });
   } catch (error) {

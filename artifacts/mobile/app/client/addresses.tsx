@@ -22,6 +22,7 @@ import {
   saveDeliveryAddress,
   type SavedDeliveryAddress,
 } from "@/constants/delivery-address";
+import { shouldUseNativeMaps } from "@/constants/native-maps";
 import { useApp } from "@/contexts/AppContext";
 
 function formatReverseGeocode(result: Location.LocationGeocodedAddress | null, fallback: string): string {
@@ -68,6 +69,7 @@ export default function ClientAddressesScreen() {
   const [loadingSavedAddress, setLoadingSavedAddress] = useState(true);
   const [detectingLocation, setDetectingLocation] = useState(false);
   const [saving, setSaving] = useState(false);
+  const nativeMapsEnabled = shouldUseNativeMaps();
 
   const mapRegion = useMemo(() => buildRegion(draftPoint), [draftPoint]);
 
@@ -220,27 +222,41 @@ export default function ClientAddressesScreen() {
           <View style={styles.mapCard}>
             <View style={styles.mapHeader}>
               <Text style={styles.mapTitle}>Point exact sur la carte</Text>
-              <Text style={styles.mapHint}>Touchez la carte ou deplacez l'epingle pour affiner la livraison.</Text>
+              <Text style={styles.mapHint}>
+                {nativeMapsEnabled
+                  ? "Touchez la carte ou deplacez l'epingle pour affiner la livraison."
+                  : "La carte native Android est temporairement masquée dans cette version pour éviter les crashs."}
+              </Text>
             </View>
-            <MapView
-              key={draftPoint ? `${draftPoint.latitude.toFixed(5)}:${draftPoint.longitude.toFixed(5)}` : "default-address-map"}
-              style={styles.map}
-              initialRegion={mapRegion}
-              onPress={(event) => {
-                void applyPoint(event.nativeEvent.coordinate);
-              }}
-            >
-              {draftPoint ? (
-                <Marker
-                  coordinate={draftPoint}
-                  draggable
-                  pinColor={Colors.light.tint}
-                  onDragEnd={(event) => {
-                    void applyPoint(event.nativeEvent.coordinate);
-                  }}
-                />
-              ) : null}
-            </MapView>
+            {nativeMapsEnabled ? (
+              <MapView
+                key={draftPoint ? `${draftPoint.latitude.toFixed(5)}:${draftPoint.longitude.toFixed(5)}` : "default-address-map"}
+                style={styles.map}
+                initialRegion={mapRegion}
+                onPress={(event) => {
+                  void applyPoint(event.nativeEvent.coordinate);
+                }}
+              >
+                {draftPoint ? (
+                  <Marker
+                    coordinate={draftPoint}
+                    draggable
+                    pinColor={Colors.light.tint}
+                    onDragEnd={(event) => {
+                      void applyPoint(event.nativeEvent.coordinate);
+                    }}
+                  />
+                ) : null}
+              </MapView>
+            ) : (
+              <View style={styles.mapFallback}>
+                <Feather name="map-pin" size={24} color={Colors.light.tint} />
+                <Text style={styles.mapFallbackTitle}>Carte Android désactivée</Text>
+                <Text style={styles.mapFallbackText}>
+                  Utilisez "Ma position actuelle" puis enregistrez l'adresse. La saisie manuelle reste disponible sans risque de crash.
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -286,6 +302,21 @@ const styles = StyleSheet.create({
   mapTitle: { fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   mapHint: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", lineHeight: 18 },
   map: { height: 220 },
+  mapFallback: {
+    height: 220,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    gap: 8,
+    backgroundColor: Colors.light.backgroundSecondary,
+  },
+  mapFallbackTitle: { fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  mapFallbackText: {
+    color: Colors.light.textSecondary,
+    fontFamily: "Poppins_400Regular",
+    lineHeight: 20,
+    textAlign: "center",
+  },
   cardTitle: { fontFamily: "Poppins_600SemiBold", fontSize: 16, color: Colors.light.text },
   addressText: { fontFamily: "Poppins_600SemiBold", color: Colors.light.text, lineHeight: 22 },
   addressMeta: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular" },

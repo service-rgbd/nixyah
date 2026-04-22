@@ -17,6 +17,7 @@ import { requireAuth, requireOperationalChef, requireClient, requireCourier, req
 import { parseWithSchema, idParamSchema } from "../lib/validation.js";
 import {
   clientDeliveryLocationBodySchema,
+  deliveryCompletionBodySchema,
   courierLocationBodySchema,
   deliveryAvailabilityBodySchema,
   deliveryJobLocationBodySchema,
@@ -28,6 +29,7 @@ const router = express.Router();
 const BROADCAST_ETA_STEPS_MINUTES = [10, 20] as const;
 const BROADCAST_STEP_DURATION_MS = 1 * 60 * 1000;
 const BROADCAST_WINDOW_MS = BROADCAST_ETA_STEPS_MINUTES.length * BROADCAST_STEP_DURATION_MS;
+const MAX_COURIERS_PER_BROADCAST_STEP = 6;
 const courierLocationLimiter = buildApiRateLimiter({
   windowMs: 60 * 1000,
   max: 120,
@@ -38,6 +40,7 @@ const clientLocationLimiter = buildApiRateLimiter({
   max: 30,
   message: "Trop de mises a jour de destination. Reessayez dans une minute.",
 });
+const DELIVERY_COMPLETION_MAX_DISTANCE_KM = 0.15;
 
 type MapPoint = {
   latitude: number;
@@ -225,6 +228,27 @@ function canRebroadcastDeliverySearch(job: typeof deliveryJobsTable.$inferSelect
   return !job.courierUserId && !["delivered"].includes(job.status) && isBroadcastExpired(job.broadcastedAt, now);
 }
 
+function hasMeaningfulDestinationChange(params: {
+  currentAddress: string;
+  nextAddress: string;
+  currentLatitude?: number | null;
+  currentLongitude?: number | null;
+  nextLatitude: number;
+  nextLongitude: number;
+}) {
+  if (params.currentAddress.trim() !== params.nextAddress.trim()) {
+    return true;
+  }
+
+  const currentPoint = toPoint(params.currentLatitude, params.currentLongitude);
+  const nextPoint = toPoint(params.nextLatitude, params.nextLongitude);
+  if (!currentPoint || !nextPoint) {
+    return currentPoint?.latitude !== nextPoint?.latitude || currentPoint?.longitude !== nextPoint?.longitude;
+  }
+
+  return getDistanceKm(currentPoint, nextPoint) >= 0.03;
+}
+
 async function notifyCouriersAboutDeliveryJob(jobId: number, courierUserIds: number[]) {
   if (courierUserIds.length === 0) {
     return;
@@ -367,18 +391,50 @@ async function syncDeliveryJobOffers(jobId: number) {
   ]);
 
   const offeredCourierIds = new Set(existingOffers.map((offer) => offer.courierUserId));
-  const newCouriers = couriers.filter((courier) => {
-    if (offeredCourierIds.has(courier.userId)) {
-      return false;
-    }
+  const rankedCouriers = couriers
+    .filter((courier) => !offeredCourierIds.has(courier.userId))
+    .map((courier) => {
+      const courierPoint = toPoint(courier.currentLatitude, courier.currentLongitude);
+      const etaMinutes = restaurantPoint && courierPoint
+        ? getTravelMinutes(restaurantPoint, courierPoint, courier.vehicleType)
+        : null;
+      const distanceKm = restaurantPoint && courierPoint
+        ? getDistanceKm(restaurantPoint, courierPoint)
+        : null;
 
-    const courierPoint = toPoint(courier.currentLatitude, courier.currentLongitude);
-    if (!restaurantPoint || !courierPoint) {
-      return true;
-    }
+      return {
+        courier,
+        etaMinutes,
+        distanceKm,
+        hasKnownLocation: Boolean(courierPoint),
+      };
+    })
+    .filter((entry) => entry.etaMinutes == null || entry.etaMinutes <= maxEtaMinutes)
+    .sort((left, right) => {
+      if (left.hasKnownLocation !== right.hasKnownLocation) {
+        return left.hasKnownLocation ? -1 : 1;
+      }
 
-    return getTravelMinutes(restaurantPoint, courierPoint, courier.vehicleType) <= maxEtaMinutes;
-  });
+      const leftEta = left.etaMinutes ?? Number.POSITIVE_INFINITY;
+      const rightEta = right.etaMinutes ?? Number.POSITIVE_INFINITY;
+      if (leftEta !== rightEta) {
+        return leftEta - rightEta;
+      }
+
+      const leftDistance = left.distanceKm ?? Number.POSITIVE_INFINITY;
+      const rightDistance = right.distanceKm ?? Number.POSITIVE_INFINITY;
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+
+      const leftLocationAge = left.courier.lastLocationAt?.getTime() ?? 0;
+      const rightLocationAge = right.courier.lastLocationAt?.getTime() ?? 0;
+      return rightLocationAge - leftLocationAge;
+    });
+
+  const newCouriers = rankedCouriers
+    .slice(0, MAX_COURIERS_PER_BROADCAST_STEP)
+    .map((entry) => entry.courier);
 
   if (newCouriers.length > 0) {
     await db.insert(deliveryOffersTable).values(
@@ -414,6 +470,44 @@ async function syncOpenDeliveryBroadcasts() {
   await Promise.all(jobs.map((job) => syncDeliveryJobOffers(job.id)));
 }
 
+async function hydrateDeliveryJobCoordinates(job: typeof deliveryJobsTable.$inferSelect) {
+  const nextRestaurantPoint =
+    job.restaurantLatitude == null || job.restaurantLongitude == null
+      ? await geocodeAddress(job.restaurantAddress)
+      : null;
+  const nextClientPoint =
+    job.deliveryLatitude == null || job.deliveryLongitude == null
+      ? await geocodeAddress(job.deliveryAddress)
+      : null;
+
+  if (!nextRestaurantPoint && !nextClientPoint) {
+    return job;
+  }
+
+  const [updatedJob] = await db
+    .update(deliveryJobsTable)
+    .set({
+      restaurantLatitude: nextRestaurantPoint?.latitude ?? job.restaurantLatitude,
+      restaurantLongitude: nextRestaurantPoint?.longitude ?? job.restaurantLongitude,
+      deliveryLatitude: nextClientPoint?.latitude ?? job.deliveryLatitude,
+      deliveryLongitude: nextClientPoint?.longitude ?? job.deliveryLongitude,
+    })
+    .where(eq(deliveryJobsTable.id, job.id))
+    .returning();
+
+  if (nextClientPoint) {
+    await db
+      .update(ordersTable)
+      .set({
+        deliveryLatitude: nextClientPoint.latitude,
+        deliveryLongitude: nextClientPoint.longitude,
+      })
+      .where(eq(ordersTable.id, job.orderId));
+  }
+
+  return updatedJob ?? job;
+}
+
 async function getDeliveryJobPayload(jobId: number) {
   let [job] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.id, jobId)).limit(1);
   if (!job) {
@@ -428,6 +522,8 @@ async function getDeliveryJobPayload(jobId: number) {
     }
     job = freshJob;
   }
+
+  job = await hydrateDeliveryJobCoordinates(job);
 
   const [order] = await db.select().from(ordersTable).where(eq(ordersTable.id, job.orderId)).limit(1);
 
@@ -1190,11 +1286,26 @@ router.post("/delivery/jobs/:jobId/client-location", requireClient, clientLocati
       return res.status(404).json({ error: "NotFound", message: "Mission introuvable" });
     }
 
-    if (["delivered", "cancelled"].includes(job.status)) {
+    if (["picked_up", "on_the_way", "delivered", "cancelled"].includes(job.status)) {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "La destination ne peut plus etre modifiee apres la prise en charge de la commande",
+      });
+    }
+
+    if (!["broadcasting", "available", "accepted"].includes(job.status)) {
       return res.status(409).json({ error: "Conflict", message: "Cette mission ne peut plus etre mise a jour" });
     }
 
     const nextAddress = deliveryAddress || job.deliveryAddress;
+    const destinationChanged = hasMeaningfulDestinationChange({
+      currentAddress: job.deliveryAddress,
+      nextAddress,
+      currentLatitude: job.deliveryLatitude,
+      currentLongitude: job.deliveryLongitude,
+      nextLatitude: latitude,
+      nextLongitude: longitude,
+    });
 
     await db
       .update(deliveryJobsTable)
@@ -1214,6 +1325,32 @@ router.post("/delivery/jobs/:jobId/client-location", requireClient, clientLocati
       })
       .where(eq(ordersTable.id, job.orderId));
 
+    if (destinationChanged) {
+      const [chefProfile] = await db
+        .select()
+        .from(chefProfilesTable)
+        .where(eq(chefProfilesTable.id, job.chefProfileId))
+        .limit(1);
+
+      await notifyUsers({
+        userIds: [job.courierUserId, chefProfile?.userId].filter((value): value is number => typeof value === "number"),
+        type: "order",
+        title: "Destination mise a jour",
+        message: `${job.clientName} a mis a jour son point de livraison. Consultez le nouveau trajet avant de partir.`,
+        orderId: job.orderId,
+        deliveryJobId: job.id,
+        data: {
+          screen: "delivery-tracking",
+          orderId: String(job.orderId),
+          deliveryJobId: String(job.id),
+        },
+        pushOptions: {
+          channelId: "default",
+          priority: "high",
+        },
+      });
+    }
+
     const payload = await getDeliveryJobPayload(job.id);
     return res.json({ job: payload });
   } catch (error) {
@@ -1224,10 +1361,71 @@ router.post("/delivery/jobs/:jobId/client-location", requireClient, clientLocati
 
 router.post("/delivery/jobs/:jobId/complete", requireVerifiedCourier, async (req: AuthRequest, res) => {
   try {
-    const jobId = Number(req.params.jobId);
-    if (!Number.isInteger(jobId) || jobId <= 0) {
+    const parsedJobId = parseWithSchema(idParamSchema, req.params.jobId);
+    const parsedBody = parseWithSchema(deliveryCompletionBodySchema, req.body);
+    if (!parsedJobId.success) {
       return res.status(400).json({ error: "BadRequest", message: "Mission invalide" });
     }
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: "BadRequest", message: parsedBody.message });
+    }
+
+    const jobId = parsedJobId.data;
+    const { latitude, longitude, accuracy } = parsedBody.data;
+
+    const [activeJob] = await db
+      .select()
+      .from(deliveryJobsTable)
+      .where(
+        and(
+          eq(deliveryJobsTable.id, jobId),
+          eq(deliveryJobsTable.courierUserId, req.userId!),
+          or(eq(deliveryJobsTable.status, "picked_up"), eq(deliveryJobsTable.status, "on_the_way")),
+        ),
+      )
+      .limit(1);
+
+    if (!activeJob) {
+      return res.status(404).json({ error: "NotFound", message: "Mission introuvable ou invalide" });
+    }
+
+    const destinationPoint = toPoint(activeJob.deliveryLatitude, activeJob.deliveryLongitude);
+    const courierPoint = toPoint(latitude, longitude);
+    if (!destinationPoint || !courierPoint) {
+      return res.status(409).json({
+        error: "Conflict",
+        message: "La destination de livraison est incomplete. Impossible de confirmer la remise.",
+      });
+    }
+
+    const distanceToDestinationKm = getDistanceKm(courierPoint, destinationPoint);
+    const effectiveAccuracyKm = Number.isFinite(accuracy) ? Math.min(Number(accuracy) / 1000, 0.1) : 0;
+    if (distanceToDestinationKm > DELIVERY_COMPLETION_MAX_DISTANCE_KM + effectiveAccuracyKm) {
+      return res.status(409).json({
+        error: "TooFarFromDestination",
+        message: `Le livreur doit se trouver a moins de ${Math.round(DELIVERY_COMPLETION_MAX_DISTANCE_KM * 1000)} m du point de livraison pour confirmer la remise.`,
+        distanceMeters: Math.round(distanceToDestinationKm * 1000),
+      });
+    }
+
+    await db.insert(deliveryLocationUpdatesTable).values({
+      deliveryJobId: activeJob.id,
+      courierUserId: req.userId!,
+      latitude,
+      longitude,
+      accuracy: Number.isFinite(accuracy) ? accuracy : null,
+      heading: null,
+      speed: null,
+    });
+
+    await db
+      .update(courierProfilesTable)
+      .set({
+        currentLatitude: latitude,
+        currentLongitude: longitude,
+        lastLocationAt: new Date(),
+      })
+      .where(eq(courierProfilesTable.userId, req.userId!));
 
     const [job] = await db
       .update(deliveryJobsTable)
@@ -1258,7 +1456,7 @@ router.post("/delivery/jobs/:jobId/complete", requireVerifiedCourier, async (req
       userIds: [job.clientId, chefUser?.id].filter((value): value is number => typeof value === "number"),
       type: "order",
       title: "Livraison terminee",
-      message: "La commande a ete livree avec succes. Vous pouvez maintenant noter le restaurant et la livraison.",
+      message: "La commande a ete livree avec succes et la remise a ete confirmee sur place. Vous pouvez maintenant noter le restaurant et la livraison.",
       orderId: job.orderId,
       deliveryJobId: job.id,
       data: {

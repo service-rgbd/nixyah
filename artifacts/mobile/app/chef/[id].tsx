@@ -271,6 +271,9 @@ function DishCard({
             <Feather name="image" size={22} color={Colors.light.textTertiary} />
           </View>
         )}
+      </View>
+
+      <View style={styles.dishBody}>
         <View style={styles.dishBadgeRow}>
           <View style={styles.categoryBadge}>
             <Text style={styles.categoryBadgeText}>{dish.category}</Text>
@@ -282,13 +285,6 @@ function DishCard({
             </View>
           ) : null}
         </View>
-        {/* Tap hint */}
-        <View style={styles.dishDetailHint}>
-          <Feather name="info" size={12} color="rgba(255,255,255,0.9)" />
-        </View>
-      </View>
-
-      <View style={styles.dishBody}>
         <View style={styles.dishHeaderRow}>
           <View style={styles.dishHeaderMeta}>
             <Text style={styles.dishName}>{dish.name}</Text>
@@ -305,21 +301,20 @@ function DishCard({
         </View>
 
         <View style={styles.metaRow}>
-          <View style={styles.metaPill}>
-            <Feather name="clock" size={12} color={Colors.light.textTertiary} />
-            <Text style={styles.metaPillText}>{dish.prepTime}</Text>
-          </View>
-          {discountPercent > 0 ? (
-            <View style={styles.discountBadge}>
-              <Text style={styles.discountBadgeText}>-{discountPercent}%</Text>
+          <View style={styles.metaRowLeft}>
+            <View style={styles.metaPill}>
+              <Feather name="clock" size={12} color={Colors.light.textTertiary} />
+              <Text style={styles.metaPillText}>{dish.prepTime}</Text>
             </View>
-          ) : null}
-        </View>
-
-        {orderingEnabled ? (
-          <View style={styles.dishActionRow}>
-            {quantity > 0 ? (
-              <View style={styles.qtyControl}>
+            {discountPercent > 0 ? (
+              <View style={styles.discountBadge}>
+                <Text style={styles.discountBadgeText}>-{discountPercent}%</Text>
+              </View>
+            ) : null}
+          </View>
+          {orderingEnabled ? (
+            quantity > 0 ? (
+              <View style={styles.qtyControlCompact}>
                 <Pressable style={styles.qtyBtn} onPress={(e) => { e.stopPropagation?.(); onRemove(); }} disabled={isLoading}>
                   <Feather name="minus" size={15} color={Colors.light.tint} />
                 </Pressable>
@@ -329,18 +324,19 @@ function DishCard({
                 </Pressable>
               </View>
             ) : (
-              <Pressable style={styles.addBtn} onPress={(e) => { e.stopPropagation?.(); onAdd(); }} disabled={isLoading}>
-                <Feather name="plus" size={17} color="#fff" />
-                <Text style={styles.addBtnText}>Ajouter</Text>
+              <Pressable style={styles.addIconBtn} onPress={(e) => { e.stopPropagation?.(); onAdd(); }} disabled={isLoading}>
+                <Feather name="plus" size={16} color="#fff" />
               </Pressable>
-            )}
-          </View>
-        ) : (
+            )
+          ) : null}
+        </View>
+
+        {!orderingEnabled ? (
           <View style={styles.readOnlyBanner}>
             <Feather name="eye" size={14} color={Colors.light.textSecondary} />
             <Text style={styles.readOnlyBannerText}>Consultatif livreur</Text>
           </View>
-        )}
+        ) : null}
       </View>
     </Pressable>
   );
@@ -375,25 +371,25 @@ function MenuTile({
             <Feather name="image" size={18} color={Colors.light.textTertiary} />
           </View>
         )}
-        <View style={styles.menuTileTopBadges}>
-          {dish.isPopular ? (
+      </View>
+      <View style={styles.menuTileBody}>
+        {dish.isPopular ? (
+          <View style={styles.menuTileTopBadges}>
             <View style={styles.menuTileBadge}>
               <Text style={styles.menuTileBadgeText}>⚡ Rapide</Text>
             </View>
-          ) : null}
-        </View>
-        <View style={styles.menuTileInfoIcon}>
-          <Feather name="info" size={12} color="rgba(255,255,255,0.9)" />
-        </View>
-      </View>
-      <View style={styles.menuTileBody}>
+          </View>
+        ) : null}
         <Text style={styles.menuTileName} numberOfLines={2}>{dish.name}</Text>
         <Text style={styles.menuTileCategory} numberOfLines={1}>{dish.category}</Text>
-        <View style={styles.menuTileBottomRow}>
-          <Text style={styles.menuTilePrice}>{formatPrice(getDishCurrentPrice(dish))}</Text>
+        <View style={styles.menuTileMetaInline}>
+          <View style={styles.menuTilePrepPill}>
+            <Feather name="clock" size={11} color={Colors.light.textSecondary} />
+            <Text style={styles.menuTilePrepText}>{dish.prepTime}</Text>
+          </View>
           {orderingEnabled ? (
             quantity > 0 ? (
-              <View style={styles.menuQtyControl}>
+              <View style={styles.menuQtyControlCompact}>
                 <Pressable style={styles.qtyBtn} onPress={(e) => { e.stopPropagation?.(); onRemove(); }} disabled={isLoading}>
                   <Feather name="minus" size={13} color={Colors.light.tint} />
                 </Pressable>
@@ -403,11 +399,14 @@ function MenuTile({
                 </Pressable>
               </View>
             ) : (
-              <Pressable style={styles.menuTileBtn} onPress={(e) => { e.stopPropagation?.(); onAdd(); }} disabled={isLoading}>
-                <Feather name="plus" size={13} color="#fff" />
+              <Pressable style={styles.menuTileIconBtn} onPress={(e) => { e.stopPropagation?.(); onAdd(); }} disabled={isLoading}>
+                <Feather name="plus" size={15} color="#fff" />
               </Pressable>
             )
           ) : null}
+        </View>
+        <View style={styles.menuTileBottomRow}>
+          <Text style={styles.menuTilePrice}>{formatPrice(getDishCurrentPrice(dish))}</Text>
         </View>
       </View>
     </Pressable>
@@ -417,6 +416,7 @@ function MenuTile({
 // ─── Story tiles ──────────────────────────────────────────────────────────────
 function StoryTile({ story, size = "half" }: { story: Story; size?: "half" | "full" }) {
   const isVideo = Boolean(story.videoUrl);
+  const hasOffer = Boolean(story.dishName || typeof story.price === "number");
   return (
     <Pressable
       style={[styles.storyTile, size === "full" && styles.storyTileFull]}
@@ -429,20 +429,47 @@ function StoryTile({ story, size = "half" }: { story: Story; size?: "half" | "fu
           <Text style={styles.storyTileFallbackEmoji}>{story.emoji ?? "🍽️"}</Text>
         </View>
       )}
-      {/* Gradient overlay */}
-      <View style={styles.storyTileGradient} />
+      <Gradient
+        colors={["rgba(12,8,6,0.05)", "rgba(12,8,6,0.18)", "rgba(12,8,6,0.78)"]}
+        style={styles.storyTileGradient}
+      />
       <View style={styles.storyTileOverlay}>
+        <View style={styles.storyTileTopRow}>
+          <View style={styles.storyTileKicker}>
+            <Text style={styles.storyTileKickerText}>{isVideo ? "Video" : "Story"}</Text>
+          </View>
+          {story.dishName ? (
+            <View style={styles.storyTileDishPill}>
+              <Text style={styles.storyTileDishPillText} numberOfLines={1}>{story.dishName}</Text>
+            </View>
+          ) : null}
+        </View>
         {isVideo ? (
           <View style={styles.storyTilePlayBtn}>
             <Feather name="play" size={14} color="#fff" />
           </View>
-        ) : null}
+        ) : (
+          <View />
+        )}
         <View style={styles.storyTileBottom}>
           <Text style={styles.storyTileDate}>{formatStoryDate(story.createdAt)}</Text>
           <Text style={styles.storyTileCaption} numberOfLines={2}>{story.caption || "Story"}</Text>
+          {hasOffer ? (
+            <View style={styles.storyTileOfferRow}>
+              {typeof story.price === "number" ? (
+                <Text style={styles.storyTilePrice}>{formatPrice(story.price)}</Text>
+              ) : null}
+              {story.dishName && size === "full" ? (
+                <Text style={styles.storyTileOfferHint} numberOfLines={1}>Autour de {story.dishName}</Text>
+              ) : null}
+            </View>
+          ) : null}
           <View style={styles.storyTileStats}>
             <Feather name="heart" size={11} color="rgba(255,255,255,0.7)" />
             <Text style={styles.storyTileStatsTxt}>{story.likeCount}</Text>
+            <Text style={styles.storyTileStatsSep}>•</Text>
+            <Feather name="message-circle" size={11} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.storyTileStatsTxt}>{story.commentCount}</Text>
           </View>
         </View>
       </View>
@@ -694,57 +721,59 @@ export default function ChefDetailScreen() {
             </View>
           </View>
 
+          <View style={styles.heroBottom}>
           {/* Avatar + info compact row */}
           <View style={styles.heroContent}>
             <View style={styles.avatarWrap}>
-              {chef.avatarUrl ? (
-                <CachedRemoteImage uri={chef.avatarUrl} style={styles.avatarImage} />
-              ) : (
-                <Text style={styles.avatarInitials}>{initials}</Text>
-              )}
+              <View style={styles.avatarMedia}>
+                {chef.avatarUrl ? (
+                  <CachedRemoteImage uri={chef.avatarUrl} style={styles.avatarImage} />
+                ) : (
+                  <View style={[styles.avatarFallback, { backgroundColor: chef.coverColor ?? Colors.light.tint }]}>
+                    <Text style={styles.avatarInitials}>{initials}</Text>
+                  </View>
+                )}
+              </View>
               {chef.isOnline ? <View style={styles.avatarOnlineDot} /> : null}
             </View>
             <View style={styles.heroTextWrap}>
               <View style={styles.heroTitleRow}>
                 <Text style={styles.heroName} numberOfLines={1}>{chef.name}</Text>
                 {chef.isVerified ? <Ionicons name="checkmark-circle" size={16} color="#7FDBBF" /> : null}
-                {chef.isOnline ? (
-                  <View style={styles.heroPillOnline}>
-                    <View style={styles.onlineDot} />
-                    <Text style={styles.heroPillOnlineText}>En ligne</Text>
-                  </View>
-                ) : null}
               </View>
               <Text style={styles.heroSubtitle} numberOfLines={1}>{chef.specialty}</Text>
-              <View style={styles.heroPillRow}>
-                <View style={styles.heroPill}>
-                  <Ionicons name="star" size={11} color="#F7C27B" />
-                  <Text style={styles.heroPillText}>{chef.rating.toFixed(1)}</Text>
-                </View>
-                <View style={styles.heroPill}>
-                  <Feather name="map-pin" size={11} color="rgba(255,255,255,0.72)" />
-                  <Text style={styles.heroPillText} numberOfLines={1}>{chef.location}</Text>
-                </View>
-              </View>
+              <Text style={styles.heroSupportingLine} numberOfLines={1}>
+                {chef.location.split(",")[0]} · {chef.responseTime} · {chef.isOnline ? "Disponible" : "Sur commande"}
+              </Text>
             </View>
           </View>
+          {chef.bio ? <Text style={styles.heroBio} numberOfLines={2}>{chef.bio}</Text> : null}
 
           {/* Compact stats strip */}
           <View style={styles.heroStatsStrip}>
             <View style={styles.heroStatItem}>
+              <Text style={styles.heroStatCaption}>Note</Text>
+              <Text style={styles.heroStatValue}>{chef.rating.toFixed(1)}</Text>
+            </View>
+            <View style={styles.heroStatSep} />
+            <View style={styles.heroStatItem}>
+              <Text style={styles.heroStatCaption}>Carte</Text>
               <Text style={styles.heroStatValue}>{menuDishes.length}</Text>
               <Text style={styles.heroStatLabel}>Plats</Text>
             </View>
             <View style={styles.heroStatSep} />
             <View style={styles.heroStatItem}>
+              <Text style={styles.heroStatCaption}>Avis</Text>
               <Text style={styles.heroStatValue}>{chef.reviewCount}</Text>
-              <Text style={styles.heroStatLabel}>Avis</Text>
+              <Text style={styles.heroStatLabel}>Retours</Text>
             </View>
             <View style={styles.heroStatSep} />
             <View style={styles.heroStatItem}>
+              <Text style={styles.heroStatCaption}>Stories</Text>
               <Text style={styles.heroStatValue}>{stories.length}</Text>
               <Text style={styles.heroStatLabel}>Stories</Text>
             </View>
+          </View>
           </View>
         </View>
 
@@ -772,18 +801,20 @@ export default function ChefDetailScreen() {
             </View>
 
             {highlightedDishes.length > 0 ? (
-              highlightedDishes.map((dish) => (
-                <DishCard
-                  key={dish.id}
-                  dish={dish}
-                  quantity={isCourier ? 0 : (cart[dish.id]?.quantity || 0)}
-                  onAdd={() => addToCart(dish.id)}
-                  onRemove={() => removeFromCart(dish.id)}
-                  isLoading={changingDishId === dish.id}
-                  orderingEnabled={orderingEnabled && !isCourier}
-                  onOpenDetail={() => openDishModal(dish)}
-                />
-              ))
+              <View style={styles.dishGrid}>
+                {highlightedDishes.map((dish) => (
+                  <DishCard
+                    key={dish.id}
+                    dish={dish}
+                    quantity={isCourier ? 0 : (cart[dish.id]?.quantity || 0)}
+                    onAdd={() => addToCart(dish.id)}
+                    onRemove={() => removeFromCart(dish.id)}
+                    isLoading={changingDishId === dish.id}
+                    orderingEnabled={orderingEnabled && !isCourier}
+                    onOpenDetail={() => openDishModal(dish)}
+                  />
+                ))}
+              </View>
             ) : (
               <View style={styles.emptyState}>
                 <Feather name="coffee" size={42} color={Colors.light.textTertiary} />
@@ -814,7 +845,7 @@ export default function ChefDetailScreen() {
             {hasCustomService ? (
               <View style={styles.serviceCardCompact}>
                 <View style={styles.serviceCardCompactCopy}>
-                  <Text style={styles.serviceCardCompactEyebrow}>Sur-mesure</Text>
+                  <Text style={styles.serviceCardCompactEyebrow}>Demande sur mesure</Text>
                   <Text style={styles.serviceCardCompactTitle}>{customPackages.length} formule(s) événement publiées</Text>
                   <Text style={styles.serviceCardCompactMeta}>
                     À partir de {formatPrice(Math.min(...customPackages.map((dish) => getDishCurrentPrice(dish))))} / pers.
@@ -837,7 +868,7 @@ export default function ChefDetailScreen() {
           <View style={styles.sectionWrap}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionEyebrow}>Menu</Text>
-              <Text style={styles.sectionTitle}>Carte simple à parcourir</Text>
+              <Text style={styles.sectionTitle}>Carte a parcourir</Text>
             </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
@@ -973,7 +1004,7 @@ export default function ChefDetailScreen() {
             {/* Bio */}
             <View style={styles.aboutCard}>
               <View style={styles.aboutCardHeader}>
-                <View style={[styles.aboutCardIconWrap, { backgroundColor: "#FFF4E8" }]}>
+                <View style={styles.aboutCardIconWrap}>
                   <Feather name="user" size={16} color={Colors.light.tint} />
                 </View>
                 <Text style={styles.aboutTitle}>À propos</Text>
@@ -984,7 +1015,7 @@ export default function ChefDetailScreen() {
             {/* Spécialités */}
             <View style={styles.aboutCard}>
               <View style={styles.aboutCardHeader}>
-                <View style={[styles.aboutCardIconWrap, { backgroundColor: "#F0FDF4" }]}>
+                <View style={styles.aboutCardIconWrap}>
                   <Feather name="award" size={16} color="#059669" />
                 </View>
                 <Text style={styles.aboutTitle}>Spécialités</Text>
@@ -1021,7 +1052,7 @@ export default function ChefDetailScreen() {
             {/* Zone & prix */}
             <View style={styles.aboutCard}>
               <View style={styles.aboutCardHeader}>
-                <View style={[styles.aboutCardIconWrap, { backgroundColor: "#EFF6FF" }]}>
+                <View style={styles.aboutCardIconWrap}>
                   <Feather name="map-pin" size={16} color="#3B82F6" />
                 </View>
                 <Text style={styles.aboutTitle}>Zone & gamme de prix</Text>
@@ -1042,7 +1073,7 @@ export default function ChefDetailScreen() {
             {topCategories.length > 0 ? (
               <View style={styles.aboutCard}>
                 <View style={styles.aboutCardHeader}>
-                  <View style={[styles.aboutCardIconWrap, { backgroundColor: "#FDF4FF" }]}>
+                  <View style={styles.aboutCardIconWrap}>
                     <Feather name="grid" size={16} color="#9333EA" />
                   </View>
                   <Text style={styles.aboutTitle}>Catégories fortes</Text>
@@ -1141,29 +1172,35 @@ const styles = StyleSheet.create({
   emptyScreenText: { fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, textAlign: "center" },
 
   // ── Compact Hero ────────────────────────────────────────────────────────
-  hero: { paddingHorizontal: 20, paddingBottom: 20, overflow: "hidden", minHeight: 200 },
+  hero: { paddingHorizontal: 20, paddingBottom: 20, overflow: "hidden", minHeight: 308 },
   heroImageBgStyle: { opacity: 0.9 },
-  heroImageOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(20,12,5,0.58)" },
-  heroActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
+  heroImageOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(20,12,5,0.46)" },
+  heroActions: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 28 },
   heroActionRight: { flexDirection: "row", gap: 8 },
   heroIconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center" },
-  heroContent: { flexDirection: "row", gap: 14, alignItems: "center", marginBottom: 16 },
-  avatarWrap: { width: 76, height: 76, borderRadius: 38, backgroundColor: "rgba(255,255,255,0.18)", borderWidth: 2.5, borderColor: "rgba(255,255,255,0.42)", alignItems: "center", justifyContent: "center", overflow: "visible" },
-  avatarImage: { width: 76, height: 76, borderRadius: 38 },
+  heroBottom: { marginTop: "auto", gap: 16 },
+  heroContent: { flexDirection: "row", gap: 14, alignItems: "center" },
+  avatarWrap: { width: 76, height: 76, borderRadius: 38, backgroundColor: "rgba(255,255,255,0.18)", borderWidth: 2.5, borderColor: "rgba(255,255,255,0.42)", alignItems: "center", justifyContent: "center", overflow: "visible", padding: 3 },
+  avatarMedia: { width: "100%", height: "100%", borderRadius: 34, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.12)" },
+  avatarImage: { width: "100%", height: "100%" },
+  avatarFallback: { width: "100%", height: "100%", borderRadius: 34, alignItems: "center", justifyContent: "center" },
   avatarInitials: { fontSize: 26, fontFamily: "Poppins_700Bold", color: "#fff" },
   avatarOnlineDot: { position: "absolute", bottom: 2, right: 2, width: 14, height: 14, borderRadius: 7, backgroundColor: "#2ECC71", borderWidth: 2, borderColor: "#fff" },
-  heroTextWrap: { flex: 1, gap: 4 },
+  heroTextWrap: { flex: 1, gap: 5 },
   heroTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  heroName: { fontSize: 20, fontFamily: "Poppins_700Bold", color: "#fff", flexShrink: 1 },
-  heroSubtitle: { fontSize: 12, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.82)" },
+  heroName: { fontSize: 24, fontFamily: "Poppins_700Bold", color: "#fff", flexShrink: 1 },
+  heroSubtitle: { fontSize: 13, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.86)" },
+  heroSupportingLine: { fontSize: 12, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.72)" },
+  heroBio: { maxWidth: "92%", fontSize: 12, lineHeight: 19, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.74)" },
   heroPillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
   heroPill: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5, backgroundColor: "rgba(255,255,255,0.15)" },
   heroPillOnline: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5, backgroundColor: "rgba(39,174,96,0.3)" },
   heroPillOnlineText: { fontSize: 10, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   heroPillText: { fontSize: 11, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.92)" },
   onlineDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#2ECC71" },
-  heroStatsStrip: { flexDirection: "row", backgroundColor: "rgba(255,255,255,0.14)", borderRadius: 16, paddingVertical: 12, paddingHorizontal: 8 },
+  heroStatsStrip: { flexDirection: "row", borderTopWidth: 1, borderBottomWidth: 1, borderTopColor: "rgba(255,255,255,0.16)", borderBottomColor: "rgba(255,255,255,0.12)", paddingVertical: 12, paddingHorizontal: 2 },
   heroStatItem: { flex: 1, alignItems: "center", gap: 2 },
+  heroStatCaption: { fontSize: 9, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.62)", textTransform: "uppercase", letterSpacing: 0.9 },
   heroStatValue: { fontSize: 18, fontFamily: "Poppins_700Bold", color: "#fff" },
   heroStatLabel: { fontSize: 10, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.72)", textTransform: "uppercase", letterSpacing: 0.6 },
   heroStatSep: { width: 1, backgroundColor: "rgba(255,255,255,0.2)", marginVertical: 4 },
@@ -1183,53 +1220,57 @@ const styles = StyleSheet.create({
   sectionBody: { fontSize: 13, lineHeight: 20, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
 
   // ── Dish cards ───────────────────────────────────────────────────────────
-  dishCard: { borderRadius: 24, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden", shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 8, elevation: 1 },
-  dishVisualWrap: { position: "relative" },
-  dishImage: { width: "100%", height: 178, backgroundColor: Colors.light.backgroundSecondary },
-  dishImageFallback: { width: "100%", height: 178, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
-  dishBadgeRow: { position: "absolute", left: 12, right: 12, top: 12, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  dishGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 16 },
+  dishCard: { width: "47.5%", gap: 12, paddingBottom: 10 },
+  dishVisualWrap: { width: "100%" },
+  dishImage: { width: "100%", height: 146, borderRadius: 18, backgroundColor: Colors.light.backgroundSecondary },
+  dishImageFallback: { width: "100%", height: 146, borderRadius: 18, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
+  dishBadgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   categoryBadge: { backgroundColor: "rgba(255,244,233,0.96)", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
   categoryBadgeText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   quickBadge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
   quickBadgeText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
-  dishDetailHint: { position: "absolute", bottom: 12, right: 12, width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center" },
-  dishBody: { padding: 16, gap: 12 },
-  dishHeaderRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  dishHeaderMeta: { flex: 1, gap: 5 },
-  dishName: { fontSize: 16, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  dishDetailHint: { display: "none" },
+  dishBody: { gap: 10, paddingTop: 2 },
+  dishHeaderRow: { gap: 8 },
+  dishHeaderMeta: { gap: 5 },
+  dishName: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   dishDescription: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  priceWrap: { alignItems: "flex-end", gap: 3 },
+  priceWrap: { alignItems: "flex-start", gap: 3 },
   priceCurrent: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.tint },
   pricePrevious: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textTertiary, textDecorationLine: "line-through" },
   metaRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
-  metaPill: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: Colors.light.backgroundSecondary },
+  metaRowLeft: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, flex: 1, minWidth: 0 },
+  metaPill: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#EFE2D2" },
   metaPillText: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
   discountBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#ECFDF5" },
   discountBadgeText: { fontSize: 11, fontFamily: "Poppins_700Bold", color: "#047857" },
-  dishActionRow: { flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 12 },
+  dishActionRow: { flexDirection: "row", justifyContent: "flex-start", alignItems: "center", gap: 12 },
   addBtn: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 13, backgroundColor: Colors.light.tint, paddingHorizontal: 14, paddingVertical: 10 },
   addBtnText: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: "#fff" },
   qtyControl: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 18, paddingHorizontal: 8, paddingVertical: 5 },
+  qtyControlCompact: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 999, paddingHorizontal: 4, paddingVertical: 3 },
+  addIconBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: Colors.light.tint, alignItems: "center", justifyContent: "center", flexShrink: 0 },
   qtyBtn: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   qtyText: { minWidth: 20, textAlign: "center", fontSize: 14, fontFamily: "Poppins_700Bold", color: Colors.light.text },
-  readOnlyBanner: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, backgroundColor: Colors.light.backgroundSecondary, paddingHorizontal: 12, paddingVertical: 10 },
+  readOnlyBanner: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 14, backgroundColor: "#EFE2D2", paddingHorizontal: 12, paddingVertical: 10 },
   readOnlyBannerText: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
 
   // ── Panel card (quick-dish tab) ─────────────────────────────────────────
-  panelCard: { borderRadius: 20, backgroundColor: "#F7F1EA", borderWidth: 1, borderColor: "rgba(156,109,82,0.12)", padding: 16, gap: 12 },
+  panelCard: { paddingTop: 4, gap: 12 },
   panelTitle: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   categoryPreviewList: { gap: 8 },
-  categoryPreviewItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 14, backgroundColor: "rgba(255,255,255,0.76)", paddingHorizontal: 14, paddingVertical: 11 },
+  categoryPreviewItem: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)" },
   categoryPreviewName: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   categoryPreviewRight: { flexDirection: "row", alignItems: "center", gap: 6 },
   categoryPreviewCount: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
   categoryPreviewEmpty: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  serviceCardCompact: { borderRadius: 22, backgroundColor: "#2A2017", padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16 },
-  serviceCardCompactCopy: { flex: 1, gap: 4 },
-  serviceCardCompactEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.72)", textTransform: "uppercase", letterSpacing: 0.8 },
-  serviceCardCompactTitle: { fontSize: 16, fontFamily: "Poppins_700Bold", color: "#fff" },
-  serviceCardCompactMeta: { fontSize: 12, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.78)" },
-  serviceBtn: { alignSelf: "flex-start", borderRadius: 13, backgroundColor: Colors.light.tint, paddingHorizontal: 14, paddingVertical: 10 },
+  serviceCardCompact: { paddingVertical: 16, borderTopWidth: 1, borderBottomWidth: 1, borderTopColor: "rgba(120,104,96,0.10)", borderBottomColor: "rgba(120,104,96,0.10)", gap: 14 },
+  serviceCardCompactCopy: { gap: 4 },
+  serviceCardCompactEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint, textTransform: "uppercase", letterSpacing: 0.8 },
+  serviceCardCompactTitle: { fontSize: 16, lineHeight: 22, fontFamily: "Poppins_700Bold", color: Colors.light.text },
+  serviceCardCompactMeta: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
+  serviceBtn: { alignSelf: "flex-start", borderRadius: 999, backgroundColor: Colors.light.tint, paddingHorizontal: 16, paddingVertical: 11 },
   serviceBtnText: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: "#fff" },
 
   // ── Menu tab ────────────────────────────────────────────────────────────
@@ -1238,77 +1279,88 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
   filterChipText: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.text },
   filterChipTextActive: { color: "#fff" },
-  menuInsightCard: { borderRadius: 18, backgroundColor: Colors.light.backgroundSecondary, padding: 14, gap: 3 },
+  menuInsightCard: { paddingVertical: 2, gap: 3 },
   menuInsightTitle: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   menuInsightBody: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  menuGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
-  menuTile: { width: "48%", borderRadius: 20, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden", shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 1, shadowRadius: 6, elevation: 1 },
-  menuTileVisual: { position: "relative" },
-  menuTileImage: { width: "100%", height: 118, backgroundColor: Colors.light.backgroundSecondary },
-  menuTileFallback: { width: "100%", height: 118, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
-  menuTileTopBadges: { position: "absolute", top: 8, left: 8, flexDirection: "row", gap: 4 },
+  menuGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 16 },
+  menuTile: { width: "47.5%", gap: 10, paddingBottom: 6 },
+  menuTileVisual: { width: "100%" },
+  menuTileImage: { width: "100%", height: 134, borderRadius: 16, backgroundColor: Colors.light.backgroundSecondary },
+  menuTileFallback: { width: "100%", height: 134, borderRadius: 16, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
+  menuTileTopBadges: { flexDirection: "row", gap: 4, marginBottom: 2, flexWrap: "wrap" },
   menuTileBadge: { borderRadius: 999, backgroundColor: "rgba(255,255,255,0.92)", paddingHorizontal: 7, paddingVertical: 4 },
   menuTileBadgeText: { fontSize: 9, fontFamily: "Poppins_700Bold", color: Colors.light.tint },
-  menuTileInfoIcon: { position: "absolute", bottom: 8, right: 8, width: 24, height: 24, borderRadius: 12, backgroundColor: "rgba(0,0,0,0.38)", alignItems: "center", justifyContent: "center" },
-  menuTileBody: { padding: 10, gap: 3 },
-  menuTileName: { fontSize: 13, fontFamily: "Poppins_700Bold", color: Colors.light.text, minHeight: 34 },
+  menuTileInfoIcon: { display: "none" },
+  menuTileBody: { gap: 4, paddingTop: 2 },
+  menuTileName: { fontSize: 13, fontFamily: "Poppins_700Bold", color: Colors.light.text, minHeight: 36 },
   menuTileCategory: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
-  menuTileBottomRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
+  menuTileMetaInline: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 4 },
+  menuTilePrepPill: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: "#F4ECE2" },
+  menuTilePrepText: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
+  menuTileBottomRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6 },
   menuTilePrice: { fontSize: 14, fontFamily: "Poppins_700Bold", color: Colors.light.tint },
-  menuTileBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.light.tint, alignItems: "center", justifyContent: "center" },
-  menuQtyControl: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 },
+  menuQtyControl: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#EFE2D2", borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 },
+  menuQtyControlCompact: { flexDirection: "row", alignItems: "center", gap: 2, backgroundColor: "#EFE2D2", borderRadius: 999, paddingHorizontal: 4, paddingVertical: 2 },
+  menuTileIconBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.light.tint, alignItems: "center", justifyContent: "center" },
 
   // ── Stories tab ─────────────────────────────────────────────────────────
-  storyGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 10 },
-  storyTile: { width: "48%", height: 220, borderRadius: 22, overflow: "hidden", backgroundColor: "#1F2937" },
-  storyTileFull: { width: "100%", height: 280 },
-  storyTileGradient: { ...StyleSheet.absoluteFillObject, backgroundColor: "transparent", // rendered as linear gradient via overlay
-    // actual gradient effect via the bottom overlay below
-  },
+  storyGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
+  storyTile: { width: "48%", height: 224, borderRadius: 24, overflow: "hidden", backgroundColor: "#1F2937" },
+  storyTileFull: { width: "100%", height: 292 },
+  storyTileGradient: { ...StyleSheet.absoluteFillObject },
   storyTileFallbackEmoji: { fontSize: 48, textAlign: "center", marginTop: 60 },
   storyTileOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: "space-between", padding: 14, backgroundColor: "transparent" },
-  storyTilePlayBtn: { alignSelf: "center", marginTop: "auto", width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.24)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.5)", alignItems: "center", justifyContent: "center" },
-  storyTileBottom: { gap: 4 },
+  storyTileTopRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
+  storyTileKicker: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "rgba(255,255,255,0.16)", borderWidth: 1, borderColor: "rgba(255,255,255,0.22)" },
+  storyTileKickerText: { fontSize: 10, fontFamily: "Poppins_700Bold", color: "#fff", textTransform: "uppercase", letterSpacing: 0.7 },
+  storyTileDishPill: { maxWidth: "58%", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "rgba(12,8,6,0.32)" },
+  storyTileDishPillText: { fontSize: 10, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.92)" },
+  storyTilePlayBtn: { alignSelf: "center", width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,255,255,0.24)", borderWidth: 1.5, borderColor: "rgba(255,255,255,0.5)", alignItems: "center", justifyContent: "center" },
+  storyTileBottom: { gap: 6 },
   storyTileDate: { fontSize: 10, fontFamily: "Poppins_600SemiBold", color: "rgba(255,255,255,0.7)", textTransform: "uppercase", letterSpacing: 0.8 },
-  storyTileCaption: { fontSize: 13, lineHeight: 18, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  storyTileCaption: { fontSize: 13, lineHeight: 19, fontFamily: "Poppins_600SemiBold", color: "#fff" },
+  storyTileOfferRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  storyTilePrice: { fontSize: 13, fontFamily: "Poppins_700Bold", color: "#FBD2A4" },
+  storyTileOfferHint: { fontSize: 11, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.78)", flexShrink: 1 },
   storyTileStats: { flexDirection: "row", alignItems: "center", gap: 4 },
+  storyTileStatsSep: { fontSize: 11, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.48)" },
   storyTileStatsTxt: { fontSize: 11, fontFamily: "Poppins_500Medium", color: "rgba(255,255,255,0.72)" },
-  storiesAllBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 16, backgroundColor: Colors.light.backgroundSecondary, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  storiesAllBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 999, backgroundColor: "transparent", borderWidth: 1, borderColor: "rgba(120,104,96,0.14)" },
   storiesAllBtnText: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
 
   // ── À propos tab ────────────────────────────────────────────────────────
-  aboutHeroCard: { borderRadius: 24, overflow: "hidden", backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, shadowColor: Colors.light.shadow, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 1, shadowRadius: 14, elevation: 2 },
-  aboutHeroBanner: { height: 88, position: "relative" },
-  aboutHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
-  aboutHeroBody: { flexDirection: "row", padding: 16, paddingTop: 8, gap: 14, alignItems: "flex-end" },
-  aboutHeroAvatarWrap: { width: 72, height: 72, borderRadius: 36, borderWidth: 3, borderColor: "#fff", overflow: "hidden", backgroundColor: Colors.light.backgroundSecondary, marginTop: -36 },
+  aboutHeroCard: { overflow: "hidden", borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)", paddingBottom: 16 },
+  aboutHeroBanner: { height: 96, position: "relative" },
+  aboutHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.28)" },
+  aboutHeroBody: { flexDirection: "row", paddingTop: 10, gap: 14, alignItems: "flex-end" },
+  aboutHeroAvatarWrap: { width: 72, height: 72, borderRadius: 36, borderWidth: 3, borderColor: "#fff", overflow: "hidden", backgroundColor: Colors.light.backgroundSecondary, marginTop: -34, marginLeft: 2 },
   aboutHeroAvatarImg: { width: 72, height: 72, borderRadius: 36 },
   aboutHeroInitials: { fontSize: 24, fontFamily: "Poppins_700Bold", color: Colors.light.text, textAlign: "center", lineHeight: 72 },
-  aboutHeroMeta: { flex: 1, gap: 5, paddingBottom: 4 },
+  aboutHeroMeta: { flex: 1, gap: 5, paddingBottom: 2 },
   aboutHeroNameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  aboutHeroName: { fontSize: 18, fontFamily: "Poppins_700Bold", color: Colors.light.text, flexShrink: 1 },
+  aboutHeroName: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text, flexShrink: 1 },
   aboutHeroSpecialty: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary },
   aboutHeroTrustRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
-  trustBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5, backgroundColor: Colors.light.backgroundSecondary },
-  trustBadgeOnline: { backgroundColor: "#ECFDF5" },
+  trustBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5, backgroundColor: "transparent", borderWidth: 1, borderColor: "rgba(120,104,96,0.14)" },
+  trustBadgeOnline: { borderColor: "rgba(5,150,105,0.22)" },
   trustBadgeText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.textSecondary },
-  aboutCard: { borderRadius: 22, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, gap: 12 },
+  aboutCard: { paddingVertical: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)" },
   aboutCardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
-  aboutCardIconWrap: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  aboutCardIconWrap: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(120,104,96,0.14)", backgroundColor: "transparent" },
   aboutTitle: { fontSize: 15, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   aboutBody: { fontSize: 13, lineHeight: 21, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   aboutStatsGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 10 },
-  aboutStatItem: { width: "48%", borderRadius: 18, backgroundColor: Colors.light.card, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 14, gap: 4, alignItems: "center" },
+  aboutStatItem: { width: "48%", paddingVertical: 14, gap: 4, alignItems: "flex-start", borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)" },
   aboutStatValue: { fontSize: 24, fontFamily: "Poppins_700Bold", color: Colors.light.text },
-  aboutStatLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, textAlign: "center" },
-  aboutInfoGrid: { gap: 8 },
-  aboutInfoItem: { borderRadius: 14, backgroundColor: Colors.light.backgroundSecondary, padding: 12, gap: 3 },
+  aboutStatLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
+  aboutInfoGrid: { gap: 0 },
+  aboutInfoItem: { paddingVertical: 12, gap: 3, borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)" },
   aboutInfoLabel: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.textTertiary, textTransform: "uppercase", letterSpacing: 0.6 },
   aboutInfoValue: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   specialtyRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  specialtyChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: Colors.light.backgroundSecondary },
+  specialtyChip: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: "transparent", borderWidth: 1, borderColor: "rgba(120,104,96,0.14)" },
   specialtyChipText: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.text },
-  aboutContactBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 16, backgroundColor: Colors.light.tint, paddingVertical: 15, marginBottom: 10 },
+  aboutContactBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 999, backgroundColor: Colors.light.tint, paddingVertical: 15, marginBottom: 10, marginTop: 2 },
   aboutContactBtnText: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: "#fff" },
 
   // ── Empty state ──────────────────────────────────────────────────────────

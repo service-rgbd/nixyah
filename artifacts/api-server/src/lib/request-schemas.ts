@@ -7,6 +7,21 @@ export const positiveQuantitySchema = z.coerce.number().int().min(1).max(100);
 export const optionalAddressSchema = nullableTrimmedString(255);
 export const optionalNotesSchema = nullableTrimmedString(1000);
 
+function optionalNonNegativeTelemetryMetric(max: number) {
+  return z.preprocess((value) => {
+    if (value == null || value === "") {
+      return null;
+    }
+
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue < 0) {
+      return null;
+    }
+
+    return value;
+  }, z.coerce.number().finite().min(0).max(max).nullable().optional());
+}
+
 export const deliveryAvailabilityBodySchema = z.object({
   isAvailable: z.boolean(),
 });
@@ -19,9 +34,9 @@ export const courierLocationBodySchema = z.object({
 export const deliveryJobLocationBodySchema = z.object({
   latitude: latitudeSchema,
   longitude: longitudeSchema,
-  accuracy: z.coerce.number().finite().min(0).max(10000).nullable().optional(),
-  heading: z.coerce.number().finite().min(0).max(360).nullable().optional(),
-  speed: z.coerce.number().finite().min(0).max(300).nullable().optional(),
+  accuracy: optionalNonNegativeTelemetryMetric(10000),
+  heading: optionalNonNegativeTelemetryMetric(360),
+  speed: optionalNonNegativeTelemetryMetric(300),
 });
 
 export const clientDeliveryLocationBodySchema = z.object({
@@ -33,7 +48,7 @@ export const clientDeliveryLocationBodySchema = z.object({
 export const deliveryCompletionBodySchema = z.object({
   latitude: latitudeSchema,
   longitude: longitudeSchema,
-  accuracy: z.coerce.number().finite().min(0).max(10000).nullable().optional(),
+  accuracy: optionalNonNegativeTelemetryMetric(10000),
 });
 
 export const cartAddItemBodySchema = z.object({
@@ -100,10 +115,12 @@ export const adminChefVerifySchema = z.object({
 
 export const adminCourierStatusSchema = z.object({
   status: z.enum(["active", "suspended", "pending_verification", "rejected"]),
+  rejectionReason: nullableTrimmedString(500).optional(),
 });
 
 export const adminCourierVerifySchema = z.object({
   isVerified: z.boolean(),
+  rejectionReason: nullableTrimmedString(500).optional(),
 });
 
 export const courierVerificationDossierSchema = z.object({

@@ -25,6 +25,7 @@ const guestProfileIllustration = require("../../assets/images/login-cashier-illu
 
 const MENU_ITEMS_CLIENT = [
   { icon: "shopping-bag" as const, label: "Mes commandes", sub: "Suivre mes commandes en cours" },
+  { icon: "bell" as const, label: "Notifications", sub: "Alertes commandes, stories et promos suivies" },
   { icon: "map-pin" as const, label: "Mes adresses", sub: "Enregistrer ma dernière position" },
   { icon: "search" as const, label: "Cuisinieres", sub: "Voir les restaurants et leurs plats" },
   { icon: "shopping-cart" as const, label: "Courses", sub: "Voir les essentiels en express" },
@@ -95,6 +96,21 @@ export default function ProfileScreen() {
     return value.charAt(0).toUpperCase() + value.slice(1);
   }, [user?.courierProfile?.vehicleType]);
   const courierStatusLabel = user?.courierProfile?.isAvailable ? "Disponible" : "Hors ligne";
+  const courierDossierCompletedCount = useMemo(() => {
+    const documents = user?.courierProfile?.verificationDocuments;
+    if (!documents) {
+      return 0;
+    }
+
+    return [
+      documents.identityDocumentUrl,
+      documents.driverLicenseUrl,
+      documents.vehicleRegistrationUrl,
+      documents.vehiclePhotoUrl,
+      documents.selfiePhotoUrl,
+    ].filter(Boolean).length;
+  }, [user?.courierProfile?.verificationDocuments]);
+  const courierDossierIsComplete = Boolean(user?.courierProfile?.isDossierComplete);
 
   const initials = user
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
@@ -118,7 +134,7 @@ export default function ProfileScreen() {
       title: "Catalogue",
       items: [
         { icon: "package" as const, label: "Menu", sub: "Plats, prix et visuels", onPress: () => router.push("/chef/my-dishes") },
-        { icon: "camera" as const, label: "Story du jour", sub: "Image ou video 10 sec", onPress: () => router.push("/chef/post-story") },
+        { icon: "camera" as const, label: "Story du jour", sub: "Image ou video 30 sec", onPress: () => router.push("/chef/post-story") },
       ],
     },
     {
@@ -152,7 +168,7 @@ export default function ProfileScreen() {
     } else if (item.label === "Statistiques") {
       router.push("/chef/stats");
     } else if (item.label === "Notifications") {
-      router.push("/settings/notifications");
+      router.push("/notifications");
     } else if (item.label === "Commandes reçues" || item.label === "Mes missions") {
       router.push("/(tabs)/orders");
     } else if (item.label === "Aide & Support") {
@@ -387,9 +403,13 @@ export default function ProfileScreen() {
                     style={styles.clientFavoriteChip}
                     onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
                   >
-                    <View style={[styles.clientFavoriteAvatar, { backgroundColor: chef.coverColor }]}> 
-                      <Text style={styles.clientFavoriteAvatarText}>{chef.name.slice(0, 2).toUpperCase()}</Text>
-                    </View>
+                    {chef.avatarUrl ? (
+                      <CachedRemoteImage uri={chef.avatarUrl} style={styles.clientFavoriteAvatarImage} />
+                    ) : (
+                      <View style={[styles.clientFavoriteAvatar, { backgroundColor: chef.coverColor }]}> 
+                        <Text style={styles.clientFavoriteAvatarText}>{chef.name.slice(0, 2).toUpperCase()}</Text>
+                      </View>
+                    )}
                     <Text style={styles.clientFavoriteName} numberOfLines={1}>{chef.name}</Text>
                   </Pressable>
                 ))}
@@ -510,6 +530,17 @@ export default function ProfileScreen() {
             <Text style={styles.clientMetaSub}>{`${user.freeDeliveryCredits ?? 0} livraison(s) offerte(s) disponible(s)`}</Text>
           </View>
 
+          <Pressable style={styles.securityCard} onPress={() => router.push("/settings/passkeys")}>
+            <View style={styles.securityCardIcon}>
+              <Feather name="shield" size={18} color="#0F766E" />
+            </View>
+            <View style={styles.securityCardBody}>
+              <Text style={styles.securityCardTitle}>Passkeys & sécurité</Text>
+              <Text style={styles.securityCardText}>Ajoutez une connexion biométrique sans mot de passe et gardez votre email comme solution de secours.</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={Colors.light.textTertiary} />
+          </Pressable>
+
           <View style={styles.statsRow}>
             <View style={styles.statItemCard}>
               <View style={styles.statItem}>
@@ -616,6 +647,29 @@ export default function ProfileScreen() {
                     : `${Math.max(0, 250 - (user.courierProfile?.stars ?? 0))} étoiles restantes avant le bonus de 10 000 XOF.`}
                 </Text>
               </View>
+
+              <View style={styles.courierDossierCard}>
+                <View style={styles.courierDossierHead}>
+                  <View>
+                    <Text style={styles.courierDossierTitle}>Dossier de vérification</Text>
+                    <Text style={styles.courierDossierSubtitle}>{courierDossierCompletedCount}/5 pièces ajoutées</Text>
+                  </View>
+                  <View style={[styles.courierDossierBadge, courierDossierIsComplete ? styles.courierDossierBadgeReady : styles.courierDossierBadgePending]}>
+                    <Text style={[styles.courierDossierBadgeText, courierDossierIsComplete ? styles.courierDossierBadgeTextReady : styles.courierDossierBadgeTextPending]}>
+                      {courierDossierIsComplete ? "Prêt" : "À compléter"}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.courierDossierBody}>
+                  {courierDossierIsComplete
+                    ? "Votre dossier est complet. L'équipe peut maintenant vérifier votre profil avant d'ouvrir l'accès aux nouvelles missions."
+                    : "Ajoutez vos 5 pièces justificatives depuis votre espace livreur pour débloquer la validation admin."}
+                </Text>
+                <Pressable style={styles.courierDossierButton} onPress={() => router.push("/courier/verification" as any)}>
+                  <Text style={styles.courierDossierButtonText}>{courierDossierIsComplete ? "Voir le dossier" : "Compléter mon dossier"}</Text>
+                  <Feather name="arrow-right" size={16} color="#0F766E" />
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.clientSectionBlock}>
@@ -635,6 +689,14 @@ export default function ProfileScreen() {
                   </View>
                   <Text style={styles.courierActionTitle}>Support</Text>
                   <Text style={styles.courierActionSub}>Aide, incidents et accompagnement sur les livraisons</Text>
+                </Pressable>
+
+                <Pressable style={styles.courierActionCard} onPress={() => router.push("/courier/verification" as any)}>
+                  <View style={[styles.courierActionIconWrap, { backgroundColor: "#EEF6FF" }]}> 
+                    <Feather name="file-text" size={20} color="#2563EB" />
+                  </View>
+                  <Text style={styles.courierActionTitle}>Mon dossier</Text>
+                  <Text style={styles.courierActionSub}>Ajouter les pièces requises pour l'accès aux missions</Text>
                 </Pressable>
               </View>
             </View>
@@ -742,35 +804,30 @@ const styles = StyleSheet.create({
   clientHeroCard: {
     marginHorizontal: 20,
     marginTop: 10,
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingTop: 18,
+    paddingHorizontal: 2,
+    paddingTop: 8,
     paddingBottom: 18,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "rgba(104,83,69,0.08)",
-    shadowColor: "rgba(42,28,18,0.06)",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 1,
-    shadowRadius: 20,
-    elevation: 3,
   },
   clientHeroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   clientHeroBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#FFF3E6",
+    backgroundColor: "transparent",
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(196,82,42,0.16)",
   },
   clientHeroBadgeText: { color: Colors.light.tint, fontFamily: "Poppins_600SemiBold", fontSize: 12 },
   clientHelpBtn: {
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "transparent",
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.light.divider,
   },
   clientHelpText: { color: Colors.light.textSecondary, fontFamily: "Poppins_600SemiBold", fontSize: 13 },
   clientHeroIdentity: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 18 },
@@ -786,10 +843,10 @@ const styles = StyleSheet.create({
     marginTop: 18,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderRadius: 18,
     paddingVertical: 12,
-    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   clientMiniStatItem: { flex: 1, alignItems: "center", gap: 2 },
   clientMiniStatDivider: { width: 1, height: 28, backgroundColor: Colors.light.divider },
@@ -798,20 +855,16 @@ const styles = StyleSheet.create({
   clientSectionBlock: { marginTop: 20, paddingHorizontal: 20 },
   clientSectionHeading: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 18, marginBottom: 10 },
   clientSectionCard: {
-    backgroundColor: "#F5F2EE",
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(104,83,69,0.08)",
-    overflow: "hidden",
+    backgroundColor: "transparent",
   },
   clientMenuItem: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 16,
-    paddingHorizontal: 16,
+    paddingHorizontal: 0,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.divider,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   clientMenuItemLast: { borderBottomWidth: 0 },
   clientMenuLeft: { flexDirection: "row", alignItems: "center", gap: 16, flex: 1 },
@@ -821,7 +874,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FFF8F2",
+    backgroundColor: "transparent",
   },
   clientMenuTextWrap: { flex: 1 },
   clientMenuLabel: { color: Colors.light.text, fontFamily: "Poppins_500Medium", fontSize: 15 },
@@ -829,46 +882,71 @@ const styles = StyleSheet.create({
   clientMetaCard: {
     marginTop: 20,
     marginHorizontal: 20,
-    backgroundColor: "#F5F2EE",
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(104,83,69,0.08)",
-    padding: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   clientMetaLabel: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12 },
   clientMetaValue: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold", fontSize: 15, marginTop: 6 },
   clientMetaSub: { color: Colors.light.textSecondary, fontFamily: "Poppins_400Regular", fontSize: 12, marginTop: 6 },
+  securityCard: {
+    marginTop: 18,
+    marginHorizontal: 20,
+    minHeight: 78,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: Colors.light.card,
+    borderWidth: 1,
+    borderColor: Colors.light.divider,
+  },
+  securityCardIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ECFDF5",
+  },
+  securityCardBody: { flex: 1, gap: 4 },
+  securityCardTitle: { fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  securityCardText: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   clientFavoritesRow: { gap: 12 },
-  clientFavoriteChip: { width: 112, gap: 10, backgroundColor: "#F5F2EE", borderRadius: 22, padding: 12, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)" },
+  clientFavoriteChip: { width: 112, gap: 10, paddingVertical: 8 },
   clientFavoriteAvatar: { width: 54, height: 54, borderRadius: 27, alignItems: "center", justifyContent: "center" },
+  clientFavoriteAvatarImage: { width: 54, height: 54, borderRadius: 27, backgroundColor: Colors.light.backgroundSecondary },
   clientFavoriteAvatarText: { color: "#fff", fontFamily: "Poppins_700Bold", fontSize: 16 },
   clientFavoriteName: { color: Colors.light.text, fontFamily: "Poppins_400Regular", fontSize: 12 },
   clientLogoutBtn: { marginTop: 20, marginBottom: 12, marginHorizontal: 20, backgroundColor: "transparent", borderRadius: 16, minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderWidth: 1, borderColor: Colors.light.divider },
   clientLogoutText: { color: Colors.light.textSecondary, fontFamily: "Poppins_500Medium", fontSize: 14 },
   guestScrollContent: { paddingBottom: Platform.OS === "web" ? 120 : 100 },
-  guestContent: { padding: 16, alignItems: "center", gap: 12, width: "100%", maxWidth: 520, alignSelf: "center" },
-  guestHero: { width: "100%", minHeight: 340, borderRadius: 28, overflow: "hidden", justifyContent: "flex-end", marginBottom: 12 },
-  guestHeroMedia: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
-  guestHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(70, 32, 12, 0.18)" },
-  guestHeroContent: { position: "relative", zIndex: 1, gap: 8, width: "100%", paddingHorizontal: 22, paddingVertical: 20, backgroundColor: "rgba(18, 18, 18, 0.26)" },
+  guestContent: { padding: 16, alignItems: "center", gap: 10, width: "100%", maxWidth: 520, alignSelf: "center" },
+  guestHero: { width: "100%", minHeight: 360, overflow: "hidden", justifyContent: "flex-end", marginBottom: 10 },
+  guestHeroMedia: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "flex-start" },
+  guestHeroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(70, 32, 12, 0.14)" },
+  guestHeroContent: { position: "relative", zIndex: 1, gap: 8, width: "100%", paddingHorizontal: 22, paddingTop: 110, paddingBottom: 20 },
   guestHeroTitle: { fontSize: 28, fontFamily: "Poppins_700Bold", color: "#fff" },
   guestHeroSub: { fontSize: 14, fontFamily: "Poppins_400Regular", color: "rgba(255,255,255,0.9)", lineHeight: 21 },
-  guestIllustration: { width: "124%", height: "124%" },
-  loginBtn: { width: "100%", backgroundColor: Colors.light.tint, borderRadius: 16, paddingVertical: 15, alignItems: "center", shadowColor: Colors.light.tint, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+  guestIllustration: { width: "138%", height: "138%", marginTop: -26 },
+  loginBtn: { width: "100%", backgroundColor: Colors.light.tint, borderRadius: 999, paddingVertical: 15, alignItems: "center" },
   loginBtnText: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: "#fff" },
-  registerBtn: { width: "100%", borderWidth: 1.5, borderColor: Colors.light.tint, borderRadius: 16, paddingVertical: 14, alignItems: "center" },
+  registerBtn: { width: "100%", borderWidth: 1, borderColor: Colors.light.tint, borderRadius: 999, paddingVertical: 14, alignItems: "center" },
   registerBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   divider: { flexDirection: "row", alignItems: "center", gap: 12, width: "100%", marginVertical: 4 },
   dividerLine: { flex: 1, height: 1, backgroundColor: Colors.light.divider },
   dividerText: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
-  chefBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  chefBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "transparent", borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: Colors.light.cardBorder },
   chefBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
-  courierBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#ECFDF5", borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: "#A7F3D0" },
+  courierBtn: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "transparent", borderRadius: 16, paddingVertical: 14, borderWidth: 1, borderColor: "#A7F3D0" },
   courierBtnText: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
-  profileHeader: { marginHorizontal: 16, marginTop: 10, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 22, gap: 18, borderRadius: 30, overflow: "hidden", borderWidth: 1, borderColor: "rgba(90,63,49,0.08)" },
+  profileHeader: { marginTop: 10, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 22, gap: 18, overflow: "hidden" },
   profileGlow: { position: "absolute", top: -48, right: -20, width: 180, height: 180, borderRadius: 90 },
   heroTopRow: { flexDirection: "row", gap: 16, alignItems: "center" },
-  avatarWrapper: { position: "relative", padding: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.78)", shadowColor: "rgba(46,29,18,0.12)", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 1, shadowRadius: 18, elevation: 4 },
+  avatarWrapper: { position: "relative", padding: 0, borderRadius: 999, backgroundColor: "transparent" },
   avatar: { width: 90, height: 90, borderRadius: 45, alignItems: "center", justifyContent: "center" },
   avatarImage: { width: 90, height: 90, borderRadius: 45, backgroundColor: Colors.light.backgroundSecondary },
   avatarText: { fontSize: 32, fontFamily: "Poppins_700Bold", color: "#fff" },
@@ -881,41 +959,54 @@ const styles = StyleSheet.create({
   profileEmail: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   profileLocation: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   profilePhotoHint: { marginTop: 4, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  chefHeroCard: { backgroundColor: Colors.light.card, borderRadius: 22, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, gap: 12 },
+  chefHeroCard: { paddingVertical: 8, gap: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(104,83,69,0.10)" },
   chefHeroHead: { flexDirection: "row", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
   chefHeroEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint, textTransform: "uppercase" },
   chefHeroTitle: { fontSize: 18, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   chefHeroDescription: { fontSize: 13, lineHeight: 20, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  verifiedBadge: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  verifiedBadge: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "transparent", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: "rgba(104,83,69,0.10)" },
   verifiedBadgeText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   chefMetricRow: { flexDirection: "row", gap: 10 },
-  chefMetricCard: { flex: 1, backgroundColor: Colors.light.backgroundSecondary, borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12, gap: 4 },
+  chefMetricCard: { flex: 1, paddingVertical: 12, paddingHorizontal: 4, gap: 4, alignItems: "center" },
   chefMetricValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   chefMetricLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  insightBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, backgroundColor: "rgba(196,82,42,0.08)", paddingHorizontal: 14, paddingVertical: 12 },
+  insightBanner: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 0, paddingVertical: 8, borderBottomWidth: 1, borderTopWidth: 1, borderColor: "rgba(196,82,42,0.10)" },
   insightBannerText: { flex: 1, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_500Medium", color: Colors.light.tint },
   statsRow: { flexDirection: "row", gap: 10 },
-  statItemCard: { flex: 1, backgroundColor: "rgba(255,255,255,0.82)", borderRadius: 18, paddingVertical: 14, paddingHorizontal: 10, borderWidth: 1, borderColor: "rgba(90,63,49,0.06)" },
+  statItemCard: { flex: 1, paddingVertical: 14, paddingHorizontal: 10 },
   statItem: { flex: 1, alignItems: "center", gap: 3 },
   statValue: { fontSize: 20, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   statLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary, textAlign: "center" },
   actionPanel: { paddingHorizontal: 20, paddingTop: 18, gap: 12 },
   chefDashboardWrap: { paddingTop: 10 },
   courierDashboardWrap: { paddingTop: 10 },
-  actionCard: { backgroundColor: Colors.light.card, borderRadius: 22, borderWidth: 1, borderColor: Colors.light.cardBorder, padding: 16, gap: 10, shadowColor: "rgba(43,30,22,0.06)", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 1, shadowRadius: 18, elevation: 3 },
-  courierHeroCard: { marginHorizontal: 20, backgroundColor: "#F5F2EE", borderRadius: 26, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)", padding: 18, gap: 14 },
+  actionCard: { paddingVertical: 16, gap: 10, borderBottomWidth: 1, borderBottomColor: "rgba(104,83,69,0.10)" },
+  courierHeroCard: { marginHorizontal: 20, paddingVertical: 18, gap: 14 },
   courierHeroTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
   courierHeroEyebrow: { fontSize: 11, fontFamily: "Poppins_700Bold", textTransform: "uppercase", letterSpacing: 0.5, color: "#A36A46" },
   courierHeroTitle: { fontSize: 22, fontFamily: "Poppins_700Bold", color: "#1F1A17", marginTop: 4 },
-  courierStatusPill: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+  courierStatusPill: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: "rgba(15,118,110,0.12)" },
   courierStatusPillText: { fontSize: 11, fontFamily: "Poppins_700Bold", textTransform: "uppercase", letterSpacing: 0.4 },
   courierHeroDescription: { fontSize: 13, lineHeight: 20, fontFamily: "Poppins_400Regular", color: "#7B7068" },
   courierInfoGrid: { flexDirection: "row", gap: 10 },
-  courierInfoCard: { flex: 1, backgroundColor: "#FFFCF9", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 14, gap: 4 },
+  courierInfoCard: { flex: 1, paddingHorizontal: 4, paddingVertical: 14, gap: 4, alignItems: "center" },
   courierInfoValue: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
   courierInfoLabel: { fontSize: 11, fontFamily: "Poppins_400Regular", color: "#8C827B" },
+  courierDossierCard: { paddingVertical: 14, gap: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: "rgba(104,83,69,0.10)" },
+  courierDossierHead: { flexDirection: "row", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
+  courierDossierTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
+  courierDossierSubtitle: { marginTop: 4, fontSize: 12, fontFamily: "Poppins_400Regular", color: "#7B7068" },
+  courierDossierBody: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: "#7B7068" },
+  courierDossierBadge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+  courierDossierBadgeReady: { backgroundColor: "#DCFCE7" },
+  courierDossierBadgePending: { backgroundColor: "#FEF3C7" },
+  courierDossierBadgeText: { fontSize: 10, fontFamily: "Poppins_700Bold", textTransform: "uppercase" },
+  courierDossierBadgeTextReady: { color: "#166534" },
+  courierDossierBadgeTextPending: { color: "#92400E" },
+  courierDossierButton: { minHeight: 44, paddingHorizontal: 0, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  courierDossierButtonText: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: "#0F766E" },
   courierActionPanel: { gap: 12 },
-  courierActionCard: { backgroundColor: "#F5F2EE", borderRadius: 24, padding: 16, gap: 10, borderWidth: 1, borderColor: "rgba(104,83,69,0.08)" },
+  courierActionCard: { paddingVertical: 16, gap: 10, borderBottomWidth: 1, borderBottomColor: "rgba(104,83,69,0.10)" },
   courierActionIconWrap: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   courierActionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: "#1F1A17" },
   courierActionSub: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: "#7B7068" },
@@ -930,9 +1021,9 @@ const styles = StyleSheet.create({
   favoriteAvatarImage: { width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.light.backgroundSecondary },
   favoriteAvatarText: { fontSize: 18, fontFamily: "Poppins_700Bold", color: "rgba(255,255,255,0.9)" },
   favoriteName: { fontSize: 10, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary, textAlign: "center" },
-  menuSection: { backgroundColor: Colors.light.card, borderRadius: 24, marginHorizontal: 20, marginTop: 20, borderWidth: 1, borderColor: Colors.light.cardBorder, overflow: "hidden", shadowColor: "rgba(43,30,22,0.05)", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 1, shadowRadius: 22, elevation: 3 },
+  menuSection: { marginHorizontal: 20, marginTop: 20 },
   menuItem: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.light.divider },
-  menuIconWrapper: { width: 38, height: 38, borderRadius: 11, backgroundColor: Colors.light.backgroundSecondary, alignItems: "center", justifyContent: "center" },
+  menuIconWrapper: { width: 38, height: 38, borderRadius: 11, backgroundColor: "transparent", alignItems: "center", justifyContent: "center" },
   menuContent: { flex: 1 },
   menuLabel: { fontSize: 14, fontFamily: "Poppins_500Medium", color: Colors.light.text },
   menuSub: { fontSize: 11, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },

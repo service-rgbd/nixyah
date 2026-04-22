@@ -9,9 +9,9 @@ import { notifyUsers } from "../lib/notifications.js";
 import { shouldInvestigateComplaint } from "../lib/commerce.js";
 import { quoteDeliveryOrderPricing, refreshChefReviewAggregates, refreshComplaintAggregates, refreshCourierReviewAggregates } from "../lib/fulfillment.js";
 import { buildApiRateLimiter } from "../lib/rate-limit.js";
+import { expirePendingMealOrders, getOrderPendingDeadline, hasOrderPendingWindowExpired } from "../lib/order-window.js";
 
 const router: IRouter = Router();
-const ORDER_CLIENT_CANCEL_WINDOW_MS = 10_000;
 
 const orderIssueLimiter = buildApiRateLimiter({
   windowMs: 30 * 60 * 1000,
@@ -99,6 +99,8 @@ function normalizeComplaintPayload(input: { target?: unknown; category?: unknown
 
 router.get("/orders", requireClient, async (req: AuthRequest, res) => {
   try {
+    await expirePendingMealOrders({ clientId: req.userId! });
+
     const mealOrders = await db
       .select()
       .from(ordersTable)
@@ -153,7 +155,7 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
           createdAt: o.createdAt.toISOString(),
           cancelAvailableUntil:
             o.status === "pending" && !deliveryJob
-              ? new Date(o.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS).toISOString()
+              ? getOrderPendingDeadline(o.createdAt).toISOString()
               : null,
           delivery: deliveryJob
             ? {
@@ -222,7 +224,7 @@ router.get("/orders", requireClient, async (req: AuthRequest, res) => {
           deliveryAddress: o.deliveryAddress,
           notes: o.notes,
           createdAt: o.createdAt.toISOString(),
-          cancelAvailableUntil: o.status === "pending" ? new Date(o.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS).toISOString() : null,
+          cancelAvailableUntil: o.status === "pending" ? getOrderPendingDeadline(o.createdAt).toISOString() : null,
           delivery: null,
           review: null,
           canReview: false,
@@ -268,8 +270,7 @@ router.post("/orders/:orderId/cancel", requireClient, orderCancelLimiter, async 
         return res.status(404).json({ error: "NotFound", message: "Commande introuvable" });
       }
 
-      const deadline = order.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS;
-      if (order.status !== "pending" || Date.now() > deadline) {
+      if (order.status !== "pending" || hasOrderPendingWindowExpired(order.createdAt)) {
         return res.status(409).json({ error: "Conflict", message: "Cette commande ne peut plus etre annulee" });
       }
 
@@ -289,9 +290,12 @@ router.post("/orders/:orderId/cancel", requireClient, orderCancelLimiter, async 
     }
 
     const [deliveryJob] = await db.select().from(deliveryJobsTable).where(eq(deliveryJobsTable.orderId, order.id)).limit(1);
-    const deadline = order.createdAt.getTime() + ORDER_CLIENT_CANCEL_WINDOW_MS;
 
-    if (deliveryJob || order.status !== "pending" || Date.now() > deadline) {
+    if (hasOrderPendingWindowExpired(order.createdAt)) {
+      await expirePendingMealOrders({ orderIds: [order.id] });
+    }
+
+    if (deliveryJob || order.status !== "pending" || hasOrderPendingWindowExpired(order.createdAt)) {
       return res.status(409).json({ error: "Conflict", message: "Cette commande ne peut plus être annulée" });
     }
 

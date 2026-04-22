@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CachedRemoteImage } from "@/components/CachedRemoteImage";
+import { DeliveryMiniMap } from "@/components/DeliveryMiniMap";
 import Colors from "@/constants/colors";
 import { resolveCommerceVisual } from "@/constants/commerce-catalog";
 import { ApiError, apiFetch } from "@/constants/api";
@@ -27,6 +28,7 @@ const STATUS_CONFIG = {
   preparing: { label: "En préparation", color: "#8B5CF6", icon: "activity" as const },
   ready: { label: "Prête", color: "#27AE60", icon: "check-circle" as const },
   delivered: { label: "Livrée", color: Colors.light.textTertiary, icon: "package" as const },
+  cancelled: { label: "Annulée", color: "#D45845", icon: "x-circle" as const },
 };
 
 const DELIVERY_STATUS_CONFIG = {
@@ -68,14 +70,64 @@ type DeliveryJob = {
   createdAt?: string | null;
   acceptedAt?: string | null;
   deliveredAt?: string | null;
+  courier?: { id?: string; name?: string | null } | null;
+  latestLocation?: {
+    latitude: number;
+    longitude: number;
+    createdAt?: string;
+  } | null;
 };
 
 type CourierMissionFilter = "all" | "current" | "available" | "history";
 type ClientOrderFilter = "all" | "meal" | "delivery" | "custom";
+type TrackedDeliveryStatus = DeliveryJob["status"] | NonNullable<Order["delivery"]>["status"];
 
-const COURIER_REFRESH_INTERVAL_MS = 15000;
+const COURIER_REFRESH_INTERVAL_MS = 10000;
+const COURIER_REFRESH_THROTTLE_MS = 12000;
 const CHEF_REFRESH_INTERVAL_MS = 20000;
 const CLIENT_REFRESH_INTERVAL_MS = 25000;
+
+function formatCountdownLabel(totalSeconds: number) {
+  if (totalSeconds <= 0) {
+    return "0s";
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) {
+    return `${seconds}s`;
+  }
+
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function isTrackedDeliveryStatus(status?: TrackedDeliveryStatus) {
+  return Boolean(status && ["broadcasting", "available", "accepted", "picked_up", "on_the_way"].includes(status));
+}
+
+function getCourierMapCaption(job: DeliveryJob) {
+  if (job.status === "accepted") {
+    return "Le trajet vers le restaurant reste visible dans l'app.";
+  }
+
+  if (["picked_up", "on_the_way"].includes(job.status)) {
+    return "Le trajet vers la cliente se suit ici en direct.";
+  }
+
+  return "Le trajet restaurant → cliente reste visible depuis le menu.";
+}
+
+function getClientMapCaption(order: Order) {
+  if (order.delivery?.status === "accepted") {
+    return "Le livreur rejoint le restaurant. Suivi visible sans quitter l'app.";
+  }
+
+  if (order.delivery?.status === "picked_up" || order.delivery?.status === "on_the_way") {
+    return "Votre livraison avance en direct. Touchez la carte pour l'ouvrir.";
+  }
+
+  return "La recherche et le trajet estimé restent visibles dans l'app.";
+}
 
 function formatDistanceLabel(distanceKm?: number | null) {
   if (distanceKm == null) {
@@ -199,6 +251,10 @@ function formatMissionAmount(job: DeliveryJob) {
 }
 
 function getClientOrderStatus(order: Order) {
+  if (order.status === "cancelled") {
+    return { label: "Annulée", color: "#D45845" };
+  }
+
   if (order.delivery?.status === "cancelled") {
     return { label: "Annulée", color: "#D45845" };
   }
@@ -414,6 +470,7 @@ function DeliveryJobCard({
     : job.status === "broadcasting" || job.status === "available"
       ? "Touchez pour voir la mission"
       : null;
+  const shouldShowMiniMap = isTrackedDeliveryStatus(job.status);
 
   return (
     <View style={styles.historyCard}>
@@ -469,6 +526,25 @@ function DeliveryJobCard({
         ) : null}
       </View>
 
+      {shouldShowMiniMap ? (
+        <DeliveryMiniMap
+          status={job.status}
+          restaurantName={job.restaurantName}
+          restaurantAddress={job.restaurantAddress}
+          restaurantLatitude={job.restaurantLatitude}
+          restaurantLongitude={job.restaurantLongitude}
+          clientName={job.clientName}
+          deliveryAddress={job.deliveryAddress}
+          deliveryLatitude={job.deliveryLatitude}
+          deliveryLongitude={job.deliveryLongitude}
+          courierName={job.courier?.name ?? null}
+          courierLatitude={job.latestLocation?.latitude ?? null}
+          courierLongitude={job.latestLocation?.longitude ?? null}
+          caption={getCourierMapCaption(job)}
+          onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: job.id } })}
+        />
+      ) : null}
+
       <View style={styles.historyBottomRow}>
         <View style={[styles.historyStatusPill, { backgroundColor: `${config.color}18` }]}> 
           <Text style={[styles.historyStatusText, { color: config.color }]}>{config.label}</Text>
@@ -521,6 +597,7 @@ function ClientHistoryCard({
   const primaryDish = order.dishes[0]?.dish ?? null;
   const primaryDishImage = primaryDish?.imageUrls?.[0] ?? primaryDish?.imageUrl ?? null;
   const commerceImageSource = isCommerceOrder ? resolveCommerceVisual(primaryDish?.visualKey ?? order.merchantVisualKey ?? null, order.commerceUniverse ?? undefined) : null;
+  const shouldShowDeliveryMiniMap = Boolean(order.delivery && isTrackedDeliveryStatus(order.delivery.status));
   const [cancelCountdown, setCancelCountdown] = useState(() => {
     if (!order.cancelAvailableUntil) {
       return 0;
@@ -589,7 +666,7 @@ function ClientHistoryCard({
             <Pressable style={styles.historyGhostBtn} onPress={() => onCancelOrder(order)} disabled={cancelling}>
               {cancelling ? <ActivityIndicator color="#1F1A17" size="small" /> : <>
                 <Feather name="x-circle" size={16} color="#1F1A17" />
-                <Text style={styles.historyGhostBtnText}>{`Annuler (${cancelCountdown}s)`}</Text>
+                <Text style={styles.historyGhostBtnText}>{`Annuler (${formatCountdownLabel(cancelCountdown)})`}</Text>
               </>}
             </Pressable>
           ) : null}
@@ -622,6 +699,24 @@ function ClientHistoryCard({
           )}
         </View>
       </View>
+
+      {shouldShowDeliveryMiniMap ? (
+        <DeliveryMiniMap
+          status={order.delivery!.status}
+          restaurantName={order.chefName}
+          restaurantAddress={order.delivery?.restaurantAddress ?? order.chefName}
+          restaurantLatitude={order.delivery?.restaurantLatitude ?? null}
+          restaurantLongitude={order.delivery?.restaurantLongitude ?? null}
+          clientName={"Votre destination"}
+          deliveryAddress={order.delivery?.deliveryAddress ?? undefined}
+          deliveryLatitude={order.delivery?.deliveryLatitude ?? null}
+          deliveryLongitude={order.delivery?.deliveryLongitude ?? null}
+          courierLatitude={order.delivery?.latestLocation?.latitude ?? null}
+          courierLongitude={order.delivery?.latestLocation?.longitude ?? null}
+          caption={getClientMapCaption(order)}
+          onPress={() => router.push({ pathname: "/delivery/job/[id]", params: { id: order.delivery!.id } })}
+        />
+      ) : null}
     </View>
   );
 }
@@ -983,6 +1078,9 @@ export default function OrdersScreen() {
   const [clientFilter, setClientFilter] = useState<ClientOrderFilter>("all");
   const courierLocationSyncedAtRef = useRef(0);
   const alertedMissionIdsRef = useRef<Set<string>>(new Set());
+  const seenReviewableOrderIdsRef = useRef<Set<string> | null>(null);
+  const courierJobsRequestRef = useRef<Promise<void> | null>(null);
+  const lastCourierRefreshAtRef = useRef(0);
 
   const syncCourierAvailabilityLocation = useCallback(async () => {
     if (!token || !isCourier || !isVerifiedCourier) {
@@ -1019,40 +1117,70 @@ export default function OrdersScreen() {
     }
   }, [isCourier, isVerifiedCourier, token]);
 
-  const loadCourierJobs = useCallback(async () => {
+  const loadCourierJobs = useCallback(async (options?: { force?: boolean; showLoader?: boolean }) => {
     if (!token) return;
-    setLoadingCourier(true);
+
+    const force = options?.force ?? false;
+    const showLoader = options?.showLoader ?? false;
+    const now = Date.now();
+
+    if (courierJobsRequestRef.current) {
+      await courierJobsRequestRef.current;
+      return;
+    }
+
+    if (!force && now - lastCourierRefreshAtRef.current < COURIER_REFRESH_THROTTLE_MS) {
+      return;
+    }
+
+    lastCourierRefreshAtRef.current = now;
+
+    const request = (async () => {
+      if (showLoader) {
+        setLoadingCourier(true);
+      }
+
+      try {
+        if (isVerifiedCourier) {
+          await syncCourierAvailabilityLocation();
+        }
+
+        const [availableResult, currentResult, historyResult] = await Promise.allSettled([
+          isVerifiedCourier
+            ? apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/available", { token })
+            : Promise.resolve({ jobs: [] as DeliveryJob[] }),
+          apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/current", { token }),
+          apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/history", { token }),
+        ]);
+
+        setAvailableJobs(availableResult.status === "fulfilled" ? (availableResult.value.jobs ?? []) : []);
+        setCurrentJobs(currentResult.status === "fulfilled" ? (currentResult.value.jobs ?? []) : []);
+        setHistoryJobs(historyResult.status === "fulfilled" ? (historyResult.value.jobs ?? []) : []);
+
+        if (!isVerifiedCourier) {
+          setCourierLoadNotice("Votre compte livreur est en cours de vérification. Les nouvelles missions resteront masquées jusqu'à validation, mais votre historique et vos missions déjà assignées restent visibles.");
+        } else if (historyResult.status === "rejected") {
+          setCourierLoadNotice("L'historique des missions n'est pas encore disponible sur ce backend déployé. Les missions en cours et disponibles restent visibles.");
+        } else if (availableResult.status === "rejected" || currentResult.status === "rejected") {
+          setCourierLoadNotice("Certaines missions n'ont pas pu être chargées. Réessayez dans quelques secondes.");
+        } else {
+          setCourierLoadNotice(null);
+        }
+      } catch (error) {
+        setCourierLoadNotice("Impossible de charger les missions pour le moment.");
+        console.warn("Failed to load courier jobs:", error);
+      } finally {
+        if (showLoader) {
+          setLoadingCourier(false);
+        }
+      }
+    })();
+
+    courierJobsRequestRef.current = request;
     try {
-      if (isVerifiedCourier) {
-        await syncCourierAvailabilityLocation();
-      }
-
-      const [availableResult, currentResult, historyResult] = await Promise.allSettled([
-        isVerifiedCourier
-          ? apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/available", { token })
-          : Promise.resolve({ jobs: [] as DeliveryJob[] }),
-        apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/current", { token }),
-        apiFetch<{ jobs: DeliveryJob[] }>("/delivery/jobs/history", { token }),
-      ]);
-
-      setAvailableJobs(availableResult.status === "fulfilled" ? (availableResult.value.jobs ?? []) : []);
-      setCurrentJobs(currentResult.status === "fulfilled" ? (currentResult.value.jobs ?? []) : []);
-      setHistoryJobs(historyResult.status === "fulfilled" ? (historyResult.value.jobs ?? []) : []);
-
-      if (!isVerifiedCourier) {
-        setCourierLoadNotice("Votre compte livreur est en cours de vérification. Les nouvelles missions resteront masquées jusqu'à validation, mais votre historique et vos missions déjà assignées restent visibles.");
-      } else if (historyResult.status === "rejected") {
-        setCourierLoadNotice("L'historique des missions n'est pas encore disponible sur ce backend déployé. Les missions en cours et disponibles restent visibles.");
-      } else if (availableResult.status === "rejected" || currentResult.status === "rejected") {
-        setCourierLoadNotice("Certaines missions n'ont pas pu être chargées. Réessayez dans quelques secondes.");
-      } else {
-        setCourierLoadNotice(null);
-      }
-    } catch (error) {
-      setCourierLoadNotice("Impossible de charger les missions pour le moment.");
-      console.warn("Failed to load courier jobs:", error);
+      await request;
     } finally {
-      setLoadingCourier(false);
+      courierJobsRequestRef.current = null;
     }
   }, [isVerifiedCourier, syncCourierAvailabilityLocation, token]);
 
@@ -1112,13 +1240,20 @@ export default function OrdersScreen() {
           } | undefined;
 
           if (isCourier && data?.screen === "courier/orders") {
-            void loadCourierJobs();
+            void loadCourierJobs({ force: true });
             return;
           }
 
           if (isChef && (data?.screen === "chef-orders" || data?.screen === "delivery-tracking" || data?.orderId)) {
             void fetchChefOrders();
             void fetchChefCustomRequests();
+            return;
+          }
+
+          if (!isCourier && !isChef && data?.screen === "client-review" && data?.orderId) {
+            void refreshOrders().finally(() => {
+              router.push({ pathname: "/client/review/[orderId]", params: { orderId: String(data.orderId) } });
+            });
             return;
           }
 
@@ -1140,6 +1275,32 @@ export default function OrdersScreen() {
     };
   }, [fetchChefCustomRequests, fetchChefOrders, fetchCustomRequests, isChef, isCourier, loadCourierJobs, refreshOrders, token]);
 
+  useEffect(() => {
+    if (isCourier || isChef) {
+      return;
+    }
+
+    const reviewableIds = new Set(
+      orders
+        .filter((order) => order.canReview && (order.status === "delivered" || order.delivery?.status === "delivered"))
+        .map((order) => order.id),
+    );
+
+    if (seenReviewableOrderIdsRef.current === null) {
+      seenReviewableOrderIdsRef.current = reviewableIds;
+      return;
+    }
+
+    const nextOrderId = Array.from(reviewableIds).find((orderId) => !seenReviewableOrderIdsRef.current?.has(orderId));
+    seenReviewableOrderIdsRef.current = reviewableIds;
+
+    if (!nextOrderId) {
+      return;
+    }
+
+    router.push({ pathname: "/client/review/[orderId]", params: { orderId: nextOrderId } });
+  }, [isChef, isCourier, orders]);
+
   useFocusEffect(
     React.useCallback(() => {
       if (!token) {
@@ -1148,7 +1309,10 @@ export default function OrdersScreen() {
 
       const runRefresh = () => {
         if (isCourier) {
-          void loadCourierJobs();
+          void loadCourierJobs({
+            force: true,
+            showLoader: availableJobs.length === 0 && currentJobs.length === 0 && historyJobs.length === 0,
+          });
           return;
         }
         if (isChef) {
@@ -1166,7 +1330,7 @@ export default function OrdersScreen() {
         isCourier ? COURIER_REFRESH_INTERVAL_MS : isChef ? CHEF_REFRESH_INTERVAL_MS : CLIENT_REFRESH_INTERVAL_MS,
       );
       return () => clearInterval(interval);
-    }, [token, isCourier, isChef, refreshOrders, fetchCustomRequests, fetchChefOrders, fetchChefCustomRequests, loadCourierJobs])
+    }, [token, isCourier, isChef, refreshOrders, fetchCustomRequests, fetchChefOrders, fetchChefCustomRequests, loadCourierJobs, availableJobs.length, currentJobs.length, historyJobs.length])
   );
 
   const acceptJob = async (jobId: string) => {
@@ -1174,11 +1338,11 @@ export default function OrdersScreen() {
     setAcceptingJobId(jobId);
     try {
       await apiFetch(`/delivery/jobs/${jobId}/accept`, { method: "POST", token });
-      await loadCourierJobs();
+      await loadCourierJobs({ force: true });
       router.push({ pathname: "/delivery/job/[id]", params: { id: jobId } });
     } catch (error) {
       if (error instanceof ApiError && ["NotFound", "Conflict"].includes(error.code ?? "")) {
-        await loadCourierJobs();
+        await loadCourierJobs({ force: true });
       }
       console.warn("Failed to accept delivery job:", error);
     } finally {
@@ -1204,7 +1368,7 @@ export default function OrdersScreen() {
 
   const priorityOrders = chefOrders.filter((order) => ["pending", "accepted", "preparing"].includes(order.status));
   const readyOrders = chefOrders.filter((order) => order.status === "ready");
-  const archivedOrders = chefOrders.filter((order) => order.status === "delivered");
+  const archivedOrders = chefOrders.filter((order) => ["delivered", "cancelled"].includes(order.status));
   const pendingCustomRequests = chefCustomRequests.filter((request) => ["pending", "quoted"].includes(request.status));
   const archivedCustomRequests = chefCustomRequests.filter((request) => ["accepted", "rejected", "cancelled"].includes(request.status));
   const filteredClientOrders = useMemo(() => {
@@ -1302,6 +1466,9 @@ export default function OrdersScreen() {
       await updateChefOrderStatus(order.id, nextStatus);
     } catch (error) {
       await fetchChefOrders();
+      if (error instanceof ApiError) {
+        Alert.alert("Action impossible", error.message || "Cette commande ne peut plus être acceptée.");
+      }
       console.warn("Failed to advance chef order:", error);
     } finally {
       setChefActionKey(null);
@@ -1429,61 +1596,124 @@ export default function OrdersScreen() {
   }
 
   if (isCourier) {
+    const totalCourierMissions = currentJobs.length + availableJobs.length + historyJobs.length;
+    const courierStatusLabel = !isVerifiedCourier
+      ? "En revue"
+      : user?.courierProfile?.isAvailable
+        ? "Disponible"
+        : "Hors ligne";
+    const courierStatusTone = !isVerifiedCourier
+      ? "#A16207"
+      : user?.courierProfile?.isAvailable
+        ? "#0F766E"
+        : "#6B7280";
+
     return (
       <View style={[styles.courierHistoryScreen, { paddingTop: topInset }]}> 
-        <View style={styles.historyHeader}>
-          <Text style={styles.historyScreenTitle}>Mes courses et commandes</Text>
-          <Text style={styles.historyScreenSubtitle}>{currentJobs.length} en cours · {availableJobs.length} disponibles · {historyJobs.length} archivées</Text>
-          <View style={styles.summaryGrid}>
-            <View style={styles.summaryCardSoft}>
-              <Text style={styles.summaryValue}>{currentJobs.length}</Text>
-              <Text style={styles.summaryLabel}>En cours</Text>
-            </View>
-            <View style={styles.summaryCardSoft}>
-              <Text style={styles.summaryValue}>{availableJobs.length}</Text>
-              <Text style={styles.summaryLabel}>À accepter</Text>
-            </View>
-            <View style={styles.summaryCardSoft}>
-              <Text style={styles.summaryValue}>{historyJobs.length}</Text>
-              <Text style={styles.summaryLabel}>Historique</Text>
-            </View>
-            <View style={styles.summaryCardSoft}>
-              <Text style={styles.summaryValue}>{currentJobs.length + availableJobs.length + historyJobs.length}</Text>
-              <Text style={styles.summaryLabel}>Total missions</Text>
+        <ScrollView
+          contentContainerStyle={[
+            styles.courierScrollContent,
+            { paddingBottom: Platform.OS === "web" ? 120 : 100 },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.courierHeroShell}>
+            <View style={styles.courierHeroSurface}>
+              <View style={styles.courierHeroTopRow}>
+                <View style={styles.courierHeroCopy}>
+                  <Text style={styles.courierHeroEyebrow}>Espace livreur</Text>
+                  <Text style={styles.historyScreenTitle}>Mes missions</Text>
+                  <Text style={styles.historyScreenSubtitle}>
+                    Toutes vos courses dans un seul flux clair, avec un accès plus direct aux missions actives et à l'historique.
+                  </Text>
+                </View>
+                <View style={[styles.courierStatusPill, { backgroundColor: `${courierStatusTone}14` }]}> 
+                  <Text style={[styles.courierStatusPillText, { color: courierStatusTone }]}>{courierStatusLabel}</Text>
+                </View>
+              </View>
+
+              <View style={styles.courierHeroStatsRow}>
+                <View style={styles.courierLeadStatCard}>
+                  <Text style={styles.courierLeadStatLabel}>Missions suivies</Text>
+                  <Text style={styles.courierLeadStatValue}>{totalCourierMissions}</Text>
+                  <Text style={styles.courierLeadStatMeta}>
+                    {user?.courierProfile?.zone || "Zone Abidjan"}
+                  </Text>
+                </View>
+
+                <View style={styles.courierMiniStatsColumn}>
+                  <View style={styles.courierMiniStatCard}>
+                    <Text style={styles.courierMiniStatValue}>{currentJobs.length}</Text>
+                    <Text style={styles.courierMiniStatLabel}>En cours</Text>
+                  </View>
+                  <View style={styles.courierMiniStatCard}>
+                    <Text style={styles.courierMiniStatValue}>{availableJobs.length}</Text>
+                    <Text style={styles.courierMiniStatLabel}>Disponibles</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.courierStatStrip}>
+                <View style={styles.courierStatStripItem}>
+                  <Text style={styles.courierStatStripValue}>{historyJobs.length}</Text>
+                  <Text style={styles.courierStatStripLabel}>Archivées</Text>
+                </View>
+                <View style={styles.courierStatStripDivider} />
+                <View style={styles.courierStatStripItem}>
+                  <Text style={styles.courierStatStripValue}>{isVerifiedCourier ? "Oui" : "Non"}</Text>
+                  <Text style={styles.courierStatStripLabel}>Compte validé</Text>
+                </View>
+                <View style={styles.courierStatStripDivider} />
+                <View style={styles.courierStatStripItem}>
+                  <Text style={styles.courierStatStripValue}>{user?.courierProfile?.vehicleType || "Moto"}</Text>
+                  <Text style={styles.courierStatStripLabel}>Véhicule</Text>
+                </View>
+              </View>
             </View>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-            <FilterChip label="Tout" active={courierFilter === "all"} onPress={() => setCourierFilter("all")} />
-            <FilterChip label="En cours" active={courierFilter === "current"} onPress={() => setCourierFilter("current")} />
-            <FilterChip label="Disponibles" active={courierFilter === "available"} onPress={() => setCourierFilter("available")} />
-            <FilterChip label="Historique" active={courierFilter === "history"} onPress={() => setCourierFilter("history")} />
-          </ScrollView>
+
+          <View style={styles.courierControlsBlock}>
+            <Text style={styles.courierControlsLabel}>Filtrer l'affichage</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+              <FilterChip label="Tout" active={courierFilter === "all"} onPress={() => setCourierFilter("all")} />
+              <FilterChip label="En cours" active={courierFilter === "current"} onPress={() => setCourierFilter("current")} />
+              <FilterChip label="Disponibles" active={courierFilter === "available"} onPress={() => setCourierFilter("available")} />
+              <FilterChip label="Historique" active={courierFilter === "history"} onPress={() => setCourierFilter("history")} />
+            </ScrollView>
+          </View>
+
           {courierLoadNotice ? (
-            <View style={styles.inlineNoticeCard}>
-              <Text style={styles.inlineNoticeText}>{courierLoadNotice}</Text>
+            <View style={styles.courierNoticeWrap}>
+              <View style={styles.inlineNoticeCard}>
+                <Text style={styles.inlineNoticeText}>{courierLoadNotice}</Text>
+              </View>
             </View>
           ) : null}
-        </View>
 
-        {loadingCourier ? (
-          <View style={styles.emptyState}>
-            <ActivityIndicator color={Colors.light.tint} />
-          </View>
-        ) : (
-          <ScrollView contentContainerStyle={[styles.historyList, { paddingBottom: Platform.OS === "web" ? 120 : 100 }]} showsVerticalScrollIndicator={false}>
+          {loadingCourier ? (
+            <View style={styles.courierLoadingCard}>
+              <ActivityIndicator color={Colors.light.tint} />
+              <Text style={styles.courierLoadingText}>Chargement des missions...</Text>
+            </View>
+          ) : (
+            <View style={styles.historyList}>
             {filteredCurrentJobs.length > 0 ? (
-              <>
+              <View style={styles.daySectionBlock}>
                 <Text style={styles.daySectionTitle}>Mission en cours</Text>
                 {filteredCurrentJobs.map((job) => (
                   <DeliveryJobCard key={job.id} job={job} />
                 ))}
-              </>
+              </View>
             ) : null}
 
-            {filteredAvailableJobs.length > 0 ? <Text style={styles.daySectionTitle}>{filteredCurrentJobs.length > 0 ? "Nouvelles missions" : "Missions disponibles"}</Text> : null}
-            {filteredAvailableJobs.map((job) => (
-                <DeliveryJobCard key={job.id} job={job} onAccept={acceptJob} accepting={acceptingJobId === job.id} />
-            ))}
+            {filteredAvailableJobs.length > 0 ? (
+              <View style={styles.daySectionBlock}>
+                <Text style={styles.daySectionTitle}>{filteredCurrentJobs.length > 0 ? "Nouvelles missions" : "Missions disponibles"}</Text>
+                {filteredAvailableJobs.map((job) => (
+                  <DeliveryJobCard key={job.id} job={job} onAccept={acceptJob} accepting={acceptingJobId === job.id} />
+                ))}
+              </View>
+            ) : null}
 
             {historySections.map((section) => (
               <View key={section.title} style={styles.daySectionBlock}>
@@ -1499,8 +1729,9 @@ export default function OrdersScreen() {
                 <Text style={styles.emptyDesc}>Aucune mission à afficher pour ce filtre.</Text>
               </View>
             ) : null}
-          </ScrollView>
-        )}
+            </View>
+          )}
+        </ScrollView>
       </View>
     );
   }
@@ -1682,13 +1913,11 @@ const styles = StyleSheet.create({
   summaryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   summaryCard: {
     width: "47%",
-    backgroundColor: Colors.light.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
     paddingVertical: 14,
     paddingHorizontal: 14,
     gap: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   summaryValue: {
     fontSize: 24,
@@ -1701,16 +1930,9 @@ const styles = StyleSheet.create({
     color: Colors.light.textSecondary,
   },
   orderCard: {
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    shadowColor: Colors.light.shadow,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 1,
-    shadowRadius: 10,
-    elevation: 2,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   priorityOrderCard: {
     borderColor: "rgba(243, 156, 18, 0.38)",
@@ -1752,10 +1974,11 @@ const styles = StyleSheet.create({
   },
   briefCard: {
     marginTop: 12,
-    borderRadius: 14,
-    backgroundColor: Colors.light.backgroundSecondary,
-    padding: 12,
+    paddingVertical: 10,
     gap: 4,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   briefText: {
     fontSize: 12,
@@ -1828,7 +2051,7 @@ const styles = StyleSheet.create({
     gap: 6,
     borderWidth: 1,
     borderColor: Colors.light.tint,
-    borderRadius: 20,
+    borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
@@ -1852,10 +2075,11 @@ const styles = StyleSheet.create({
   },
   orderOverviewCard: {
     marginTop: 14,
-    borderRadius: 14,
-    backgroundColor: Colors.light.backgroundSecondary,
-    padding: 12,
+    paddingVertical: 12,
     gap: 10,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   orderOverviewTitle: {
     fontSize: 12,
@@ -1905,12 +2129,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderRadius: 20,
+    backgroundColor: "transparent",
+    borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderColor: "rgba(104,83,69,0.14)",
   },
   secondaryActionText: {
     fontSize: 12,
@@ -1943,10 +2167,9 @@ const styles = StyleSheet.create({
     paddingVertical: 28,
     paddingHorizontal: 20,
     gap: 12,
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   emptyIcon: {
     width: 80,
@@ -1970,11 +2193,10 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   emptyInline: {
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
-    padding: 16,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   exploreBtn: {
     backgroundColor: Colors.light.tint,
@@ -2004,6 +2226,164 @@ const styles = StyleSheet.create({
   courierHistoryScreen: {
     flex: 1,
     backgroundColor: "#FCFBF9",
+  },
+  courierScrollContent: {
+    gap: 18,
+  },
+  courierHeroShell: {
+    paddingHorizontal: 20,
+  },
+  courierHeroSurface: {
+    paddingHorizontal: 0,
+    paddingVertical: 18,
+    gap: 16,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
+  },
+  courierHeroTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  courierHeroCopy: {
+    flex: 1,
+    gap: 6,
+  },
+  courierHeroEyebrow: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#8C6A4A",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  courierStatusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  courierStatusPillText: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+  },
+  courierHeroStatsRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  courierLeadStatCard: {
+    flex: 1.15,
+    minHeight: 132,
+    borderRadius: 18,
+    backgroundColor: "transparent",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(15,118,110,0.18)",
+  },
+  courierLeadStatLabel: {
+    fontSize: 12,
+    fontFamily: "Poppins_500Medium",
+    color: "rgba(255,255,255,0.78)",
+  },
+  courierLeadStatValue: {
+    fontSize: 34,
+    lineHeight: 38,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F6F5F",
+  },
+  courierLeadStatMeta: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_500Medium",
+    color: "#356E63",
+  },
+  courierMiniStatsColumn: {
+    flex: 0.95,
+    gap: 12,
+  },
+  courierMiniStatCard: {
+    flex: 1,
+    borderRadius: 0,
+    backgroundColor: "transparent",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    justifyContent: "center",
+    gap: 4,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
+  },
+  courierMiniStatValue: {
+    fontSize: 24,
+    lineHeight: 28,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  courierMiniStatLabel: {
+    fontSize: 12,
+    fontFamily: "Poppins_500Medium",
+    color: "#7B7068",
+  },
+  courierStatStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 0,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
+  },
+  courierStatStripItem: {
+    flex: 1,
+    alignItems: "center",
+    gap: 2,
+    paddingHorizontal: 6,
+  },
+  courierStatStripValue: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontFamily: "Poppins_700Bold",
+    color: "#1F1A17",
+  },
+  courierStatStripLabel: {
+    fontSize: 11,
+    fontFamily: "Poppins_500Medium",
+    color: "#7B7068",
+    textAlign: "center",
+  },
+  courierStatStripDivider: {
+    width: 1,
+    alignSelf: "stretch",
+    backgroundColor: "rgba(91,74,62,0.10)",
+  },
+  courierControlsBlock: {
+    gap: 10,
+    paddingHorizontal: 20,
+  },
+  courierControlsLabel: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#85786F",
+  },
+  courierNoticeWrap: {
+    paddingHorizontal: 20,
+  },
+  courierLoadingCard: {
+    marginHorizontal: 20,
+    paddingVertical: 26,
+    paddingHorizontal: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
+  },
+  courierLoadingText: {
+    fontSize: 13,
+    fontFamily: "Poppins_500Medium",
+    color: "#6D625A",
   },
   historyHeader: {
     paddingHorizontal: 20,
@@ -2056,10 +2436,10 @@ const styles = StyleSheet.create({
     color: "#8C827B",
   },
   historyCard: {
-    borderRadius: 24,
-    backgroundColor: "#F5F2EE",
-    padding: 14,
+    paddingVertical: 14,
     gap: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   historyCardTopRow: {
     flexDirection: "row",
@@ -2072,13 +2452,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FFF8F2",
+    backgroundColor: "transparent",
   },
   historyDishThumb: {
     width: 46,
     height: 46,
     borderRadius: 14,
-    backgroundColor: "#FFF8F2",
+    backgroundColor: "transparent",
   },
   historyDeliveryIconWrap: {
     backgroundColor: "#FFF2ED",
@@ -2132,11 +2512,13 @@ const styles = StyleSheet.create({
   },
   missionMetricCard: {
     flex: 1,
-    borderRadius: 16,
-    backgroundColor: "#EBE7E3",
+    borderRadius: 0,
+    backgroundColor: "transparent",
     paddingHorizontal: 10,
     paddingVertical: 11,
     gap: 4,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   missionMetricLabel: {
     fontSize: 11,
@@ -2149,13 +2531,13 @@ const styles = StyleSheet.create({
     color: "#1F1A17",
   },
   missionInfoBlock: {
-    borderRadius: 18,
-    backgroundColor: "#FFFCF8",
+    backgroundColor: "transparent",
     paddingHorizontal: 12,
     paddingVertical: 12,
     gap: 9,
-    borderWidth: 1,
-    borderColor: "rgba(124,112,104,0.10)",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   missionInfoRow: {
     flexDirection: "row",
@@ -2208,22 +2590,26 @@ const styles = StyleSheet.create({
   historyGhostBtn: {
     flex: 1,
     minHeight: 56,
-    borderRadius: 18,
-    backgroundColor: "#EBE7E3",
+    borderRadius: 999,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
     paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(104,83,69,0.14)",
   },
   historyGhostBtnStatic: {
     flex: 1,
     minHeight: 56,
-    borderRadius: 18,
-    backgroundColor: "#F3EDE6",
+    borderRadius: 999,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
     paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "rgba(104,83,69,0.14)",
   },
   historyGhostBtnText: {
     fontSize: 13,
@@ -2231,10 +2617,11 @@ const styles = StyleSheet.create({
     color: "#1F1A17",
   },
   inlineNoticeCard: {
-    borderRadius: 18,
-    backgroundColor: "#F5EEE6",
-    paddingHorizontal: 14,
+    paddingHorizontal: 0,
     paddingVertical: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   inlineNoticeText: {
     fontSize: 12,
@@ -2243,10 +2630,10 @@ const styles = StyleSheet.create({
     color: "#7C5A2D",
   },
   chefCard: {
-    borderRadius: 24,
-    backgroundColor: "#F5F2EE",
-    padding: 14,
+    paddingVertical: 14,
     gap: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   chefCardPriority: {
     borderWidth: 1,
@@ -2314,9 +2701,11 @@ const styles = StyleSheet.create({
   },
   chefInfoChip: {
     borderRadius: 999,
-    backgroundColor: "#ECE7E2",
+    backgroundColor: "transparent",
     paddingHorizontal: 12,
     paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "rgba(104,83,69,0.12)",
   },
   chefInfoChipText: {
     fontSize: 12,
@@ -2324,11 +2713,12 @@ const styles = StyleSheet.create({
     color: "#5E544E",
   },
   chefBriefCard: {
-    borderRadius: 18,
-    backgroundColor: "#ECE7E2",
-    paddingHorizontal: 14,
+    paddingHorizontal: 0,
     paddingVertical: 12,
     gap: 4,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   chefDeliveryBanner: {
     borderRadius: 18,
@@ -2372,10 +2762,11 @@ const styles = StyleSheet.create({
     color: "#2D2723",
   },
   chefItemsCard: {
-    borderRadius: 20,
-    backgroundColor: "#FFFDFC",
-    padding: 12,
+    paddingVertical: 12,
     gap: 10,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(104,83,69,0.10)",
   },
   chefItemRow: {
     flexDirection: "row",
@@ -2385,11 +2776,13 @@ const styles = StyleSheet.create({
   chefItemQuantityBadge: {
     minWidth: 38,
     borderRadius: 12,
-    backgroundColor: "#FFF2E8",
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
     paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(212,97,26,0.16)",
   },
   chefItemQuantityText: {
     fontSize: 12,
@@ -2439,10 +2832,10 @@ const styles = StyleSheet.create({
   },
   summaryCardSoft: {
     width: "47%",
-    backgroundColor: "#F5F2EE",
-    borderRadius: 20,
     paddingVertical: 16,
     paddingHorizontal: 14,
     gap: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
 });

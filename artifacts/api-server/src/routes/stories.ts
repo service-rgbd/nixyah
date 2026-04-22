@@ -5,7 +5,7 @@ import { eq, gt, desc, and, ne, inArray } from "drizzle-orm";
 import { requireAuth, requireOperationalChef, type AuthRequest } from "../middlewares/auth.js";
 import { getDishEffectivePrice } from "../lib/menu.js";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
-import { notifyUsers } from "../lib/notifications.js";
+import { notifyChefFollowersAboutPublication } from "../lib/chef-followers.js";
 import { verifyToken } from "../lib/auth.js";
 import { z } from "zod";
 import { hexColorString, idParamSchema, nonEmptyTrimmedString, nullableTrimmedString, parseWithSchema, safeUrlString } from "../lib/validation.js";
@@ -224,27 +224,21 @@ router.post("/stories", requireOperationalChef, async (req: AuthRequest, res) =>
       expiresAt,
     }).returning();
 
-    if (story.videoUrl) {
-      try {
-        const recipients = await db
-          .select({ id: usersTable.id })
-          .from(usersTable)
-          .where(ne(usersTable.id, req.userId!));
-
-        await notifyUsers({
-          userIds: recipients.map((recipient) => recipient.id),
-          type: "system",
-          title: `${u.name} vient de publier une vidéo`,
-          message: linkedDish?.name ?? dishName ?? caption,
-          data: {
-            type: "story-video",
-            storyId: String(story.id),
-            chefId: String(cp.id),
-          },
-        });
-      } catch (notificationError) {
-        console.warn("story video notification failed", notificationError);
-      }
+    try {
+      const isVideoStory = Boolean(story.videoUrl);
+      await notifyChefFollowersAboutPublication({
+        chefProfileId: cp.id,
+        title: isVideoStory ? `${u.name} publie une nouvelle story vidéo` : `${u.name} publie une nouvelle story`,
+        message: linkedDish?.name ?? dishName ?? caption,
+        data: {
+          type: isVideoStory ? "chef-story-video" : "chef-story",
+          screen: "stories",
+          storyId: String(story.id),
+          chefId: String(cp.id),
+        },
+      });
+    } catch (notificationError) {
+      console.warn("story publication notification failed", notificationError);
     }
 
     res.status(201).json({

@@ -8,6 +8,12 @@ import React, {
   useState,
 } from "react";
 import { apiFetch, invalidateApiCache, normalizeRemoteUrl, readApiCache, type ApiCacheConfig } from "@/constants/api";
+import {
+  createNativePasskey,
+  getDefaultPasskeyDeviceName,
+  getNativePasskey,
+  type PasskeySummary,
+} from "@/constants/passkeys";
 
 const FAVORITES_STORAGE_KEY = "nixyah_favorites";
 const ORDERS_STORAGE_KEY = "nixyah_orders";
@@ -161,7 +167,7 @@ export interface Order {
   deliveryDemandMultiplier?: number;
   freeDeliveryApplied?: boolean;
   referralCreditUsed?: boolean;
-  status: "pending" | "accepted" | "preparing" | "ready" | "delivered";
+  status: "pending" | "accepted" | "preparing" | "ready" | "delivered" | "cancelled";
   createdAt: string;
   cancelAvailableUntil?: string | null;
   occasion?: string;
@@ -255,7 +261,7 @@ export interface ReceivedOrder {
   clientLocation: string;
   items: { dishId?: string | null; dishName: string; quantity: number; price: number }[];
   total: number;
-  status: "pending" | "accepted" | "preparing" | "ready" | "delivered";
+  status: "pending" | "accepted" | "preparing" | "ready" | "delivered" | "cancelled";
   createdAt: string;
   occasion?: string | null;
   persons?: number | null;
@@ -315,6 +321,8 @@ export interface AuthUser {
     userId: string;
     zone: string;
     vehicleType: string;
+    rejectionReason?: string | null;
+    rejectionReasonUpdatedAt?: string | null;
     verificationDocuments?: {
       identityDocumentUrl?: string | null;
       driverLicenseUrl?: string | null;
@@ -368,10 +376,14 @@ interface AppContextValue {
   token: string | null;
   isLoadingAuth: boolean;
   login: (emailOrPhone: string, password: string) => Promise<void>;
+  loginWithPasskey: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   registerClient: (data: RegisterClientData) => Promise<AuthRegistrationResult>;
   registerChef: (data: RegisterChefData) => Promise<AuthRegistrationResult>;
   registerCourier: (data: RegisterCourierData) => Promise<AuthRegistrationResult>;
+  registerPasskey: (deviceName?: string) => Promise<PasskeySummary[]>;
+  listPasskeys: () => Promise<PasskeySummary[]>;
+  deletePasskey: (id: string) => Promise<void>;
   updateCourierVerificationDossier: (data: {
     identityDocumentUrl?: string | null;
     driverLicenseUrl?: string | null;
@@ -401,7 +413,7 @@ interface AppContextValue {
     notes?: string;
     deliveryAddress?: string;
   }) => Promise<CustomRequest>;
-  toggleFavorite: (chefId: string) => void;
+  toggleFavorite: (chefId: string) => Promise<void>;
   sendMessage: (chatId: string, chefId: string, text: string, chefName: string, chefSpecialty: string, coverColor: string) => void;
   getChef: (id: string) => Chef | undefined;
   updateCurrentUser: (data: { avatarUrl?: string | null; coverColor?: string; location?: string }) => Promise<AuthUser>;
@@ -422,13 +434,13 @@ interface AppContextValue {
   updateChefOrderStatus: (orderId: string, status: ReceivedOrder["status"]) => Promise<void>;
   requestDeliveryForOrder: (orderId: string) => Promise<void>;
   cancelDeliverySearchForOrder: (deliveryJobId: string) => Promise<void>;
-  fetchNotifications: () => Promise<void>;
+  fetchNotifications: (options?: { silent?: boolean }) => Promise<void>;
   refreshOrders: () => Promise<void>;
 }
 
 export interface RegisterClientData {
   name: string;
-  email?: string;
+  email: string;
   phone?: string;
   referralCode?: string;
   password: string;
@@ -438,7 +450,7 @@ export interface RegisterClientData {
 
 export interface RegisterChefData {
   name: string;
-  email?: string;
+  email: string;
   phone?: string;
   referralCode?: string;
   password: string;
@@ -453,7 +465,7 @@ export interface RegisterChefData {
 
 export interface RegisterCourierData {
   name: string;
-  email?: string;
+  email: string;
   phone?: string;
   referralCode?: string;
   password: string;
@@ -589,6 +601,8 @@ function mapApiAuthUser(input: any): AuthUser {
     courierProfile: input?.courierProfile
       ? {
           ...input.courierProfile,
+          rejectionReason: typeof input.courierProfile.rejectionReason === "string" ? input.courierProfile.rejectionReason : null,
+          rejectionReasonUpdatedAt: input.courierProfile.rejectionReasonUpdatedAt ?? null,
           verificationDocuments: input.courierProfile.verificationDocuments
             ? {
                 identityDocumentUrl: normalizeRemoteUrl(input.courierProfile.verificationDocuments.identityDocumentUrl ?? null),
@@ -1144,6 +1158,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (token && user?.type === "client") {
       refreshOrders();
       fetchCustomRequests();
+      void (async () => {
+        try {
+          const data = await apiFetch<{ chefIds: string[] }>("/chefs/favorites", { token });
+          setFavorites((data.chefIds ?? []).map(String));
+        } catch (error) {
+          console.warn("Failed to load favorite chefs:", error);
+        }
+      })();
     }
   }, [token, user?.type, refreshOrders, fetchCustomRequests]);
 
@@ -1159,6 +1181,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       method: "POST",
       body: JSON.stringify({ emailOrPhone, password }),
     });
+    await AsyncStorage.setItem("nixyah_token", data.token);
+    setToken(data.token);
+    setUser(mapApiAuthUser(data.user));
+  }, []);
+
+  const loginWithPasskey = useCallback(async (email: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      throw new Error("Email requis pour utiliser une passkey");
+    }
+
+    const optionsResponse = await apiFetch<{ options: any }>("/auth/passkey/login/options", {
+      method: "POST",
+      body: JSON.stringify({ email: normalizedEmail }),
+    });
+
+    const assertion = await getNativePasskey(optionsResponse.options);
+    if (!assertion) {
+      throw new Error("Connexion passkey annulée");
+    }
+
+    const data = await apiFetch<{ token: string; user: AuthUser }>("/auth/passkey/login/verify", {
+      method: "POST",
+      body: JSON.stringify({
+        challenge: optionsResponse.options.challenge,
+        response: assertion,
+      }),
+    });
+
     await AsyncStorage.setItem("nixyah_token", data.token);
     setToken(data.token);
     setUser(mapApiAuthUser(data.user));
@@ -1244,6 +1295,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       email: res.email ?? res.user.email ?? null,
     };
   }, []);
+
+  const listPasskeys = useCallback(async () => {
+    if (!token) {
+      throw new Error("Non connecté");
+    }
+
+    const response = await apiFetch<{ passkeys: PasskeySummary[] }>("/auth/passkey/list", {
+      token,
+    });
+
+    return response.passkeys ?? [];
+  }, [token]);
+
+  const registerPasskey = useCallback(async (deviceName?: string) => {
+    if (!token) {
+      throw new Error("Non connecté");
+    }
+
+    const optionsResponse = await apiFetch<{ options: any }>("/auth/passkey/register/options", {
+      method: "POST",
+      token,
+    });
+
+    const creation = await createNativePasskey(optionsResponse.options);
+    if (!creation) {
+      throw new Error("Création de passkey annulée");
+    }
+
+    const response = await apiFetch<{ passkeys: PasskeySummary[] }>("/auth/passkey/register/verify", {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        challenge: optionsResponse.options.challenge,
+        response: creation,
+        deviceName: deviceName?.trim() || getDefaultPasskeyDeviceName(),
+      }),
+    });
+
+    return response.passkeys ?? [];
+  }, [token]);
+
+  const deletePasskey = useCallback(async (id: string) => {
+    if (!token) {
+      throw new Error("Non connecté");
+    }
+
+    await apiFetch(`/auth/passkey/${id}`, {
+      method: "DELETE",
+      token,
+    });
+  }, [token]);
 
   const updateCourierVerificationDossier = useCallback(async (data: {
     identityDocumentUrl?: string | null;
@@ -1381,13 +1483,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return mappedRequest;
   }, [token, user?.id, user?.location, user?.type]);
 
-  const toggleFavorite = useCallback((chefId: string) => {
-    setFavorites((prev) =>
-      prev.includes(chefId)
-        ? prev.filter((id) => id !== chefId)
-        : [...prev, chefId]
-    );
-  }, []);
+  const toggleFavorite = useCallback(async (chefId: string) => {
+    const previousFavorites = favorites;
+    const isFavorite = previousFavorites.includes(chefId);
+    const nextFavorites = isFavorite
+      ? previousFavorites.filter((id) => id !== chefId)
+      : [...previousFavorites, chefId];
+
+    setFavorites(nextFavorites);
+
+    if (!token || user?.type !== "client") {
+      return;
+    }
+
+    try {
+      await apiFetch(`/chefs/${chefId}/favorite`, {
+        method: isFavorite ? "DELETE" : "POST",
+        token,
+      });
+    } catch (error) {
+      console.warn("Failed to sync favorite chef:", error);
+      setFavorites(previousFavorites);
+      throw error;
+    }
+  }, [favorites, token, user?.type]);
 
   const sendMessage = useCallback(
     (chatId: string, chefId: string, text: string, chefName: string, chefSpecialty: string, coverColor: string) => {
@@ -1559,13 +1678,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([fetchChefOrders(), fetchChefStats(user.id)]);
   }, [fetchChefOrders, fetchChefStats, token, user?.id, user?.type]);
 
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = useCallback(async (options?: { silent?: boolean }) => {
     if (!token || !user?.id) return;
     try {
-      setIsLoadingNotifications(true);
+      if (!options?.silent) {
+        setIsLoadingNotifications(true);
+      }
       const data = await apiFetch<{ notifications: any[] }>("/chef/notifications/list", {
         token,
-        cacheConfig: buildUserScopedApiCache("chef-notifications", 45 * 1000, user.id),
       });
       setNotifications(data.notifications.map((n: any) => ({
         id: String(n.id),
@@ -1580,9 +1700,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       console.warn("Failed to load notifications:", error);
     } finally {
-      setIsLoadingNotifications(false);
+      if (!options?.silent) {
+        setIsLoadingNotifications(false);
+      }
     }
   }, [token, user?.id]);
+
+  useEffect(() => {
+    if (!token || !user?.id) {
+      return;
+    }
+
+    void fetchNotifications({ silent: true });
+    const interval = setInterval(() => {
+      void fetchNotifications({ silent: true });
+    }, 20000);
+
+    return () => clearInterval(interval);
+  }, [fetchNotifications, token, user?.id]);
 
   const value = useMemo(
     () => ({
@@ -1604,10 +1739,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       token,
       isLoadingAuth,
       login,
+      loginWithPasskey,
       logout,
       registerClient,
       registerChef,
       registerCourier,
+      registerPasskey,
+      listPasskeys,
+      deletePasskey,
       updateCourierVerificationDossier,
       postStory,
       addOrder,
@@ -1636,7 +1775,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, logout, registerClient, registerChef, registerCourier, updateCourierVerificationDossier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, loginWithPasskey, logout, registerClient, registerChef, registerCourier, registerPasskey, listPasskeys, deletePasskey, updateCourierVerificationDossier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

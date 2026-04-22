@@ -1,4 +1,4 @@
-import { Feather } from "@expo/vector-icons";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -15,6 +15,35 @@ import Colors from "@/constants/colors";
 
 type FaqEntry = { id: string; question: string; answer: string };
 type FaqSection = { id: string; title: string; icon: string; color: string; items: FaqEntry[] };
+
+function renderSectionGlyph(icon: string, color: string, size = 18) {
+  switch (icon) {
+    case "user":
+      return <MaterialCommunityIcons name="account-circle-outline" size={size + 1} color={color} />;
+    case "shopping-bag":
+      return <MaterialCommunityIcons name="clipboard-text-clock-outline" size={size} color={color} />;
+    case "credit-card":
+      return <MaterialCommunityIcons name="credit-card-check-outline" size={size} color={color} />;
+    case "truck":
+      return <MaterialCommunityIcons name="truck-fast-outline" size={size} color={color} />;
+    case "feather":
+      return <MaterialCommunityIcons name="chef-hat" size={size} color={color} />;
+    case "zap":
+      return <Ionicons name="flash-outline" size={size - 1} color={color} />;
+    case "shopping-cart":
+      return <MaterialCommunityIcons name="cart-variant" size={size} color={color} />;
+    case "tag":
+      return <MaterialCommunityIcons name="shopping-outline" size={size} color={color} />;
+    case "star":
+      return <MaterialCommunityIcons name="motion-play-outline" size={size} color={color} />;
+    case "bell":
+      return <MaterialCommunityIcons name="bell-badge-outline" size={size} color={color} />;
+    case "shield":
+      return <MaterialCommunityIcons name="shield-check-outline" size={size} color={color} />;
+    default:
+      return <Feather name={icon as any} size={size} color={color} />;
+  }
+}
 
 const FAQ_SECTIONS: FaqSection[] = [
   {
@@ -153,7 +182,7 @@ const FAQ_SECTIONS: FaqSection[] = [
     icon: "shield",
     color: "#4A90E2",
     items: [
-      { id: "sec-1", question: "Comment protéger mon compte ?", answer: "Utilisez un mot de passe fort et unique. Activez la vérification à deux facteurs dans Compte > Sécurité. Ne partagez jamais votre mot de passe ou code SMS." },
+      { id: "sec-1", question: "Comment protéger mon compte ?", answer: "Utilisez un mot de passe fort et unique. Ajoutez une passkey biométrique dans Compte > Passkeys & sécurité et gardez votre email confirmé pour la récupération. Ne partagez jamais votre mot de passe ni vos appareils de confiance." },
       { id: "sec-2", question: "Comment gérer mes données personnelles ?", answer: "Vous pouvez consulter, exporter ou demander la suppression de vos données depuis Compte > Confidentialité. Nixyah respecte les réglementations locales de protection des données." },
       { id: "sec-3", question: "Comment signaler un comportement inapproprié ?", answer: "Sur le profil concerné, appuyez sur les trois points (•••) et sélectionnez Signaler. L'équipe de modération examine chaque signalement sous 24 h." },
       { id: "sec-4", question: "Mon compte a été piraté, que faire ?", answer: "Changez immédiatement votre mot de passe depuis Compte > Sécurité. Si vous ne pouvez plus vous connecter, utilisez Mot de passe oublié puis contactez le support en urgence." },
@@ -200,16 +229,18 @@ export default function GeneralHelpScreen() {
             {/* Section header */}
             <Pressable style={styles.sectionHeader} onPress={() => toggleSection(section.id)}>
               <View style={[styles.sectionIconWrap, { backgroundColor: `${section.color}18` }]}>
-                <Feather name={section.icon as any} size={18} color={section.color} />
+                <View style={[styles.sectionIconInner, { shadowColor: section.color }]}> 
+                  {renderSectionGlyph(section.icon, section.color, 18)}
+                </View>
               </View>
               <Text style={styles.sectionTitle}>{section.title}</Text>
               <View style={styles.sectionCount}>
                 <Text style={styles.sectionCountText}>{section.items.length}</Text>
               </View>
-              <Feather
-                name={expandedSection === section.id ? "chevron-up" : "chevron-down"}
+              <Ionicons
+                name={expandedSection === section.id ? "chevron-up-circle" : "chevron-down-circle"}
                 size={18}
-                color={Colors.light.textSecondary}
+                color={Colors.light.textTertiary}
               />
             </Pressable>
 
@@ -223,11 +254,14 @@ export default function GeneralHelpScreen() {
                     onPress={() => setExpandedItemId(expandedItemId === item.id ? null : item.id)}
                   >
                     <View style={styles.faqRow}>
+                      <View style={styles.faqBulletWrap}>
+                        <Ionicons name="sparkles-outline" size={13} color={section.color} />
+                      </View>
                       <Text style={styles.faqQuestion}>{item.question}</Text>
-                      <Feather
-                        name={expandedItemId === item.id ? "chevron-up" : "chevron-down"}
-                        size={15}
-                        color={Colors.light.textSecondary}
+                      <Ionicons
+                        name={expandedItemId === item.id ? "chevron-up-circle" : "chevron-down-circle"}
+                        size={18}
+                        color={Colors.light.textTertiary}
                       />
                     </View>
                     {expandedItemId === item.id && (
@@ -269,11 +303,9 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 10, paddingBottom: 40 },
   subtitle: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, marginBottom: 4 },
   sectionCard: {
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
     overflow: "hidden",
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.divider,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -289,12 +321,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
+  sectionIconInner: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.72)",
+  },
   sectionTitle: { flex: 1, fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   sectionCount: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 10,
-    backgroundColor: Colors.light.backgroundSecondary,
+    borderRadius: 999,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: Colors.light.divider,
   },
   sectionCountText: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.textSecondary },
   itemsList: {
@@ -304,18 +346,26 @@ const styles = StyleSheet.create({
   faqItem: { padding: 16, gap: 10 },
   faqItemBorder: { borderBottomWidth: 1, borderBottomColor: Colors.light.divider },
   faqRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  faqBulletWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(212,97,26,0.08)",
+    marginTop: 1,
+  },
   faqQuestion: { flex: 1, fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, lineHeight: 21 },
   faqAnswer: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, lineHeight: 21 },
   contactRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    padding: 16,
+    paddingVertical: 16,
     marginTop: 6,
-    backgroundColor: Colors.light.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.light.divider,
   },
   contactText: { flex: 1, fontSize: 14, fontFamily: "Poppins_500Medium", color: Colors.light.tint },
 });

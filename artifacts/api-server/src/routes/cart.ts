@@ -7,6 +7,7 @@ import { getDishEffectivePrice } from "../lib/menu.js";
 import { notifyUsers } from "../lib/notifications.js";
 import { quoteDeliveryOrderPricing } from "../lib/fulfillment.js";
 import { parseWithSchema, idParamSchema } from "../lib/validation.js";
+import { getOrderPendingDeadline } from "../lib/order-window.js";
 import {
   cartAddItemBodySchema,
   cartUpdateItemBodySchema,
@@ -379,7 +380,7 @@ router.post("/cart/checkout", requireClient, async (req: AuthRequest, res) => {
       freeDeliveryApplied: pricing.freeDeliveryApplied,
       referralCreditUsed: pricing.referralCreditWillBeUsed,
       deliveryAddress: resolvedDeliveryAddress || null,
-      cancelAvailableUntil: new Date(order.createdAt.getTime() + 10_000).toISOString(),
+      cancelAvailableUntil: getOrderPendingDeadline(order.createdAt).toISOString(),
     });
   } catch (err) {
     console.error("checkout error", err);

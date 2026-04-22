@@ -14,6 +14,7 @@ import customRequestsRouter from "./custom-requests.js";
 import commerceRouter from "./commerce.js";
 import merchantRouter from "./merchant.js";
 import adminRouter from "./admin.js";
+import supportRouter from "./support.js";
 
 const router: IRouter = Router();
 
@@ -29,6 +30,7 @@ router.use(ordersRouter);
 router.use(customRequestsRouter);
 router.use(chatsRouter);
 router.use(deliveryRouter);
+router.use(supportRouter);
 router.use(commerceRouter);
 router.use(merchantRouter);
 router.use(adminRouter);

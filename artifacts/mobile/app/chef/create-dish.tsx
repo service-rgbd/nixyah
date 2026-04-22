@@ -194,13 +194,14 @@ export default function CreateDishScreen() {
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.light.text} />
         </Pressable>
-        <Text style={styles.title}>{isEditMode ? "Modifier le plat" : "Créer un plat"}</Text>
+        <Text style={styles.title}>{isEditMode ? "Modifier le plat" : "Ajouter un plat"}</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
         <View style={styles.heroCard}>
-          <Text style={styles.heroTitle}>{isEditMode ? "Ajustez votre fiche plat" : "Construisez un plat proprement classe"}</Text>
+          <Text style={styles.heroEyebrow}>Studio menu</Text>
+          <Text style={styles.heroTitle}>{isEditMode ? "Ajustez votre fiche plat" : "Ajoutez un plat de facon claire et premium"}</Text>
           <Text style={styles.heroSub}>
             {isEditMode
               ? "Vous pouvez modifier le nom, la description, la categorie, la mise en avant, la reduction et les photos. Le prix de base reste verrouille."
@@ -357,37 +358,38 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.light.divider },
   backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   title: { fontSize: 18, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, flex: 1, textAlign: "center" },
-  form: { padding: 20, gap: 12 },
-  heroCard: { backgroundColor: "#FBF5EF", borderRadius: 24, padding: 18, borderWidth: 1, borderColor: "rgba(156,109,82,0.14)", marginBottom: 4, gap: 12 },
-  heroTitle: { fontSize: 16, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
+  form: { padding: 20, gap: 16 },
+  heroCard: { paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)", gap: 12 },
+  heroEyebrow: { fontSize: 11, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint, textTransform: "uppercase", letterSpacing: 0.9 },
+  heroTitle: { fontSize: 22, lineHeight: 30, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   heroSub: { marginTop: 6, fontSize: 13, lineHeight: 19, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  previewPriceCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#fff", borderRadius: 18, padding: 14, borderWidth: 1, borderColor: "rgba(156,109,82,0.12)" },
+  previewPriceCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12, borderTopWidth: 1, borderBottomWidth: 1, borderTopColor: "rgba(120,104,96,0.10)", borderBottomColor: "rgba(120,104,96,0.10)" },
   previewPriceMeta: { gap: 4 },
   previewPriceLabel: { fontSize: 11, fontFamily: "Poppins_500Medium", color: Colors.light.textSecondary, textTransform: "uppercase", letterSpacing: 0.8 },
   previewPriceValue: { fontSize: 18, fontFamily: "Poppins_700Bold", color: Colors.light.text },
   previewDiscountBadge: { backgroundColor: "#ECFDF5", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   previewDiscountBadgeText: { fontSize: 12, fontFamily: "Poppins_700Bold", color: "#047857" },
-  sectionCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, gap: 10 },
+  sectionCard: { paddingVertical: 16, gap: 10, borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)" },
   sectionTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   label: { fontSize: 13, fontFamily: "Poppins_500Medium", color: Colors.light.text },
   helperText: { marginTop: 6, marginBottom: 12, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  input: { backgroundColor: Colors.light.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: Colors.light.cardBorder },
+  input: { backgroundColor: "transparent", borderRadius: 0, paddingHorizontal: 0, paddingVertical: 12, borderBottomWidth: 1, borderColor: "rgba(120,104,96,0.16)", color: Colors.light.text },
   textarea: { height: 90 },
-  disabledInput: { color: Colors.light.textTertiary, backgroundColor: Colors.light.backgroundSecondary },
+  disabledInput: { color: Colors.light.textTertiary, backgroundColor: "transparent" },
   lockedHint: { marginTop: -4, fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textTertiary },
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  choiceChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.backgroundSecondary },
-  choiceChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
+  choiceChip: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 999, borderWidth: 1, borderColor: "rgba(120,104,96,0.16)", backgroundColor: "transparent" },
+  choiceChipActive: { backgroundColor: "rgba(196,82,42,0.08)", borderColor: Colors.light.tint },
   choiceChipText: { fontSize: 12, fontFamily: "Poppins_500Medium", color: Colors.light.text },
-  choiceChipTextActive: { color: "#fff" },
-  toggleCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 16, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: Colors.light.backgroundSecondary, padding: 14 },
-  toggleCardActive: { backgroundColor: "#FFF4E9", borderColor: "rgba(196,82,42,0.24)" },
+  choiceChipTextActive: { color: Colors.light.tint },
+  toggleCard: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 18, borderWidth: 1, borderColor: "rgba(120,104,96,0.16)", backgroundColor: "transparent", padding: 14 },
+  toggleCardActive: { backgroundColor: "rgba(196,82,42,0.06)", borderColor: "rgba(196,82,42,0.24)" },
   toggleTextWrap: { flex: 1, gap: 4 },
   toggleTitle: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   toggleSub: { fontSize: 12, lineHeight: 18, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   toggleKnob: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
   toggleKnobActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
-  mediaCard: { backgroundColor: Colors.light.card, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, gap: 12 },
+  mediaCard: { paddingVertical: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: "rgba(120,104,96,0.10)" },
   mediaHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   mediaCounter: { fontSize: 12, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   galleryRow: { gap: 12, paddingRight: 12 },
@@ -398,9 +400,9 @@ const styles = StyleSheet.create({
   removeImageBtn: { position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: 13, backgroundColor: "rgba(17,24,39,0.72)", alignItems: "center", justifyContent: "center" },
   emptyMediaState: { borderRadius: 14, borderWidth: 1, borderColor: Colors.light.cardBorder, borderStyle: "dashed", paddingVertical: 20, alignItems: "center", gap: 8, backgroundColor: Colors.light.backgroundSecondary },
   emptyMediaText: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
-  secondaryBtn: { backgroundColor: Colors.light.backgroundSecondary, paddingVertical: 13, borderRadius: 14, alignItems: "center", borderWidth: 1, borderColor: Colors.light.cardBorder },
+  secondaryBtn: { backgroundColor: "transparent", paddingVertical: 13, borderRadius: 999, alignItems: "center", borderWidth: 1, borderColor: "rgba(120,104,96,0.16)" },
   secondaryBtnText: { color: Colors.light.text, fontFamily: "Poppins_600SemiBold" },
   secondaryBtnDisabled: { opacity: 0.6 },
-  submitBtn: { marginTop: 12, backgroundColor: Colors.light.tint, paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  submitBtn: { marginTop: 12, backgroundColor: Colors.light.tint, paddingVertical: 14, borderRadius: 999, alignItems: "center" },
   submitText: { color: "#fff", fontFamily: "Poppins_600SemiBold" },
 });

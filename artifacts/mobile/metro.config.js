@@ -8,6 +8,7 @@ config.resolver = {
 	extraNodeModules: {
 		...(config.resolver?.extraNodeModules || {}),
 		'expo-notifications': path.resolve(__dirname, 'node_modules', 'expo-notifications'),
+		'react-native-passkeys': path.resolve(__dirname, 'node_modules', 'react-native-passkeys'),
 		// Force any import of 'expo-linear-gradient' to resolve to our safe shim
 		'expo-linear-gradient': path.resolve(__dirname, 'shims', 'expo-linear-gradient'),
 	},

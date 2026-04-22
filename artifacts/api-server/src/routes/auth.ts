@@ -1,18 +1,34 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { usersTable, chefProfilesTable, courierProfilesTable, merchantProfilesTable } from "@workspace/db/schema";
-import { eq, or } from "drizzle-orm";
+import {
+  usersTable,
+  chefProfilesTable,
+  courierProfilesTable,
+  merchantProfilesTable,
+  passkeyCredentialsTable,
+  passkeyChallengesTable,
+} from "@workspace/db/schema";
+import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth.js";
 import crypto from "crypto";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
 import { buildReferralCode } from "../lib/commerce.js";
 import { resolveReferralCode } from "../lib/fulfillment.js";
 import { buildApiRateLimiter } from "../lib/rate-limit.js";
+import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from "@simplewebauthn/server";
+import { PASSKEY_CHALLENGE_TTL_MS, getPasskeyConfig } from "../lib/passkeys.js";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM ?? "no-reply@example.com";
 const RESEND_USER_AGENT = "Ivory-Diaspora/1.0";
 const MOBILE_APP_URL = process.env.EXPO_PUBLIC_APP_URL ?? "mobile://";
+const LOGIN_LOCK_THRESHOLD = 3;
+const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 function normalizeApiBaseUrl(rawValue: string | undefined): string | null {
   if (!rawValue) {
@@ -121,10 +137,6 @@ function renderConfirmationPage({
 }
 
 async function sendConfirmationEmail(to: string, name: string, token: string) {
-  if (!RESEND_API_KEY) {
-    console.warn("RESEND_API_KEY not set, skipping email send");
-    return;
-  }
   const appConfirmUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/confirm"), { token });
   const browserConfirmUrl = withQuery(joinUrl(API_BASE_URL, "/auth/confirm"), { token });
   const body = {
@@ -155,6 +167,74 @@ async function sendConfirmationEmail(to: string, name: string, token: string) {
         </body>
       </html>`,
   };
+
+  if (!RESEND_API_KEY) {
+    console.warn("RESEND_API_KEY not set, skipping email send");
+    return;
+  }
+
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "User-Agent": RESEND_USER_AGENT,
+    },
+    body: JSON.stringify(body),
+  }).then(async (r) => {
+    if (!r.ok) {
+      const errorText = await r.text().catch(() => "");
+      console.warn("Resend send failed", r.status, errorText || r.statusText);
+    }
+  }).catch((e) => console.warn("Resend error", e));
+}
+
+async function sendPasswordResetEmail(
+  to: string,
+  name: string,
+  token: string,
+  options?: { reason?: "manual" | "lockout" }
+) {
+  const reason = options?.reason ?? "manual";
+  const appResetUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/reset-password"), { token });
+  const browserResetUrl = withQuery(joinUrl(API_BASE_URL, "/auth/reset-password"), { token });
+  const intro =
+    reason === "lockout"
+      ? "Votre compte a ete verrouille apres plusieurs tentatives de connexion incorrectes. Choisissez un nouveau mot de passe pour reprendre l'acces."
+      : "Vous avez demande une reinitialisation de mot de passe. Choisissez un nouveau mot de passe pour reprendre l'acces a votre compte.";
+  const body = {
+    from: RESEND_FROM,
+    to,
+    subject: "Reinitialisez votre mot de passe - Nixyah",
+    html: `<!doctype html>
+      <html lang="fr">
+        <body style="margin:0;padding:0;background:#F8FAFC;font-family:Arial,sans-serif;color:#1F2937;">
+          <div style="padding:24px 12px;">
+            <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #E5E7EB;">
+              <div style="padding:28px 28px 18px;background:#C4522A;color:#ffffff;">
+                <div style="font-size:13px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">Nixyah</div>
+                <h1 style="margin:16px 0 8px;font-size:28px;line-height:1.25;color:#ffffff;">Reinitialisez votre mot de passe</h1>
+                <p style="margin:0;font-size:15px;line-height:1.7;color:rgba(255,255,255,0.92);">Bonjour ${escapeHtml(name)}, ${escapeHtml(intro)}</p>
+              </div>
+              <div style="padding:28px;">
+                <p style="margin:0 0 18px;font-size:15px;line-height:1.7;color:#4B5563;">Ce lien est valable pendant 1 heure et debloquera votre compte une fois le nouveau mot de passe defini.</p>
+                <a href="${appResetUrl}" style="display:inline-block;padding:14px 22px;border-radius:12px;background:#C4522A;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;">Choisir un nouveau mot de passe</a>
+                <p style="margin:22px 0 8px;font-size:13px;line-height:1.7;color:#6B7280;">Si le bouton ne fonctionne pas, utilisez ce lien de secours :</p>
+                <a href="${browserResetUrl}" style="font-size:13px;line-height:1.7;color:#C4522A;word-break:break-word;text-decoration:none;">${browserResetUrl}</a>
+                <div style="margin-top:24px;padding-top:16px;border-top:1px solid #E5E7EB;">
+                  <p style="margin:0;font-size:12px;line-height:1.7;color:#9CA3AF;">Si vous n'etes pas a l'origine de cette demande, ignorez simplement cet email.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </body>
+      </html>`,
+  };
+
+  if (!RESEND_API_KEY) {
+    console.warn("RESEND_API_KEY not set, skipping password reset email");
+    return;
+  }
 
   await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -191,6 +271,38 @@ function normalizePhone(value: unknown): string | null {
 
 function hashConfirmationToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function truncateCredentialId(credentialId: string): string {
+  if (credentialId.length <= 16) {
+    return credentialId;
+  }
+
+  return `${credentialId.slice(0, 8)}...${credentialId.slice(-8)}`;
+}
+
+function normalizePasskeyDeviceName(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().slice(0, 80);
+}
+
+function parsePasskeyTransports(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)));
+}
+
+function bufferToBase64Url(value: Uint8Array): string {
+  return Buffer.from(value)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 function normalizePassword(value: unknown): string | null {
@@ -248,13 +360,82 @@ const confirmEmailLimiter = buildApiRateLimiter({
   },
 });
 
+const forgotPasswordLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 4,
+  message: "Trop de demandes de reinitialisation. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    return buildIdentityKey(baseKey, normalizeEmail(req.body?.email), "auth-forgot-password");
+  },
+});
+
+const resetPasswordLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  message: "Trop de tentatives de reinitialisation. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    return buildIdentityKey(baseKey, token || null, "auth-reset-password");
+  },
+});
+
+const resetPasswordLinkLimiter = buildApiRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  message: "Trop de consultations du lien de reinitialisation. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const token = typeof req.query?.token === "string" ? req.query.token.trim() : "";
+    return buildIdentityKey(baseKey, token || null, "auth-reset-password-link");
+  },
+});
+
+const passkeyRegisterOptionsLimiter = buildApiRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  message: "Trop de demandes passkey. Reessayez plus tard.",
+});
+
+const passkeyRegisterVerifyLimiter = buildApiRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  message: "Trop de validations passkey. Reessayez plus tard.",
+});
+
+const passkeyLoginOptionsLimiter = buildApiRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  message: "Trop de demandes passkey. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    return buildIdentityKey(baseKey, normalizeEmail(req.body?.email), "auth-passkey-login-options");
+  },
+});
+
+const passkeyLoginVerifyLimiter = buildApiRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  message: "Trop de validations passkey. Reessayez plus tard.",
+  keyGenerator(req, baseKey) {
+    const challenge = typeof req.body?.challenge === "string" ? req.body.challenge.trim() : "";
+    return buildIdentityKey(baseKey, challenge || null, "auth-passkey-login-verify");
+  },
+});
+
 function getPasswordPolicyError(password: string): string | null {
-  if (password.length < 10) {
-    return "Le mot de passe doit contenir au moins 10 caracteres";
+  if (password.length < 8) {
+    return "Le mot de passe doit contenir au moins 8 caracteres";
   }
 
   if (password.length > 72) {
     return "Le mot de passe depasse la longueur maximale autorisee";
+  }
+
+  const digits = password.match(/\d/g)?.length ?? 0;
+  if (digits < 2) {
+    return "Le mot de passe doit contenir au moins 2 chiffres";
+  }
+
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return "Le mot de passe doit contenir au moins 1 caractere special";
   }
 
   return null;
@@ -301,6 +482,8 @@ function buildCourierProfile(profile: any) {
     zone: profile.zone,
     vehicleType: profile.vehicleType,
     verificationDocuments,
+    rejectionReason: profile.rejectionReason ?? null,
+    rejectionReasonUpdatedAt: profile.rejectionReasonUpdatedAt ? profile.rejectionReasonUpdatedAt.toISOString() : null,
     isDossierComplete: missingDocuments.length === 0,
     missingDocuments,
     dossierSubmittedAt: profile.dossierSubmittedAt ? profile.dossierSubmittedAt.toISOString() : null,
@@ -375,6 +558,132 @@ async function createEmailConfirmation(userId: number, email: string, name: stri
   await sendConfirmationEmail(email, name, confirmToken).catch(console.warn);
 }
 
+async function createPasskeyChallenge(params: {
+  challenge: string;
+  challengeType: "register" | "authenticate";
+  userId?: number | null;
+  email?: string | null;
+}) {
+  const expiresAt = new Date(Date.now() + PASSKEY_CHALLENGE_TTL_MS);
+  await db.insert(passkeyChallengesTable).values({
+    challenge: params.challenge,
+    challengeType: params.challengeType,
+    userId: params.userId ?? null,
+    email: params.email ?? null,
+    expiresAt,
+  });
+}
+
+async function consumePasskeyChallenge(params: {
+  challenge: string;
+  challengeType: "register" | "authenticate";
+  userId?: number | null;
+}) {
+  const filters = [
+    eq(passkeyChallengesTable.challenge, params.challenge),
+    eq(passkeyChallengesTable.challengeType, params.challengeType),
+    isNull(passkeyChallengesTable.usedAt),
+    gt(passkeyChallengesTable.expiresAt, new Date()),
+  ];
+
+  if (typeof params.userId === "number") {
+    filters.push(eq(passkeyChallengesTable.userId, params.userId));
+  }
+
+  const [record] = await db
+    .select()
+    .from(passkeyChallengesTable)
+    .where(and(...filters))
+    .orderBy(desc(passkeyChallengesTable.id));
+
+  if (!record) {
+    return null;
+  }
+
+  await db.update(passkeyChallengesTable).set({ usedAt: new Date() }).where(eq(passkeyChallengesTable.id, record.id));
+  return record;
+}
+
+function isPasswordResetExpired(user: { passwordResetExpires?: Date | null }) {
+  if (!user.passwordResetExpires) {
+    return true;
+  }
+
+  return new Date(user.passwordResetExpires) < new Date();
+}
+
+async function findUserByPasswordResetToken(token: string) {
+  const hashedToken = hashConfirmationToken(token);
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(or(eq(usersTable.passwordResetToken, hashedToken), eq(usersTable.passwordResetToken, token)));
+
+  return user ?? null;
+}
+
+async function issuePasswordReset(user: { id: number; email: string | null; name: string }, options?: { lockAccount?: boolean; reason?: "manual" | "lockout" }) {
+  if (!user.email) {
+    return false;
+  }
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  const resetTokenHash = hashConfirmationToken(resetToken);
+  const expires = new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS);
+  await db
+    .update(usersTable)
+    .set({
+      passwordResetToken: resetTokenHash,
+      passwordResetExpires: expires,
+      ...(options?.lockAccount ? { loginLockedAt: new Date() } : {}),
+    })
+    .where(eq(usersTable.id, user.id));
+
+  await sendPasswordResetEmail(user.email, user.name, resetToken, { reason: options?.reason }).catch(console.warn);
+  return true;
+}
+
+async function loadAuthProfiles(user: any) {
+  let chefProfile = null;
+  let courierProfile = null;
+  let merchantProfile = null;
+
+  if (user.type === "chef") {
+    const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, user.id));
+    if (cp) {
+      chefProfile = buildChefProfile(user, cp);
+    }
+  }
+
+  if (user.type === "courier") {
+    const [cp] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, user.id));
+    if (cp) {
+      courierProfile = buildCourierProfile(cp);
+    }
+  }
+
+  if (user.type === "merchant") {
+    const [mp] = await db.select().from(merchantProfilesTable).where(eq(merchantProfilesTable.userId, user.id));
+    if (mp) {
+      merchantProfile = buildMerchantProfile(mp);
+    }
+  }
+
+  return { chefProfile, courierProfile, merchantProfile };
+}
+
+function formatPasskeyCredential(record: typeof passkeyCredentialsTable.$inferSelect) {
+  return {
+    id: String(record.id),
+    deviceName: record.deviceName || "Passkey sans nom",
+    transports: record.transports ?? [],
+    backedUp: Boolean(record.backedUp),
+    createdAt: record.createdAt.toISOString(),
+    lastUsedAt: record.lastUsedAt ? record.lastUsedAt.toISOString() : null,
+    credentialIdPreview: truncateCredentialId(record.credentialId),
+  };
+}
+
 router.post("/auth/register/client", async (req, res) => {
   try {
     const { name, location, preferences } = req.body;
@@ -387,8 +696,8 @@ router.post("/auth/register/client", async (req, res) => {
       res.status(400).json({ error: "BadRequest", message: "Nom et mot de passe requis" });
       return;
     }
-    if (!email && !phone) {
-      res.status(400).json({ error: "BadRequest", message: "Email ou téléphone requis" });
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis" });
       return;
     }
     const passwordPolicyError = password ? getPasswordPolicyError(password) : null;
@@ -428,24 +737,19 @@ router.post("/auth/register/client", async (req, res) => {
       emailConfirmed: false,
       emailConfirmToken: null,
       emailConfirmExpires: null,
+      failedLoginAttempts: 0,
+      loginLockedAt: null,
+      passwordResetToken: null,
+      passwordResetExpires: null,
     }).returning();
     const referralCode = await assignReferralCode(user.id, name);
     user.referralCode = referralCode;
 
-    if (email) {
-      await createEmailConfirmation(user.id, email, name);
-      res.status(201).json({
-        requiresEmailConfirmation: true,
-        message: "Compte créé. Confirmez votre adresse email pour vous connecter.",
-        email,
-        user: toSafeUser(user),
-      });
-      return;
-    }
-
-    const token = signToken({ userId: user.id, type: "client" });
+    await createEmailConfirmation(user.id, email, name);
     res.status(201).json({
-      token,
+      requiresEmailConfirmation: true,
+      message: "Compte cree. Confirmez votre adresse email pour vous connecter.",
+      email,
       user: toSafeUser(user),
     });
   } catch (err) {
@@ -471,8 +775,8 @@ router.post("/auth/register/chef", async (req, res) => {
       res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
-    if (!email && !phone) {
-      res.status(400).json({ error: "BadRequest", message: "Email ou téléphone requis" });
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis" });
       return;
     }
 
@@ -506,6 +810,10 @@ router.post("/auth/register/chef", async (req, res) => {
       emailConfirmed: false,
       emailConfirmToken: null,
       emailConfirmExpires: null,
+      failedLoginAttempts: 0,
+      loginLockedAt: null,
+      passwordResetToken: null,
+      passwordResetExpires: null,
     }).returning();
     const referralCode = await assignReferralCode(user.id, name);
     user.referralCode = referralCode;
@@ -525,20 +833,11 @@ router.post("/auth/register/chef", async (req, res) => {
 
     const safeChefProfile = buildChefProfile(user, profile);
 
-    if (email) {
-      await createEmailConfirmation(user.id, email, name);
-      res.status(201).json({
-        requiresEmailConfirmation: true,
-        message: "Compte créé. Confirmez votre adresse email pour activer votre espace cuisinière.",
-        email,
-        user: toSafeUser(user, { chefProfile: safeChefProfile }),
-      });
-      return;
-    }
-
-    const token = signToken({ userId: user.id, type: "chef" });
+    await createEmailConfirmation(user.id, email, name);
     res.status(201).json({
-      token,
+      requiresEmailConfirmation: true,
+      message: "Compte cree. Confirmez votre adresse email pour activer votre espace cuisiniere.",
+      email,
       user: toSafeUser(user, { chefProfile: safeChefProfile }),
     });
   } catch (err) {
@@ -564,8 +863,8 @@ router.post("/auth/register/courier", async (req, res) => {
       res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
-    if (!email && !phone) {
-      res.status(400).json({ error: "BadRequest", message: "Email ou téléphone requis" });
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis" });
       return;
     }
 
@@ -596,6 +895,10 @@ router.post("/auth/register/courier", async (req, res) => {
       emailConfirmed: false,
       emailConfirmToken: null,
       emailConfirmExpires: null,
+      failedLoginAttempts: 0,
+      loginLockedAt: null,
+      passwordResetToken: null,
+      passwordResetExpires: null,
     }).returning();
     const referralCode = await assignReferralCode(user.id, name);
     user.referralCode = referralCode;
@@ -610,20 +913,11 @@ router.post("/auth/register/courier", async (req, res) => {
 
     const safeCourierProfile = buildCourierProfile(courierProfile);
 
-    if (email) {
-      await createEmailConfirmation(user.id, email, name);
-      res.status(201).json({
-        requiresEmailConfirmation: true,
-        message: "Compte créé. Confirmez votre adresse email pour activer votre espace livreur.",
-        email,
-        user: toSafeUser(user, { courierProfile: safeCourierProfile }),
-      });
-      return;
-    }
-
-    const token = signToken({ userId: user.id, type: "courier" });
+    await createEmailConfirmation(user.id, email, name);
     res.status(201).json({
-      token,
+      requiresEmailConfirmation: true,
+      message: "Compte cree. Confirmez votre adresse email pour activer votre espace livreur.",
+      email,
       user: toSafeUser(user, { courierProfile: safeCourierProfile }),
     });
   } catch (err) {
@@ -648,8 +942,8 @@ router.post("/auth/register/merchant", async (req, res) => {
       res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
       return;
     }
-    if (!email && !phone) {
-      res.status(400).json({ error: "BadRequest", message: "Email ou téléphone requis" });
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis" });
       return;
     }
 
@@ -675,6 +969,10 @@ router.post("/auth/register/merchant", async (req, res) => {
       emailConfirmed: false,
       emailConfirmToken: null,
       emailConfirmExpires: null,
+      failedLoginAttempts: 0,
+      loginLockedAt: null,
+      passwordResetToken: null,
+      passwordResetExpires: null,
     }).returning();
     const referralCode = await assignReferralCode(user.id, name);
     user.referralCode = referralCode;
@@ -690,20 +988,11 @@ router.post("/auth/register/merchant", async (req, res) => {
 
     const safeMerchantProfile = buildMerchantProfile(merchantProfile);
 
-    if (email) {
-      await createEmailConfirmation(user.id, email, name);
-      res.status(201).json({
-        requiresEmailConfirmation: true,
-        message: "Compte créé. Confirmez votre adresse email pour activer votre espace marchand.",
-        email,
-        user: toSafeUser(user, { merchantProfile: safeMerchantProfile }),
-      });
-      return;
-    }
-
-    const token = signToken({ userId: user.id, type: "merchant" });
+    await createEmailConfirmation(user.id, email, name);
     res.status(201).json({
-      token,
+      requiresEmailConfirmation: true,
+      message: "Compte cree. Confirmez votre adresse email pour activer votre espace marchand.",
+      email,
       user: toSafeUser(user, { merchantProfile: safeMerchantProfile }),
     });
   } catch (err) {
@@ -731,12 +1020,72 @@ router.post("/auth/login", authLoginLimiter, async (req, res) => {
       )
     );
 
-    if (!user || !verifyPassword(password, user.passwordHash)) {
-      res.status(401).json({ error: "Unauthorized", message: "Identifiants incorrects" });
+    if (!user) {
+      res.status(401).json({ error: "InvalidCredentials", message: "Identifiants incorrects" });
       return;
     }
 
-    if (user.email && user.emailConfirmed === false) {
+    if (!user.email) {
+      res.status(403).json({
+        error: "EmailRequiredForSecureLogin",
+        message: "La connexion securisee exige une adresse email. Contactez l'assistance pour mettre votre compte a jour.",
+      });
+      return;
+    }
+
+    const accountLocked = Boolean(user.loginLockedAt);
+    if (accountLocked) {
+      if (!user.passwordResetToken || isPasswordResetExpired(user)) {
+        await issuePasswordReset(user, { lockAccount: true, reason: "lockout" });
+      }
+
+      res.status(423).json({
+        error: "AccountLocked",
+        message: "Votre compte est verrouille. Un lien de reinitialisation a ete envoye a votre messagerie.",
+        email: user.email,
+      });
+      return;
+    }
+
+    if (!verifyPassword(password, user.passwordHash)) {
+      const failedLoginAttempts = (user.failedLoginAttempts ?? 0) + 1;
+      const shouldLockAccount = failedLoginAttempts >= LOGIN_LOCK_THRESHOLD;
+
+      await db
+        .update(usersTable)
+        .set({
+          failedLoginAttempts,
+          ...(shouldLockAccount ? { loginLockedAt: new Date() } : {}),
+        })
+        .where(eq(usersTable.id, user.id));
+
+      if (shouldLockAccount) {
+        await issuePasswordReset(user, { lockAccount: true, reason: "lockout" });
+        res.status(423).json({
+          error: "AccountLocked",
+          message: "Votre compte est verrouille. Un lien de reinitialisation a ete envoye a votre messagerie.",
+          email: user.email,
+        });
+        return;
+      }
+
+      const remainingAttempts = LOGIN_LOCK_THRESHOLD - failedLoginAttempts;
+      res.status(401).json({
+        error: "InvalidCredentials",
+        message:
+          remainingAttempts === 1
+            ? "Identifiants incorrects. Plus qu une tentative avant verrouillage."
+            : `Identifiants incorrects. Il vous reste ${remainingAttempts} tentatives avant verrouillage.`,
+        remainingAttempts,
+      });
+      return;
+    }
+
+    if (user.failedLoginAttempts > 0) {
+      await db.update(usersTable).set({ failedLoginAttempts: 0 }).where(eq(usersTable.id, user.id));
+    }
+
+    if (user.emailConfirmed === false) {
       res.status(403).json({
         error: "EmailUnconfirmed",
         message: "Veuillez confirmer votre adresse email avant de vous connecter",
@@ -745,35 +1094,393 @@ router.post("/auth/login", authLoginLimiter, async (req, res) => {
       return;
     }
 
-    let chefProfile = null;
-    let courierProfile = null;
-    let merchantProfile = null;
-    if (user.type === "chef") {
-      const [cp] = await db.select().from(chefProfilesTable).where(eq(chefProfilesTable.userId, user.id));
-      if (cp) {
-        chefProfile = buildChefProfile(user, cp);
-      }
-    }
-    if (user.type === "courier") {
-      const [cp] = await db.select().from(courierProfilesTable).where(eq(courierProfilesTable.userId, user.id));
-      if (cp) {
-        courierProfile = buildCourierProfile(cp);
-      }
-    }
-    if (user.type === "merchant") {
-      const [mp] = await db.select().from(merchantProfilesTable).where(eq(merchantProfilesTable.userId, user.id));
-      if (mp) {
-        merchantProfile = buildMerchantProfile(mp);
-      }
-    }
-
+    const { chefProfile, courierProfile, merchantProfile } = await loadAuthProfiles(user);
     const token = signToken({ userId: user.id, type: user.type });
     res.json({
       token,
+      authMethod: "password",
       user: toSafeUser(user, { chefProfile, courierProfile, merchantProfile }),
     });
   } catch (err) {
     console.error("login error:", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/passkey/register/options", requireAuth, passkeyRegisterOptionsLimiter as any, async (req: AuthRequest, res) => {
+  try {
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!));
+    if (!user || !user.email) {
+      res.status(400).json({ error: "BadRequest", message: "Compte email requis" });
+      return;
+    }
+
+    const existingCredentials = await db
+      .select()
+      .from(passkeyCredentialsTable)
+      .where(eq(passkeyCredentialsTable.userId, user.id));
+
+    const config = getPasskeyConfig();
+    const options = await generateRegistrationOptions({
+      rpID: config.rpId,
+      rpName: config.rpName,
+      userName: user.email,
+      userDisplayName: user.name,
+      userID: new TextEncoder().encode(String(user.id)),
+      excludeCredentials: existingCredentials.map((credential) => ({
+        id: credential.credentialId,
+        transports: parsePasskeyTransports(credential.transports) as any,
+      })),
+      authenticatorSelection: {
+        residentKey: "required",
+        userVerification: "required",
+      },
+      attestationType: "none",
+    });
+
+    await createPasskeyChallenge({
+      challenge: options.challenge,
+      challengeType: "register",
+      userId: user.id,
+      email: user.email,
+    });
+
+    res.json({ options, rpId: config.rpId, rpName: config.rpName });
+  } catch (err) {
+    console.error("passkey register options error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/passkey/register/verify", requireAuth, passkeyRegisterVerifyLimiter as any, async (req: AuthRequest, res) => {
+  try {
+    const challenge = typeof req.body.challenge === "string" ? req.body.challenge.trim() : "";
+    const response = req.body.response;
+    if (!challenge || !response) {
+      res.status(400).json({ error: "BadRequest", message: "Challenge et reponse passkey requis" });
+      return;
+    }
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!));
+    if (!user || !user.email) {
+      res.status(400).json({ error: "BadRequest", message: "Compte email requis" });
+      return;
+    }
+
+    const challengeRecord = await consumePasskeyChallenge({
+      challenge,
+      challengeType: "register",
+      userId: user.id,
+    });
+    if (!challengeRecord) {
+      res.status(400).json({ error: "InvalidPasskeyChallenge", message: "La demande passkey a expire. Recommencez." });
+      return;
+    }
+
+    const config = getPasskeyConfig();
+    const verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge: challengeRecord.challenge,
+      expectedOrigin: config.allowedOrigins,
+      expectedRPID: config.rpId,
+      requireUserVerification: true,
+    });
+
+    if (!verification.verified) {
+      res.status(400).json({ error: "PasskeyRegistrationFailed", message: "La passkey n'a pas pu etre enregistree." });
+      return;
+    }
+
+    const credential = verification.registrationInfo.credential;
+    const credentialId = credential.id;
+    const existing = await db.select().from(passkeyCredentialsTable).where(eq(passkeyCredentialsTable.credentialId, credentialId));
+    if (existing.length === 0) {
+      await db.insert(passkeyCredentialsTable).values({
+        userId: user.id,
+        credentialId,
+        publicKey: bufferToBase64Url(credential.publicKey),
+        counter: credential.counter,
+        deviceName: normalizePasskeyDeviceName(req.body.deviceName) || `Passkey ${user.name}`,
+        backedUp: verification.registrationInfo.credentialBackedUp,
+        transports: parsePasskeyTransports(req.body.transports),
+      });
+    }
+
+    const credentials = await db
+      .select()
+      .from(passkeyCredentialsTable)
+      .where(eq(passkeyCredentialsTable.userId, user.id))
+      .orderBy(desc(passkeyCredentialsTable.createdAt));
+
+    res.json({
+      ok: true,
+      passkeys: credentials.map(formatPasskeyCredential),
+    });
+  } catch (err) {
+    console.error("passkey register verify error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/passkey/login/options", passkeyLoginOptionsLimiter as any, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis pour utiliser une passkey" });
+      return;
+    }
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+    if (!user || !user.emailConfirmed) {
+      res.status(404).json({ error: "PasskeyUnavailable", message: "Aucune passkey disponible pour cette adresse." });
+      return;
+    }
+
+    if (user.loginLockedAt) {
+      res.status(423).json({
+        error: "AccountLocked",
+        message: "Votre compte est verrouille. Un lien de reinitialisation a ete envoye a votre messagerie.",
+        email: user.email,
+      });
+      return;
+    }
+
+    const credentials = await db
+      .select()
+      .from(passkeyCredentialsTable)
+      .where(eq(passkeyCredentialsTable.userId, user.id));
+
+    if (credentials.length === 0) {
+      res.status(404).json({ error: "PasskeyUnavailable", message: "Aucune passkey disponible pour cette adresse." });
+      return;
+    }
+
+    const config = getPasskeyConfig();
+    const options = await generateAuthenticationOptions({
+      rpID: config.rpId,
+      allowCredentials: credentials.map((credential) => ({
+        id: credential.credentialId,
+        transports: parsePasskeyTransports(credential.transports) as any,
+      })),
+      userVerification: "required",
+    });
+
+    await createPasskeyChallenge({
+      challenge: options.challenge,
+      challengeType: "authenticate",
+      userId: user.id,
+      email: user.email,
+    });
+
+    res.json({ options, rpId: config.rpId, email: user.email });
+  } catch (err) {
+    console.error("passkey login options error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/passkey/login/verify", passkeyLoginVerifyLimiter as any, async (req, res) => {
+  try {
+    const challenge = typeof req.body.challenge === "string" ? req.body.challenge.trim() : "";
+    const response = req.body.response;
+    if (!challenge || !response) {
+      res.status(400).json({ error: "BadRequest", message: "Challenge et reponse passkey requis" });
+      return;
+    }
+
+    const challengeRecord = await consumePasskeyChallenge({
+      challenge,
+      challengeType: "authenticate",
+    });
+    if (!challengeRecord?.userId) {
+      res.status(400).json({ error: "InvalidPasskeyChallenge", message: "La demande passkey a expire. Recommencez." });
+      return;
+    }
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, challengeRecord.userId));
+    if (!user || !user.email || user.emailConfirmed === false) {
+      res.status(403).json({ error: "PasskeyUnavailable", message: "Connexion passkey indisponible pour ce compte." });
+      return;
+    }
+
+    if (user.loginLockedAt) {
+      if (!user.passwordResetToken || isPasswordResetExpired(user)) {
+        await issuePasswordReset(user, { lockAccount: true, reason: "lockout" });
+      }
+
+      res.status(423).json({
+        error: "AccountLocked",
+        message: "Votre compte est verrouille. Un lien de reinitialisation a ete envoye a votre messagerie.",
+        email: user.email,
+      });
+      return;
+    }
+
+    const credentialId = typeof response.id === "string" ? response.id : "";
+    const [storedCredential] = await db
+      .select()
+      .from(passkeyCredentialsTable)
+      .where(and(
+        eq(passkeyCredentialsTable.userId, user.id),
+        eq(passkeyCredentialsTable.credentialId, credentialId),
+      ));
+
+    if (!storedCredential) {
+      res.status(404).json({ error: "PasskeyUnavailable", message: "Cette passkey est inconnue." });
+      return;
+    }
+
+    const config = getPasskeyConfig();
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: challengeRecord.challenge,
+      expectedOrigin: config.allowedOrigins,
+      expectedRPID: config.rpId,
+      credential: {
+        id: storedCredential.credentialId,
+        publicKey: Buffer.from(storedCredential.publicKey, "base64url"),
+        counter: storedCredential.counter,
+        transports: parsePasskeyTransports(storedCredential.transports) as any,
+      },
+      requireUserVerification: true,
+    });
+
+    if (!verification.verified) {
+      res.status(400).json({ error: "PasskeyAuthenticationFailed", message: "La verification passkey a echoue." });
+      return;
+    }
+
+    await db.update(passkeyCredentialsTable).set({
+      counter: verification.authenticationInfo.newCounter,
+      backedUp: verification.authenticationInfo.credentialBackedUp,
+      lastUsedAt: new Date(),
+    }).where(eq(passkeyCredentialsTable.id, storedCredential.id));
+
+    if (user.failedLoginAttempts > 0) {
+      await db.update(usersTable).set({ failedLoginAttempts: 0 }).where(eq(usersTable.id, user.id));
+    }
+
+    const { chefProfile, courierProfile, merchantProfile } = await loadAuthProfiles(user);
+    const token = signToken({ userId: user.id, type: user.type });
+    res.json({
+      token,
+      authMethod: "passkey",
+      user: toSafeUser(user, { chefProfile, courierProfile, merchantProfile }),
+    });
+  } catch (err) {
+    console.error("passkey login verify error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.get("/auth/passkey/list", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const credentials = await db
+      .select()
+      .from(passkeyCredentialsTable)
+      .where(eq(passkeyCredentialsTable.userId, req.userId!))
+      .orderBy(desc(passkeyCredentialsTable.createdAt));
+
+    res.json({ passkeys: credentials.map(formatPasskeyCredential) });
+  } catch (err) {
+    console.error("passkey list error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.delete("/auth/passkey/:id", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const passkeyId = Number(req.params.id);
+    if (!Number.isInteger(passkeyId) || passkeyId <= 0) {
+      res.status(400).json({ error: "BadRequest", message: "Passkey invalide" });
+      return;
+    }
+
+    const [credential] = await db
+      .select()
+      .from(passkeyCredentialsTable)
+      .where(and(
+        eq(passkeyCredentialsTable.id, passkeyId),
+        eq(passkeyCredentialsTable.userId, req.userId!),
+      ));
+
+    if (!credential) {
+      res.status(404).json({ error: "NotFound", message: "Passkey introuvable" });
+      return;
+    }
+
+    await db.delete(passkeyCredentialsTable).where(eq(passkeyCredentialsTable.id, credential.id));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("passkey delete error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!email) {
+      res.status(400).json({ error: "BadRequest", message: "Email requis" });
+      return;
+    }
+
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+    if (user?.email) {
+      await issuePasswordReset(user, { lockAccount: Boolean(user.loginLockedAt), reason: "manual" });
+    }
+
+    res.json({
+      ok: true,
+      message: "Si un compte existe pour cette adresse, un lien de reinitialisation vient d etre envoye.",
+    });
+  } catch (err) {
+    console.error("forgot password error", err);
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/reset-password", resetPasswordLimiter, async (req, res) => {
+  try {
+    const token = typeof req.body.token === "string" ? req.body.token.trim() : "";
+    const password = normalizePassword(req.body.password);
+    if (!token || !password) {
+      res.status(400).json({ error: "BadRequest", message: "Lien de reinitialisation et mot de passe requis" });
+      return;
+    }
+
+    const passwordPolicyError = getPasswordPolicyError(password);
+    if (passwordPolicyError) {
+      res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
+      return;
+    }
+
+    const user = await findUserByPasswordResetToken(token);
+    if (!user || isPasswordResetExpired(user)) {
+      res.status(400).json({
+        error: "InvalidResetToken",
+        message: "Ce lien de reinitialisation est invalide ou a expire.",
+      });
+      return;
+    }
+
+    await db
+      .update(usersTable)
+      .set({
+        passwordHash: hashPassword(password),
+        failedLoginAttempts: 0,
+        loginLockedAt: null,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      })
+      .where(eq(usersTable.id, user.id));
+
+    res.json({
+      ok: true,
+      message: "Votre mot de passe a ete reinitialise. Vous pouvez maintenant vous connecter.",
+    });
+  } catch (err) {
+    console.error("reset password error", err);
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });
@@ -962,7 +1669,7 @@ router.patch("/auth/me/courier-dossier", requireAuth, async (req: AuthRequest, r
     }
 
     const payload = parsedBody.data;
-    const updates: Record<string, string | Date | null> = {};
+    const updates: Partial<typeof courierProfilesTable.$inferInsert> = {};
     const documentFields = [
       "identityDocumentUrl",
       "driverLicenseUrl",
@@ -1002,6 +1709,11 @@ router.patch("/auth/me/courier-dossier", requireAuth, async (req: AuthRequest, r
       return;
     }
     updates.dossierSubmittedAt = isDossierComplete ? new Date() : null;
+    if (isDossierComplete && !currentProfile.isVerified) {
+      updates.isAvailable = true;
+      updates.rejectionReason = null;
+      updates.rejectionReasonUpdatedAt = null;
+    }
 
     const [updatedProfile] = await db
       .update(courierProfilesTable)
@@ -1016,7 +1728,84 @@ router.patch("/auth/me/courier-dossier", requireAuth, async (req: AuthRequest, r
   }
 });
 
-// GET /auth/confirm?token=...  or /auth/confirm/:token
+router.get("/auth/reset-password", resetPasswordLinkLimiter, async (req, res) => {
+  const wantsHtml = req.accepts(["html", "json"]) === "html";
+  const successOpenAppUrl = (token: string) => withQuery(joinUrl(MOBILE_APP_URL, "/auth/reset-password"), {
+    token,
+    status: "ready",
+  });
+  const errorOpenAppUrl = (message: string) =>
+    withQuery(joinUrl(MOBILE_APP_URL, "/auth/reset-password"), {
+      status: "error",
+      message,
+    });
+
+  try {
+    const token = String(req.query.token ?? "");
+    if (!token) {
+      if (wantsHtml) {
+        res.status(400).type("html").send(
+          renderConfirmationPage({
+            title: "Lien invalide",
+            message: "Le lien de reinitialisation est incomplet.",
+            tone: "error",
+            openAppUrl: errorOpenAppUrl("Le lien de reinitialisation est incomplet."),
+          })
+        );
+        return;
+      }
+      res.status(400).json({ error: "BadRequest", message: "Lien de reinitialisation incomplet" });
+      return;
+    }
+
+    const user = await findUserByPasswordResetToken(token);
+    if (!user || isPasswordResetExpired(user)) {
+      if (wantsHtml) {
+        res.status(400).type("html").send(
+          renderConfirmationPage({
+            title: "Lien invalide",
+            message: "Ce lien de reinitialisation est invalide ou a expire.",
+            tone: "error",
+            openAppUrl: errorOpenAppUrl("Ce lien de reinitialisation est invalide ou a expire."),
+          })
+        );
+        return;
+      }
+      res.status(400).json({ error: "InvalidResetToken", message: "Lien de reinitialisation invalide ou expire" });
+      return;
+    }
+
+    if (wantsHtml) {
+      res.status(200).type("html").send(
+        renderConfirmationPage({
+          title: "Choisissez un nouveau mot de passe",
+          message: "Revenez dans Nixyah pour definir votre nouveau mot de passe et debloquer votre compte.",
+          tone: "success",
+          openAppUrl: successOpenAppUrl(token),
+        })
+      );
+      return;
+    }
+
+    res.json({ ok: true, email: user.email ?? null });
+  } catch (err) {
+    console.error("reset password link error", err);
+    if (wantsHtml) {
+      res.status(500).type("html").send(
+        renderConfirmationPage({
+          title: "Reinitialisation impossible",
+          message: "Une erreur est survenue pendant l'ouverture du lien. Reessayez depuis l'application.",
+          tone: "error",
+          openAppUrl: errorOpenAppUrl("La reinitialisation a echoue."),
+        })
+      );
+      return;
+    }
+    res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+// GET /auth/confirm?token=...
 router.get("/auth/confirm", confirmEmailLimiter, async (req, res) => {
   const wantsHtml = req.accepts(["html", "json"]) === "html";
   const successOpenAppUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/confirm"), {

@@ -185,12 +185,8 @@ function NearbyChefCard({
       <View style={styles.nearbyAvatarWrap}>
         {chef.avatarUrl ? (
           <CachedRemoteImage uri={chef.avatarUrl} style={styles.nearbyAvatar} contentFit="cover" />
-        ) : defaultChefProfileUri ? (
-          <View style={[styles.nearbyAvatar, { overflow: "hidden" }]}>
-            <SvgUri width="110%" height="110%" uri={defaultChefProfileUri} />
-          </View>
         ) : (
-          <View style={[styles.nearbyAvatar, styles.nearbyAvatarFallback, { backgroundColor: chef.coverColor || "#F2DFC6" }]}>
+          <View style={[styles.nearbyAvatar, styles.nearbyAvatarFallback]}>
             <Text style={styles.nearbyAvatarInitials}>{chef.name.slice(0, 2).toUpperCase()}</Text>
           </View>
         )}
@@ -445,58 +441,52 @@ function ChefRowCard({
   defaultChefProfileUri: string | null;
   variant?: "trending" | "online" | "default";
 }) {
-  const heroImage = getChefHeroImage(chef);
-
-  const coverOverlay = (
-    <>
-      <View style={styles.chefRowCoverScrim} />
-      {variant === "trending" && (
-        <View style={[styles.chefRowVariantBadge, styles.chefRowTrendBadge]}>
-          <Text style={styles.chefRowVariantBadgeText}>🔥 Tendance</Text>
-        </View>
-      )}
-      {variant === "online" && chef.isOnline && (
-        <View style={[styles.chefRowVariantBadge, styles.chefRowOnlineBadge]}>
-          <View style={styles.chefRowOnlineDot} />
-          <Text style={styles.chefRowVariantBadgeText}>En ligne</Text>
-        </View>
-      )}
-      <Pressable style={styles.chefRowFavBtn} onPress={onFavoriteToggle} hitSlop={10}>
-        <Ionicons
-          name={isFavorite ? "heart" : "heart-outline"}
-          size={18}
-          color={isFavorite ? "#FF5B5B" : "#fff"}
-        />
-      </Pressable>
-    </>
-  );
+  const variantLabel =
+    variant === "trending" ? "🔥 Tendance" : variant === "online" && chef.isOnline ? "En ligne" : null;
 
   return (
     <Pressable
       style={styles.chefRowCard}
       onPress={() => router.push({ pathname: "/chef/[id]", params: { id: chef.id } })}
     >
-      {heroImage ? (
-        <CachedRemoteBackground
-          uri={heroImage}
-          style={styles.chefRowCoverBg}
-          imageStyle={styles.chefRowCoverRadius}
-        >
-          {coverOverlay}
-        </CachedRemoteBackground>
-      ) : (
-        <View style={[styles.chefRowCoverBg, { backgroundColor: chef.coverColor || "#F2DFC6" }]}>
-          {coverOverlay}
+      <View style={styles.chefRowMediaColumn}>
+        <View style={styles.chefRowAvatarFloat}>
+          <View style={styles.chefRowAvatarRing}>
+            {chef.avatarUrl ? (
+              <CachedRemoteImage uri={chef.avatarUrl} style={styles.chefRowAvatar} contentFit="cover" />
+            ) : (
+              <View style={[styles.chefRowAvatar, styles.chefRowAvatarFallback]}>
+                <Text style={styles.chefRowAvatarInitials}>{chef.name.slice(0, 2).toUpperCase()}</Text>
+              </View>
+            )}
+          </View>
+          {chef.isOnline && <View style={styles.chefRowOnlineIndicator} />}
         </View>
-      )}
-
+      </View>
       <View style={styles.chefRowInfoPanel}>
-        <View style={styles.chefRowNameRow}>
-          <Text style={styles.chefRowName} numberOfLines={1}>{chef.name}</Text>
-          {chef.isVerified && (
-            <Ionicons name="shield-checkmark" size={15} color={Colors.light.tint} />
-          )}
+        <View style={styles.chefRowHeaderLine}>
+          <View style={styles.chefRowNameRow}>
+            <Text style={styles.chefRowName} numberOfLines={1}>{chef.name}</Text>
+            {chef.isVerified && (
+              <Ionicons name="shield-checkmark" size={15} color={Colors.light.tint} />
+            )}
+          </View>
+          <Pressable style={styles.chefRowFavBtn} onPress={onFavoriteToggle} hitSlop={10}>
+            <Ionicons
+              name={isFavorite ? "heart" : "heart-outline"}
+              size={18}
+              color={isFavorite ? "#FF5B5B" : Colors.light.textTertiary}
+            />
+          </Pressable>
         </View>
+        {variantLabel ? (
+          <View style={[styles.chefRowVariantBadge, variant === "trending" ? styles.chefRowTrendBadge : styles.chefRowOnlineBadge]}>
+            {variant === "online" && chef.isOnline ? <View style={styles.chefRowOnlineDot} /> : null}
+            <Text style={[styles.chefRowVariantBadgeText, variant === "online" ? styles.chefRowVariantBadgeTextOnline : null]}>
+              {variantLabel}
+            </Text>
+          </View>
+        ) : null}
         <Text style={styles.chefRowSpecialty} numberOfLines={1}>{chef.specialty}</Text>
 
         <View style={styles.chefRowMetrics}>
@@ -526,29 +516,6 @@ function ChefRowCard({
           <Feather name="truck" size={11} color={Colors.light.success} />
           <Text style={styles.chefRowDeliveryText}>{getEstimatedDelivery(chef)} livraison estimée</Text>
         </View>
-
-        <View style={styles.chefRowCta}>
-          <Text style={styles.chefRowCtaText}>Voir le menu</Text>
-          <Feather name="arrow-right" size={13} color={Colors.light.tint} />
-        </View>
-      </View>
-
-      {/* Floating avatar — rendered last to layer above cover + panel */}
-      <View style={styles.chefRowAvatarFloat}>
-        <View style={styles.chefRowAvatarRing}>
-          {chef.avatarUrl ? (
-            <CachedRemoteImage uri={chef.avatarUrl} style={styles.chefRowAvatar} contentFit="cover" />
-          ) : defaultChefProfileUri ? (
-            <View style={[styles.chefRowAvatar, { overflow: "hidden" }]}>
-              <SvgUri width="138%" height="138%" uri={defaultChefProfileUri} />
-            </View>
-          ) : (
-            <View style={[styles.chefRowAvatar, styles.chefRowAvatarFallback, { backgroundColor: chef.coverColor || "#F2DFC6" }]}>
-              <Text style={styles.chefRowAvatarInitials}>{chef.name.slice(0, 2).toUpperCase()}</Text>
-            </View>
-          )}
-        </View>
-        {chef.isOnline && <View style={styles.chefRowOnlineIndicator} />}
       </View>
     </Pressable>
   );
@@ -1258,9 +1225,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   collectionCard: {
-    width: 170,
+    width: 162,
     borderRadius: 24,
-    minHeight: 182,
+    minHeight: 170,
     overflow: "hidden",
     justifyContent: "flex-end",
     backgroundColor: Colors.light.card,
@@ -1287,9 +1254,9 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.12)",
   },
   collectionContent: {
-    padding: 16,
-    paddingTop: 14,
-    minHeight: 182,
+    padding: 15,
+    paddingTop: 13,
+    minHeight: 170,
     justifyContent: "space-between",
   },
   collectionTopRow: {
@@ -1322,9 +1289,9 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.94)",
   },
   collectionTitle: {
-    marginTop: 40,
-    fontSize: 18,
-    lineHeight: 22,
+    marginTop: 32,
+    fontSize: 17,
+    lineHeight: 21,
     fontFamily: "Poppins_700Bold",
     color: "#fff",
   },
@@ -1337,9 +1304,9 @@ const styles = StyleSheet.create({
   },
   spotlightCard: {
     marginHorizontal: 16,
-    borderRadius: 28,
-    overflow: "hidden",
-    backgroundColor: Colors.light.card,
+    borderRadius: 0,
+    overflow: "visible",
+    backgroundColor: "transparent",
   },
   spotlightMedia: {
     height: 330,
@@ -1444,81 +1411,70 @@ const styles = StyleSheet.create({
   },
   rowCardList: {
     paddingHorizontal: 16,
-    gap: 16,
+    gap: 12,
   },
   chefRowCard: {
-    borderRadius: 28,
-    overflow: "hidden",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "rgba(120,104,96,0.10)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(120,104,96,0.10)",
   },
-  chefRowCoverBg: {
-    height: 118,
-  },
-  chefRowCoverRadius: {
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-  },
-  chefRowCoverScrim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(26,18,10,0.22)",
+  chefRowMediaColumn: {
+    width: 64,
+    alignItems: "center",
+    justifyContent: "center",
   },
   chefRowVariantBadge: {
-    position: "absolute",
-    top: 12,
-    left: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
+    alignSelf: "flex-start",
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
   },
   chefRowTrendBadge: {
-    backgroundColor: "rgba(20,12,8,0.65)",
-    borderWidth: 1,
-    borderColor: "rgba(252,186,3,0.5)",
+    backgroundColor: "#F6E7D1",
   },
   chefRowOnlineBadge: {
-    backgroundColor: "rgba(20,12,8,0.65)",
-    borderWidth: 1,
-    borderColor: "rgba(52,199,89,0.5)",
+    backgroundColor: "#E8F6EC",
   },
   chefRowVariantBadgeText: {
-    color: "#FFF7EF",
+    color: "#7C4A21",
     fontSize: 11,
     fontFamily: "Poppins_600SemiBold",
+  },
+  chefRowVariantBadgeTextOnline: {
+    color: "#168447",
   },
   chefRowOnlineDot: {
     width: 7,
     height: 7,
     borderRadius: 4,
     backgroundColor: "#34C759",
-    shadowColor: "#34C759",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 4,
   },
   chefRowFavBtn: {
-    position: "absolute",
-    top: 10,
-    right: 10,
     width: 36,
     height: 36,
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.30)",
+    backgroundColor: "#F0E4D7",
   },
   chefRowInfoPanel: {
-    backgroundColor: "#fff",
-    marginTop: -16,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 30,
-    paddingHorizontal: 14,
-    paddingBottom: 14,
+    flex: 1,
+    minWidth: 0,
+    paddingTop: 4,
+    paddingRight: 2,
+  },
+  chefRowHeaderLine: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
   },
   chefRowNameRow: {
     flexDirection: "row",
@@ -1527,23 +1483,23 @@ const styles = StyleSheet.create({
   },
   chefRowName: {
     flex: 1,
-    fontSize: 17,
-    lineHeight: 22,
+    fontSize: 16,
+    lineHeight: 20,
     fontFamily: "Poppins_700Bold",
     color: "#201612",
   },
   chefRowSpecialty: {
     marginTop: 3,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 11,
+    lineHeight: 16,
     fontFamily: "Poppins_400Regular",
     color: "#74635A",
   },
   chefRowMetrics: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    marginTop: 12,
+    gap: 7,
+    marginTop: 10,
   },
   metricPill: {
     flexDirection: "row",
@@ -1552,7 +1508,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    backgroundColor: "#F6EADB",
+    backgroundColor: "#EFE2D2",
   },
   metricPillText: {
     fontSize: 11,
@@ -1560,7 +1516,7 @@ const styles = StyleSheet.create({
     color: "#4B372D",
   },
   chefRowFooter: {
-    marginTop: 12,
+    marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1585,56 +1541,38 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_700Bold",
     color: Colors.light.tintDark,
   },
-  chefRowCta: {
-    marginTop: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 11,
-    borderRadius: 16,
-    backgroundColor: "#FEF0E2",
-    borderWidth: 1,
-    borderColor: "rgba(216,101,43,0.18)",
-  },
-  chefRowCtaText: {
-    fontSize: 13,
-    fontFamily: "Poppins_600SemiBold",
-    color: Colors.light.tint,
-  },
   chefRowAvatarFloat: {
-    position: "absolute",
-    top: 72,
-    left: 12,
+    position: "relative",
   },
   chefRowAvatarRing: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 3,
-    borderColor: "#fff",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 0,
     overflow: "hidden",
+    backgroundColor: "#EFE2D2",
   },
   chefRowAvatar: {
     width: "100%",
     height: "100%",
+    borderRadius: 30,
   },
   chefRowAvatarFallback: {
     alignItems: "center",
     justifyContent: "center",
   },
   chefRowAvatarInitials: {
-    fontSize: 16,
+    fontSize: 20,
     fontFamily: "Poppins_700Bold",
-    color: "rgba(255,255,255,0.92)",
+    color: "#6F5444",
   },
   chefRowOnlineIndicator: {
     position: "absolute",
-    bottom: 0,
-    right: -2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    bottom: 3,
+    right: 2,
+    width: 13,
+    height: 13,
+    borderRadius: 7,
     backgroundColor: "#34C759",
     borderWidth: 2,
     borderColor: "#fff",
@@ -1659,11 +1597,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "rgba(120,104,96,0.09)",
+    backgroundColor: "transparent",
+    borderRadius: 0,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(120,104,96,0.10)",
   },
   nearbyAvatarWrap: {
     position: "relative",
@@ -1672,7 +1610,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "#EFE2D2",
   },
   nearbyAvatarFallback: {
     alignItems: "center",
@@ -1681,7 +1619,7 @@ const styles = StyleSheet.create({
   nearbyAvatarInitials: {
     fontFamily: "Poppins_700Bold",
     fontSize: 16,
-    color: "rgba(255,255,255,0.92)",
+    color: "#6F5444",
   },
   nearbyOnlineDot: {
     position: "absolute",
@@ -1757,7 +1695,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "#F0E4D7",
   },
   nearbyLivePill: {
     flexDirection: "row",
@@ -1789,26 +1727,19 @@ const styles = StyleSheet.create({
   },
   popDishCard: {
     width: 230,
-    borderRadius: 24,
-    overflow: "hidden",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "rgba(120,104,96,0.08)",
-    shadowColor: "rgba(42,28,18,0.12)",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 1,
-    shadowRadius: 18,
-    elevation: 4,
+    backgroundColor: "transparent",
   },
   popDishMedia: {
     height: 170,
     justifyContent: "space-between",
     alignItems: "flex-start",
     padding: 10,
+    borderRadius: 20,
+    overflow: "hidden",
   },
   popDishMediaRadius: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
   },
   popDishScrim: {
     ...StyleSheet.absoluteFillObject,
@@ -1839,7 +1770,7 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
   },
   popDishInfo: {
-    padding: 14,
+    paddingTop: 12,
     gap: 5,
   },
   popDishName: {
@@ -1890,25 +1821,18 @@ const styles = StyleSheet.create({
   },
   dishVertCard: {
     width: 142,
-    borderRadius: 22,
-    overflow: "hidden",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "rgba(120,104,96,0.08)",
-    shadowColor: "rgba(42,28,18,0.10)",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 1,
-    shadowRadius: 14,
-    elevation: 3,
+    backgroundColor: "transparent",
   },
   dishVertMedia: {
     height: 142,
     alignItems: "center",
     justifyContent: "center",
+    borderRadius: 18,
+    overflow: "hidden",
   },
   dishVertMediaRadius: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
   },
   dishVertScrim: {
     ...StyleSheet.absoluteFillObject,
@@ -1929,7 +1853,7 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
   },
   dishVertInfo: {
-    padding: 11,
+    paddingTop: 10,
     gap: 3,
   },
   dishVertName: {

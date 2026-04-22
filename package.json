@@ -7,6 +7,9 @@
   },
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "check:deployed:courier-upload": "pnpm --filter @workspace/scripts check-deployed-courier-upload",
+    "dev:api-server": "pnpm --filter @workspace/api-server dev",
+    "dev:admin-web": "pnpm --filter @workspace/admin-web dev",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
@@ -15,7 +18,7 @@
   "devDependencies": {
     "expo-module-scripts": "4.0.5",
     "prettier": "^3.8.1",
-    "typescript": "~5.9.2"
+    "typescript": "~6.0.0"
   },
   "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"
 }

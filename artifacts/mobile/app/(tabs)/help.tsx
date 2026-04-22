@@ -1,4 +1,4 @@
-import { Feather } from "@expo/vector-icons";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -14,17 +14,42 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 
 const CATEGORIES = [
-  { id: "account",     title: "Mon Compte",      icon: "user",          color: "#D4611A", bg: "#FFF0E6" },
-  { id: "orders",      title: "Commandes",        icon: "shopping-bag",  color: "#C24B36", bg: "#FFF0E9" },
-  { id: "payment",     title: "Paiement",         icon: "credit-card",   color: "#1B8E5F", bg: "#E7F8F1" },
-  { id: "delivery",    title: "Livraison",        icon: "truck",         color: "#5B5BD6", bg: "#EEEEFF" },
-  { id: "cuisinieres", title: "Cuisinieres",      icon: "feather",       color: "#D4611A", bg: "#FFF3E6" },
-  { id: "courses",     title: "Courses",          icon: "zap",           color: "#C24B36", bg: "#FFF5F0" },
-  { id: "supermarche", title: "Supermarché",      icon: "shopping-cart", color: "#1B8E5F", bg: "#E7F8F1" },
-  { id: "boutiques",   title: "Boutiques",        icon: "tag",           color: "#8B5E3C", bg: "#F5EDE4" },
-  { id: "stories",     title: "Promos & Stories", icon: "star",          color: "#B044A0", bg: "#F8E8F6" },
-  { id: "security",    title: "Sécurité",         icon: "shield",        color: "#4A90E2", bg: "#E8F2FF" },
+  { id: "account",     title: "Mon Compte",      icon: "account",     color: "#D4611A", bg: "#FFF0E6" },
+  { id: "orders",      title: "Commandes",       icon: "orders",      color: "#C24B36", bg: "#FFF0E9" },
+  { id: "payment",     title: "Paiement",        icon: "payment",     color: "#1B8E5F", bg: "#E7F8F1" },
+  { id: "delivery",    title: "Livraison",       icon: "delivery",    color: "#5B5BD6", bg: "#EEEEFF" },
+  { id: "cuisinieres", title: "Cuisinieres",     icon: "chef",        color: "#D4611A", bg: "#FFF3E6" },
+  { id: "courses",     title: "Courses",         icon: "flash",       color: "#C24B36", bg: "#FFF5F0" },
+  { id: "supermarche", title: "Supermarché",     icon: "cart",        color: "#1B8E5F", bg: "#E7F8F1" },
+  { id: "boutiques",   title: "Boutiques",       icon: "boutique",    color: "#8B5E3C", bg: "#F5EDE4" },
+  { id: "stories",     title: "Promos & Stories",icon: "stories",     color: "#B044A0", bg: "#F8E8F6" },
+  { id: "security",    title: "Sécurité",        icon: "security",    color: "#4A90E2", bg: "#E8F2FF" },
 ] as const;
+
+function renderHelpGlyph(icon: (typeof CATEGORIES)[number]["icon"], color: string, size = 20) {
+  switch (icon) {
+    case "account":
+      return <MaterialCommunityIcons name="account-circle-outline" size={size + 1} color={color} />;
+    case "orders":
+      return <MaterialCommunityIcons name="clipboard-text-clock-outline" size={size} color={color} />;
+    case "payment":
+      return <MaterialCommunityIcons name="credit-card-check-outline" size={size} color={color} />;
+    case "delivery":
+      return <MaterialCommunityIcons name="truck-fast-outline" size={size} color={color} />;
+    case "chef":
+      return <MaterialCommunityIcons name="chef-hat" size={size} color={color} />;
+    case "flash":
+      return <Ionicons name="flash-outline" size={size - 1} color={color} />;
+    case "cart":
+      return <MaterialCommunityIcons name="cart-variant" size={size} color={color} />;
+    case "boutique":
+      return <MaterialCommunityIcons name="shopping-outline" size={size} color={color} />;
+    case "stories":
+      return <MaterialCommunityIcons name="motion-play-outline" size={size} color={color} />;
+    case "security":
+      return <MaterialCommunityIcons name="shield-check-outline" size={size} color={color} />;
+  }
+}
 
 const POPULAR_QA = [
   {
@@ -80,7 +105,7 @@ export default function HelpScreen() {
         {/* Commande rapide */}
         <Pressable style={styles.orderCta} onPress={() => router.push("/help/order" as any)}>
           <View style={styles.orderCtaIcon}>
-            <Feather name="shopping-bag" size={22} color={Colors.light.tint} />
+            <MaterialCommunityIcons name="clipboard-list-outline" size={22} color={Colors.light.tint} />
           </View>
           <View style={styles.orderCtaBody}>
             <Text style={styles.orderCtaTitle}>Aide pour une commande</Text>
@@ -99,7 +124,9 @@ export default function HelpScreen() {
               onPress={() => router.push({ pathname: "/help/general", params: { section: cat.id } } as any)}
             >
               <View style={[styles.tileIcon, { backgroundColor: cat.bg }]}>
-                <Feather name={cat.icon as any} size={20} color={cat.color} />
+                <View style={[styles.tileIconInner, { shadowColor: cat.color }]}> 
+                  {renderHelpGlyph(cat.icon, cat.color, 20)}
+                </View>
               </View>
               <Text style={styles.tileTitle} numberOfLines={2}>{cat.title}</Text>
             </Pressable>
@@ -116,11 +143,14 @@ export default function HelpScreen() {
               onPress={() => setExpandedId(expandedId === item.id ? null : item.id)}
             >
               <View style={styles.faqRow}>
+                <View style={styles.faqBulletWrap}>
+                  <Ionicons name="sparkles-outline" size={13} color={Colors.light.tint} />
+                </View>
                 <Text style={styles.faqQuestion}>{item.question}</Text>
-                <Feather
-                  name={expandedId === item.id ? "chevron-up" : "chevron-down"}
-                  size={16}
-                  color={Colors.light.textSecondary}
+                <Ionicons
+                  name={expandedId === item.id ? "chevron-up-circle" : "chevron-down-circle"}
+                  size={18}
+                  color={Colors.light.textTertiary}
                 />
               </View>
               {expandedId === item.id && <Text style={styles.faqAnswer}>{item.answer}</Text>}
@@ -174,17 +204,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
-    padding: 16,
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(104,83,69,0.10)",
   },
   orderCtaIcon: {
     width: 46,
     height: 46,
     borderRadius: 14,
-    backgroundColor: Colors.light.backgroundSecondary,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -192,33 +220,45 @@ const styles = StyleSheet.create({
   orderCtaTitle: { fontSize: 15, fontFamily: "Poppins_600SemiBold", color: Colors.light.text },
   orderCtaSub: { fontSize: 12, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary },
   sectionLabel: { paddingHorizontal: 20, marginBottom: 12, fontSize: 16, fontFamily: "Poppins_700Bold", color: Colors.light.text },
-  grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 10, marginBottom: 28 },
+  grid: { paddingHorizontal: 20, gap: 0, marginBottom: 28 },
   tile: {
-    width: "46%",
-    flexGrow: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    padding: 14,
-    backgroundColor: Colors.light.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.divider,
   },
   tileIcon: { width: 40, height: 40, borderRadius: 12, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  tileIconInner: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.72)",
+  },
   tileTitle: { flex: 1, fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, lineHeight: 17 },
   faqBlock: {
     marginHorizontal: 20,
     marginBottom: 28,
-    backgroundColor: Colors.light.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
     overflow: "hidden",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.light.divider,
   },
   faqItem: { padding: 16, gap: 8 },
   faqItemBorder: { borderBottomWidth: 1, borderBottomColor: Colors.light.divider },
-  faqRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  faqRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  faqBulletWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(212,97,26,0.1)",
+    marginTop: 1,
+  },
   faqQuestion: { flex: 1, fontSize: 14, fontFamily: "Poppins_600SemiBold", color: Colors.light.text, lineHeight: 21 },
   faqAnswer: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, lineHeight: 20 },
   allBtn: {
@@ -233,25 +273,24 @@ const styles = StyleSheet.create({
   allBtnText: { fontSize: 13, fontFamily: "Poppins_600SemiBold", color: Colors.light.tint },
   contactCard: {
     marginHorizontal: 20,
-    padding: 24,
-    backgroundColor: Colors.light.backgroundSecondary,
-    borderRadius: 20,
+    paddingVertical: 24,
     alignItems: "center",
     gap: 8,
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.light.divider,
   },
   contactIconWrap: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: Colors.light.card,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,
   },
   contactTitle: { fontSize: 16, fontFamily: "Poppins_700Bold", color: Colors.light.text, textAlign: "center" },
   contactSub: { fontSize: 13, fontFamily: "Poppins_400Regular", color: Colors.light.textSecondary, textAlign: "center" },
-  contactBtn: { marginTop: 8, paddingHorizontal: 32, paddingVertical: 14, backgroundColor: Colors.light.tint, borderRadius: 14 },
+  contactBtn: { marginTop: 8, paddingHorizontal: 32, paddingVertical: 14, backgroundColor: Colors.light.tint, borderRadius: 999 },
   contactBtnText: { fontSize: 15, fontFamily: "Poppins_700Bold", color: "#FFFFFF" },
 });

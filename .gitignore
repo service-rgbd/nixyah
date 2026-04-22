@@ -52,6 +52,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+artifacts/mobile/keys/*.json
+artifacts/mobile/google-services.json
+artifacts/mobile/GoogleService-Info.plist
 
 # local temp artifacts
 _tmp_*
