@@ -2202,7 +2202,7 @@ export async function registerRoutes(
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
       res.json({
-        resetEmail: env.ADMIN_EMAIL ?? "Ra.fils27@hotmail.com",
+        resetEmail: (env as any).SUPPORT_EMAIL ?? "help@nixyah.com",
         telegramUrl: (env as any).SUPPORT_TELEGRAM_URL ?? "https://t.me/+cNj_edHZTyc2YWE0",
         turnstileRequired: Boolean((env as any).TURNSTILE_SECRET_KEY),
         emailLoginEnabled: Boolean(resend && hasUsersEmail && hasUsersLoginLink),
@@ -4018,6 +4018,7 @@ export async function registerRoutes(
           address: z.string().min(4).max(256),
           deliveryTime: z.string().min(2).max(64),
           paymentMethod: z.enum(["delivery", "direct"]),
+          note: z.string().max(1000).optional(),
         })
         .parse(req.body);
 
@@ -4026,8 +4027,8 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Signup required for direct payment" });
       }
 
-      if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
-        return res.status(500).json({ message: "Commande indisponible (configuration Telegram manquante)" });
+      if ((!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) && !resend) {
+        return res.status(500).json({ message: "Commande indisponible (aucun canal de notification configuré)" });
       }
 
       const profileId = req.session?.profileId as string | undefined;
@@ -4042,35 +4043,81 @@ export async function registerRoutes(
         `• Adresse: ${payload.address}`,
         `• Heure de livraison souhaitée: ${payload.deliveryTime}`,
         `• Paiement: ${payload.paymentMethod === "delivery" ? "À la livraison" : "Direct (inscrit)"}`,
+        payload.note ? `• Note client: ${payload.note}` : null,
         "",
         userId ? `• userId: ${userId}` : "• userId: anonyme",
-        profileId ? `• profileId: " + profileId` : "• profileId: inconnu",
+        profileId ? `• profileId: ${profileId}` : "• profileId: inconnu",
         "",
         `• Créé à: ${new Date().toISOString()}`,
-      ];
+      ].filter(Boolean);
 
       const text = textLines.join("\n");
 
       const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-      const body = new URLSearchParams({
-        chat_id: env.TELEGRAM_CHAT_ID,
-        text,
-        parse_mode: "Markdown",
-      });
 
-      const tgRes = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
+      if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
+        const body = new URLSearchParams({
+          chat_id: env.TELEGRAM_CHAT_ID,
+          text,
+          parse_mode: "Markdown",
+        });
+        const tgRes = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        });
 
-      if (!tgRes.ok) {
-        const errText = await tgRes.text().catch(() => "");
-        console.error("Telegram sendMessage failed", tgRes.status, errText);
-        return res.status(502).json({ message: "Impossible d’envoyer la commande pour le moment" });
+        if (!tgRes.ok) {
+          const errText = await tgRes.text().catch(() => "");
+          console.error("Telegram sendMessage failed", tgRes.status, errText);
+          if (!resend) {
+            return res.status(502).json({ message: "Impossible d’envoyer la commande pour le moment" });
+          }
+        }
       }
 
       await logIpEvent({ req, kind: "adult_order", userId });
+
+      if (resend) {
+        void resend.emails
+          .send({
+            from: resendFrom,
+            to: "customer@nixyah.com",
+            subject: `Nouvelle commande: ${payload.productName}`,
+            html: renderEmailLayout({
+              title: "Nouvelle commande produit",
+              intro: "Une commande vient d’être passée depuis la boutique énergie et produits masculins.",
+              body:
+                `<strong>Produit</strong>: ${payload.productName} (${payload.productId})<br />` +
+                `<strong>Prix</strong>: ${payload.price} — ${payload.size}<br />` +
+                `<strong>Téléphone</strong>: ${payload.phone}<br />` +
+                `<strong>Adresse</strong>: ${payload.address}<br />` +
+                `<strong>Heure souhaitée</strong>: ${payload.deliveryTime}<br />` +
+                `<strong>Paiement</strong>: ${payload.paymentMethod === "delivery" ? "À la livraison" : "Direct"}<br />` +
+                `${payload.note ? `<strong>Note client</strong>: ${payload.note}<br />` : ""}` +
+                `<strong>Utilisateur</strong>: ${userId ?? "anonyme"}<br />` +
+                `<strong>Profil</strong>: ${profileId ?? "inconnu"}`,
+              buttonLabel: "Ouvrir l’administration",
+              buttonUrl: appUrl("/admin"),
+              logoUrl: appUrl("/favicon.png"),
+              footer: "Email automatique envoyé en arrière-plan après la prise en compte de la commande.",
+            }),
+            text:
+              `Nouvelle commande produit\n\n` +
+              `Produit: ${payload.productName} (${payload.productId})\n` +
+              `Prix: ${payload.price} — ${payload.size}\n` +
+              `Téléphone: ${payload.phone}\n` +
+              `Adresse: ${payload.address}\n` +
+              `Heure souhaitée: ${payload.deliveryTime}\n` +
+              `Paiement: ${payload.paymentMethod === "delivery" ? "À la livraison" : "Direct"}\n` +
+              `${payload.note ? `Note client: ${payload.note}\n` : ""}` +
+              `Utilisateur: ${userId ?? "anonyme"}\n` +
+              `Profil: ${profileId ?? "inconnu"}\n`,
+          })
+          .catch((error) => {
+            console.error("Failed to send adult order email", error);
+          });
+      }
 
       return res.json({ ok: true });
     }),
