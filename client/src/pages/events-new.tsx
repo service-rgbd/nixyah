@@ -176,7 +176,10 @@ export default function EventsNewPage() {
       await queryClient.invalidateQueries({ queryKey: ["/api/events"] });
       toast({
         title: editingEvent ? "Évènement mis à jour" : "Évènement créé",
-        description: editingEvent ? "Les modifications sont enregistrées." : "15 crédits ont été débités si ton compte n’est pas admin.",
+        description:
+          editingEvent
+            ? "Les modifications sont enregistrées."
+            : "La première annonce d’évènement est gratuite, puis chaque publication coûte 5 crédits.",
       });
       setLocation("/dashboard");
     } catch (e: any) {
@@ -200,7 +203,7 @@ export default function EventsNewPage() {
               {editingEvent ? "Modifier l’évènement" : "Créer un évènement"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              La publication coûte 15 crédits pour les profils autorisés. Tout est saisi directement sur la page, avec jusqu’à 2 photos pour présenter la soirée.
+              La première publication d’évènement est gratuite pour les profils autorisés, puis chaque annonce coûte 5 crédits. Tout est saisi directement sur la page, avec jusqu’à 2 photos pour présenter la soirée.
             </p>
           </div>
 

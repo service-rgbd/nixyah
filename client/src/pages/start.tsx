@@ -110,6 +110,43 @@ export default function Start() {
     return lang === "en" ? "Private profile" : "Profil privé";
   };
 
+  const getProfileTierMeta = (profile: Pick<StartProfile, "accountType" | "isVip" | "isPro">) => {
+    if (profile.isVip) {
+      return {
+        label: "VIP",
+        className: "bg-amber-500 text-black border border-amber-300/80",
+      };
+    }
+    if (profile.isPro) {
+      return {
+        label: "PRO",
+        className: "bg-emerald-500/15 text-emerald-300 border border-emerald-400/30",
+      };
+    }
+    if (profile.accountType === "salon") {
+      return {
+        label: lang === "en" ? "SALON" : "SALON",
+        className: "bg-violet-500/15 text-violet-300 border border-violet-400/30",
+      };
+    }
+    if (profile.accountType === "residence") {
+      return {
+        label: lang === "en" ? "RESIDENCE" : "RÉSIDENCE",
+        className: "bg-sky-500/15 text-sky-300 border border-sky-400/30",
+      };
+    }
+    if (profile.accountType === "adult_shop") {
+      return {
+        label: lang === "en" ? "SHOP" : "BOUTIQUE",
+        className: "bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-400/30",
+      };
+    }
+    return {
+      label: lang === "en" ? "PROFILE" : "PROFIL",
+      className: "bg-muted/50 text-foreground/80 border border-border/70",
+    };
+  };
+
   const getAvailabilityMeta = (disponibilite?: StartProfile["disponibilite"]) => {
     const date = String(disponibilite?.date ?? "").trim();
     if (!date) return null;
@@ -925,25 +962,25 @@ export default function Start() {
                       key={profile.id}
                       type="button"
                       onClick={() => openProfile(profile.id, profileHighlights.map((item) => item.id), "start-highlights")}
-                      className="flex h-[172px] w-[94%] shrink-0 items-center gap-3 overflow-hidden rounded-[26px] border border-border/70 bg-card/50 px-3 py-3 text-left transition-colors hover:bg-muted/10 sm:w-[76%] md:w-[56%] lg:w-[42%]"
+                      className="flex h-[188px] w-[94%] shrink-0 items-stretch gap-0 overflow-hidden rounded-[28px] border border-border/70 bg-card/70 text-left shadow-[0_18px_50px_-32px_rgba(0,0,0,0.35)] transition-all hover:border-border hover:bg-card sm:w-[76%] md:w-[56%] lg:w-[42%]"
                     >
                       <img
                         src={getProfilePhoto(profile.photoUrl, profile.accountType)}
                         alt={profile.pseudo}
-                        className="h-full w-[132px] shrink-0 rounded-[22px] object-cover"
+                        className="h-full w-[40%] shrink-0 object-cover"
                         onError={(e) => {
                           const img = e.currentTarget;
                           img.onerror = null;
                           img.src = getDefaultProfilePhoto(profile.accountType);
                         }}
                       />
-                      <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 flex-1 flex-col justify-between px-4 py-4">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold tracking-tight text-foreground truncate">
+                            <div className="text-[15px] font-semibold tracking-tight text-foreground truncate">
                               {profile.pseudo} • {profile.age}
                             </div>
-                            <div className="mt-0.5 text-xs text-muted-foreground truncate">
+                            <div className="mt-1 text-[11px] text-muted-foreground truncate">
                               {profile.ville}
                               {profile.lieu ? ` • ${profile.lieu}` : ""}
                               {typeof profile.distanceKm === "number" ? ` • ${Math.round(profile.distanceKm)} km` : ""}
@@ -962,7 +999,7 @@ export default function Start() {
                             ) : null}
                           </div>
                         </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <div className="mt-3 flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
                             {getAccountTypeLabel(profile.accountType)}
                           </span>
@@ -977,14 +1014,18 @@ export default function Start() {
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground line-clamp-3">
+                        <p className="mt-3 text-[12px] leading-5 text-muted-foreground line-clamp-4">
                           {profile.description ??
                             (lang === "en"
                               ? "Tap to view profile details."
                               : "Appuie pour voir les détails du profil.")}
                         </p>
+                        <div className="mt-4 inline-flex items-center gap-2 text-[11px] font-medium text-foreground/85">
+                          <span className="rounded-full bg-foreground px-3 py-1 text-background">
+                            {lang === "en" ? "View profile" : "Voir son profil"}
+                          </span>
+                        </div>
                       </div>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                     </button>
                   ))}
                 </>
@@ -1242,20 +1283,19 @@ export default function Start() {
                 {lang === "en" ? "See all" : "Tout voir"}
               </Button>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {(newsLoading ? Array.from({ length: 6 }) : topNews.slice(0, 8)).map((a: any, idx: number) =>
                 newsLoading ? (
-                  <div key={idx} className="h-32 rounded-[24px] bg-muted/40" />
+                  <div key={idx} className="h-[164px] rounded-[24px] bg-muted/40" />
                 ) : (
                   <button
                     key={a.id}
                     type="button"
                     onClick={() => openProfile(a.profile.id, topNews.map((item) => item.profile.id), "start-latest")}
-                    className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
+                    className="group w-full overflow-hidden rounded-[24px] border border-border/70 bg-card/70 text-left shadow-[0_14px_40px_-30px_rgba(0,0,0,0.32)] transition-all hover:border-border hover:bg-card"
                   >
-                    <div className="grid items-start gap-3 sm:grid-cols-[118px_minmax(0,1fr)] sm:gap-4 md:grid-cols-[132px_minmax(0,1fr)]">
-                      <div className="flex items-start gap-3 sm:block">
-                        <div className="h-[112px] w-[112px] shrink-0 overflow-hidden rounded-[24px] bg-muted/20 sm:h-[132px] sm:w-full">
+                    <div className="flex min-h-[164px] flex-col sm:min-h-0 sm:flex-row">
+                      <div className="h-[180px] w-full shrink-0 overflow-hidden bg-muted/20 sm:h-auto sm:w-[38%]">
                           <img
                             src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
                             alt={a.profile.pseudo}
@@ -1266,34 +1306,21 @@ export default function Start() {
                               img.src = getDefaultProfilePhoto(a.profile.accountType);
                             }}
                           />
-                        </div>
-                        <div className="min-w-0 space-y-2 sm:hidden">
-                          <div className="text-sm font-semibold tracking-tight text-foreground line-clamp-2">
-                            {a.title}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <span className="rounded-full border border-border/70 px-2 py-1">{a.profile.pseudo}</span>
-                            <span className="rounded-full border border-border/70 px-2 py-1">
-                              {getAccountTypeLabel(a.profile.accountType)}
-                            </span>
-                            {a.profile.isVip ? <span className="rounded-full bg-amber-500/10 px-2 py-1 text-amber-500">VIP</span> : null}
-                          </div>
-                        </div>
                       </div>
 
-                      <div className="min-w-0">
+                      <div className="flex min-w-0 flex-1 flex-col justify-between px-3.5 py-3.5 sm:px-4 sm:py-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="hidden flex-wrap items-center gap-2 text-[11px] text-muted-foreground sm:flex">
+                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                              <span className={`rounded-full px-2.5 py-1 font-semibold tracking-[0.08em] ${getProfileTierMeta(a.profile).className}`}>
+                                {getProfileTierMeta(a.profile).label}
+                              </span>
                               <span className="rounded-full border border-border/70 px-2.5 py-1">
                                 {getAccountTypeLabel(a.profile.accountType)}
                               </span>
                               <span className="rounded-full border border-border/70 px-2.5 py-1">
                                 {a.profile.pseudo}
                               </span>
-                              {a.profile.isVip ? (
-                                <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-amber-500">VIP</span>
-                              ) : null}
                               {a.profile.isPro ? (
                                 <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">PRO</span>
                               ) : null}
@@ -1301,10 +1328,10 @@ export default function Start() {
                                 <span className="rounded-full bg-red-500/10 px-2.5 py-1 text-red-500">Urgent</span>
                               ) : null}
                             </div>
-                            <div className="mt-0 sm:mt-3 text-base font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.15rem]">
+                            <div className="mt-2.5 text-[15px] font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.05rem]">
                               {a.title}
                             </div>
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                            <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                               <span className="inline-flex items-center gap-1.5">
                                 <MapPin className="h-3.5 w-3.5" />
                                 <span className="truncate">
@@ -1323,36 +1350,40 @@ export default function Start() {
                               ) : null}
                             </div>
                           </div>
-                          <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
                         </div>
 
-                        <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground line-clamp-3">
-                          {a.profile.description ??
+                        <p className="mt-3 max-w-3xl text-[12px] leading-5 text-muted-foreground line-clamp-3">
+                          {(a.body ?? a.profile.description) ??
                             (lang === "en"
                               ? "Open the profile to see the full details."
                               : "Ouvre le profil pour voir tous les détails.")}
                         </p>
 
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {(a.promotionMeta?.badges ?? [])
-                            .filter((b: string) => b !== "URGENT")
-                            .slice(0, 2)
-                            .map((b: string) => (
+                        <div className="mt-3.5 flex items-end justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(a.promotionMeta?.badges ?? [])
+                              .filter((b: string) => b !== "URGENT")
+                              .slice(0, 2)
+                              .map((b: string) => (
+                                <span
+                                  key={b}
+                                  className="rounded-full border border-border/70 px-2.5 py-1 text-[10px] text-foreground/75"
+                                >
+                                  {b === "PROLONGATION" ? "Prolong." : b}
+                                </span>
+                              ))}
+                            {(a.profile.services ?? []).slice(0, 2).map((s: string) => (
                               <span
-                                key={b}
-                                className="rounded-full border border-border/70 px-2.5 py-1 text-[10px] text-foreground/75"
+                                key={s}
+                                className="rounded-full bg-muted/35 px-2.5 py-1 text-[10px] text-muted-foreground"
                               >
-                                {b === "PROLONGATION" ? "Prolong." : b}
+                                {s}
                               </span>
                             ))}
-                          {(a.profile.services ?? []).slice(0, 3).map((s: string) => (
-                            <span
-                              key={s}
-                              className="rounded-full bg-muted/35 px-2.5 py-1 text-[10px] text-muted-foreground"
-                            >
-                              {s}
-                            </span>
-                          ))}
+                          </div>
+                          <span className="inline-flex shrink-0 items-center rounded-full bg-foreground px-2.5 py-1.5 text-[10px] font-medium text-background">
+                            {lang === "en" ? "View profile" : "Voir son profil"}
+                          </span>
                         </div>
                       </div>
                     </div>

@@ -70,7 +70,7 @@ import {
   type PaymentProvider,
   toPaystackAmount,
 } from "./payments";
-import { getOrSet, invalidateTag } from "./cache";
+import { getOrSet, invalidateTag, peek } from "./cache";
 
 function isPlaceholderUrl(url: string | null | undefined) {
   if (!url) return false;
@@ -246,9 +246,15 @@ function computePromotionMeta(opts: {
 
 const PROFILES_CACHE_TTL_MS = 30 * 1000;
 const PROFILES_CACHE_TAG = "profiles:list";
+const ANNONCES_CACHE_TTL_MS = 5 * 60 * 1000;
+const ANNONCES_CACHE_TAG = "annonces:list";
 
 function invalidateProfilesCache() {
   invalidateTag(PROFILES_CACHE_TAG);
+}
+
+function invalidateAnnoncesCache() {
+  invalidateTag(ANNONCES_CACHE_TAG);
 }
 
 function asyncHandler(
@@ -1010,7 +1016,7 @@ export async function registerRoutes(
     `;
   }
 
-  const EVENT_PUBLISH_TOKEN_COST = 15;
+  const EVENT_PUBLISH_TOKEN_COST = 5;
 
   function escapeHtml(value: unknown): string {
     return String(value ?? "")
@@ -1066,7 +1072,20 @@ export async function registerRoutes(
       });
     }
 
-    return { userId, profileId, admin, profile, accountType };
+    const [existingEvents] = await executor
+      .select({ count: sql<number>`count(*)::int` })
+      .from(events)
+      .where(eq(events.ownerProfileId, profileId))
+      .limit(1);
+
+    return {
+      userId,
+      profileId,
+      admin,
+      profile,
+      accountType,
+      hasFreeEventPublication: Number(existingEvents?.count ?? 0) === 0,
+    };
   }
 
   async function sendEventRegistrationEmail(opts: {
@@ -2292,28 +2311,31 @@ export async function registerRoutes(
         const eventImageUrls = Array.from(new Set((payload.imageUrls ?? []).filter(Boolean))).slice(0, 2);
         const primaryImageUrl = eventImageUrls[0] ?? payload.imageUrl ?? null;
 
-        if (!context.admin) {
+        const publicationCreditsCharged = context.admin || context.hasFreeEventPublication ? 0 : EVENT_PUBLISH_TOKEN_COST;
+
+        if (publicationCreditsCharged > 0) {
           const updated = await tx
             .update(users)
-            .set({ tokensBalance: sql`${users.tokensBalance} - ${EVENT_PUBLISH_TOKEN_COST}` } as any)
-            .where(and(eq(users.id, context.userId), sql`${users.tokensBalance} >= ${EVENT_PUBLISH_TOKEN_COST}`))
+            .set({ tokensBalance: sql`${users.tokensBalance} - ${publicationCreditsCharged}` } as any)
+            .where(and(eq(users.id, context.userId), sql`${users.tokensBalance} >= ${publicationCreditsCharged}`))
             .returning({ tokensBalance: users.tokensBalance });
 
           if (!updated.length) {
-            throw Object.assign(new Error("Crédit insuffisant: 15 crédits sont requis pour publier un évènement."), {
+            throw Object.assign(new Error("Crédit insuffisant: 5 crédits sont requis pour publier un évènement."), {
               status: 403,
             });
           }
 
           await tx.insert(tokenTransactions).values({
             userId: context.userId,
-            delta: -EVENT_PUBLISH_TOKEN_COST,
+            delta: -publicationCreditsCharged,
             reason: "event_publish",
             meta: {
               profileId: context.profileId,
               title: payload.title.trim(),
               visibility: payload.visibility,
               priceType: payload.priceType,
+              firstPublicationFree: false,
             } as any,
           } as any);
         }
@@ -2337,7 +2359,7 @@ export async function registerRoutes(
             contactEmail: payload.contactEmail?.trim().toLowerCase() || null,
             imageUrl: primaryImageUrl,
             imageUrls: eventImageUrls.length ? eventImageUrls : primaryImageUrl ? [primaryImageUrl] : null,
-            publicationCreditsCharged: context.admin ? 0 : EVENT_PUBLISH_TOKEN_COST,
+            publicationCreditsCharged,
             legalNoticeAccepted: true,
             status: payload.status ?? "published",
             updatedAt: new Date(),
@@ -4346,6 +4368,24 @@ export async function registerRoutes(
         servicesFilter,
       };
 
+      const normalizedServices = [...servicesFilter].sort((a, b) => a.localeCompare(b));
+      const cacheKey = `annonces:${JSON.stringify({
+        limit: q.limit,
+        verifiedOnly: q.verifiedOnly,
+        proOnly: q.proOnly,
+        vipOnly: vipOnly === undefined ? false : vipOnly,
+        services: normalizedServices,
+        maxDistanceKm: q.maxDistanceKm ?? null,
+        userLat: q.userLat ?? null,
+        userLng: q.userLng ?? null,
+      })}`;
+
+      const cachedPayload = peek<any[]>(cacheKey);
+      if (cachedPayload) {
+        res.setHeader("X-Cache", "HIT");
+        return res.json(cachedPayload);
+      }
+
       const where = and(
         eq(annonces.active, true),
         hasProfilesVisibility ? eq(profiles.visible, true) : undefined,
@@ -4366,6 +4406,10 @@ export async function registerRoutes(
             ))`
           : null;
 
+      const payload = await getOrSet(
+        cacheKey,
+        ANNONCES_CACHE_TTL_MS,
+        async () => {
       const list = await db
         .select({
           id: annonces.id,
@@ -4537,6 +4581,12 @@ export async function registerRoutes(
         }),
       );
 
+      return payload;
+        },
+        [ANNONCES_CACHE_TAG],
+      );
+
+      res.setHeader("X-Cache", "MISS");
       res.json(payload);
     }),
   );
@@ -4786,6 +4836,7 @@ export async function registerRoutes(
         .returning({ id: profiles.id, isVip: (profiles as any).isVip });
 
       invalidateProfilesCache();
+      invalidateAnnoncesCache();
       res.json(updated);
     }),
   );
@@ -4830,6 +4881,7 @@ export async function registerRoutes(
         .returning({ id: annonces.id, active: annonces.active });
 
       invalidateProfilesCache();
+      invalidateAnnoncesCache();
       res.json(updated);
     }),
   );
@@ -5444,6 +5496,7 @@ export async function registerRoutes(
 
     await logIpEvent({ req, kind: "annonce_publish", userId });
     invalidateProfilesCache();
+    invalidateAnnoncesCache();
     res.json(created);
     }),
   );
@@ -5471,6 +5524,7 @@ export async function registerRoutes(
         .returning({ id: annonces.id, active: annonces.active });
 
       invalidateProfilesCache();
+      invalidateAnnoncesCache();
       res.json(updated);
     }),
   );
