@@ -73,6 +73,7 @@ export default function Signup() {
     email: "",
   });
   const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [termsConfirmed, setTermsConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
@@ -121,8 +122,9 @@ export default function Signup() {
     formData.username.trim().length >= 4 &&
     formData.pseudo.trim().length >= 2 &&
     formData.username.trim() !== formData.pseudo.trim() &&
-    formData.password.length >= 6 &&
-    emailLooksValid;
+    formData.password.length >= 8 &&
+    emailLooksValid &&
+    termsConfirmed;
 
   const handleBack = () => {
     setLocation("/start");
@@ -200,6 +202,7 @@ export default function Signup() {
         pseudo: formData.pseudo.trim(),
         password: formData.password,
         email: formData.email || undefined,
+        acceptTerms: termsConfirmed,
         ...(turnstileToken ? { turnstileToken } : {}),
       });
       const json = await res.json();
@@ -602,18 +605,65 @@ export default function Signup() {
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Minimum 6 caractères"
+                    placeholder="Minimum 8 caractères"
                     value={formData.password}
                     onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))}
                     className="h-12"
                     data-testid="input-password"
                   />
+                  {formData.password.length > 0 && formData.password.length < 8 ? (
+                    <p className="text-xs text-destructive">Le mot de passe doit contenir au moins 8 caractères.</p>
+                  ) : null}
                 </div>
               </div>
 
               <p className="text-xs text-muted-foreground">
                 L’identifiant sert uniquement à la connexion. L’email est requis pour confirmer ton compte et récupérer ton mot de passe.
               </p>
+
+              <button
+                type="button"
+                onClick={() => setTermsConfirmed((prev) => !prev)}
+                className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
+                  termsConfirmed ? "border-primary bg-primary/10" : "border-border bg-background"
+                }`}
+              >
+                <div
+                  className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-md border ${
+                    termsConfirmed ? "border-primary bg-primary" : "border-muted-foreground"
+                  }`}
+                >
+                  {termsConfirmed && <Check className="h-4 w-4 text-white" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-foreground">
+                    Je certifie avoir lu, relu, accepté et respecter les conditions d’utilisation ainsi que les règles d’inscription.
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setLocation("/conditions");
+                      }}
+                    >
+                      Conditions d’utilisation
+                    </button>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setLocation("/privacy");
+                      }}
+                    >
+                      Confidentialité
+                    </button>
+                  </div>
+                </div>
+                <Shield className="mt-0.5 h-5 w-5 text-primary" />
+              </button>
 
               {turnstileRequired && (
                 <>

@@ -100,6 +100,9 @@ export default function Start() {
     city: string;
     tag: string;
     description: string;
+    imageUrl?: string | null;
+    imageUrls?: string[] | null;
+    venue?: string | null;
     isIllustration?: boolean;
   };
 
@@ -145,6 +148,16 @@ export default function Start() {
       label: lang === "en" ? "PROFILE" : "PROFIL",
       className: "bg-muted/50 text-foreground/80 border border-border/70",
     };
+  };
+
+  const getProfileTierFeedClass = (profile: Pick<StartProfile, "accountType" | "isVip" | "isPro">) => {
+    const tier = getProfileTierMeta(profile);
+    if (tier.label === "VIP") return "text-amber-500";
+    if (tier.label === "PRO") return "text-emerald-500";
+    if (tier.label === "SALON") return "text-violet-500";
+    if (tier.label === "RÉSIDENCE" || tier.label === "RESIDENCE") return "text-sky-500";
+    if (tier.label === "SHOP" || tier.label === "BOUTIQUE") return "text-fuchsia-500";
+    return "text-foreground/80";
   };
 
   const getAvailabilityMeta = (disponibilite?: StartProfile["disponibilite"]) => {
@@ -275,6 +288,12 @@ export default function Start() {
     [profilesAll, zoneFilter, quartierFilter, ageRange, accountTypeFilter, availableOnly],
   );
   const profileHighlights = (profilesFiltered ?? []).slice(0, 4);
+  const vipHighlights = useMemo(
+    () => (profilesFiltered ?? []).filter((profile) => Boolean(profile.isVip)).slice(0, 3),
+    [profilesFiltered],
+  );
+  const featuredVipProfile = vipHighlights[0] ?? profileHighlights[0] ?? null;
+  const featuredVipUsesFallback = !vipHighlights.length && Boolean(featuredVipProfile);
 
   const formatEventDate = (d: string | Date) =>
     new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "fr-FR", {
@@ -327,6 +346,9 @@ export default function Start() {
           city: event.city,
           tag: event.visibility === "private" ? "Privé" : "Public",
           description: event.description ?? "",
+          imageUrl: event.imageUrl ?? null,
+          imageUrls: event.imageUrls ?? null,
+          venue: event.venue ?? null,
           isIllustration: false,
         }));
       }
@@ -338,6 +360,15 @@ export default function Start() {
     },
     [liveEvents],
   );
+  const featuredVipEvent = useMemo(() => {
+    const rows = [...(liveEvents ?? [])];
+    rows.sort((a: any, b: any) => {
+      const aTime = new Date(a?.createdAt ?? a?.startsAt ?? 0).getTime();
+      const bTime = new Date(b?.createdAt ?? b?.startsAt ?? 0).getTime();
+      return bTime - aTime;
+    });
+    return rows[0] ?? null;
+  }, [liveEvents]);
 
   const selectedEvent = useMemo(
     () => previewEvents.find((e) => e.id === selectedEventId) ?? null,
@@ -347,6 +378,14 @@ export default function Start() {
   const openProfile = (id: string, ids?: string[], source = "start") => {
     if (ids?.length) rememberProfileBook(ids, source);
     setLocation(`/profile/${id}`);
+  };
+
+  const openEvent = (event: StartEventPreview) => {
+    if (event.isIllustration) {
+      setLocation("/events");
+      return;
+    }
+    setLocation(`/events/${event.id}`);
   };
 
   return (
@@ -627,6 +666,107 @@ export default function Start() {
             </Button>
           </div>
 
+          {/* Événements à venir */}
+          <div className="space-y-3">
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-xl font-semibold tracking-tight text-foreground">
+                  {lang === "en" ? "Upcoming events" : "Événements à venir"}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {lang === "en"
+                    ? "Published events, private venues and selected gatherings."
+                    : "Évènements publiés, lieux privés et rassemblements sélectionnés."}
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/events")}>
+                {lang === "en" ? "See more" : "Voir plus"}
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {previewEvents.slice(0, 4).map((ev, idx) => {
+                const bg = eventBackgrounds[idx % eventBackgrounds.length];
+                const eventCover = ev.imageUrls?.[0] || ev.imageUrl || bg;
+                const isLead = idx === 0;
+                return (
+                  <div
+                    key={ev.id}
+                    className={`group flex w-full cursor-pointer items-stretch gap-3 text-left ${isLead ? "min-h-[180px]" : "min-h-[148px]"}`}
+                    onClick={() => openEvent(ev)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openEvent(ev);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className={`relative shrink-0 overflow-hidden rounded-[26px] ${isLead ? "w-[40%] min-w-[40%]" : "w-[36%] min-w-[36%]"}`}>
+                      <img
+                        src={eventCover}
+                        alt={ev.title}
+                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                        draggable={false}
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          img.onerror = null;
+                          img.src = bg;
+                        }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/72 via-black/18 to-transparent" />
+                      <span className="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[10px] text-white">
+                        {ev.tag}
+                      </span>
+                      {isLead ? (
+                        <div className="absolute inset-x-3 bottom-3 text-white">
+                          <div className="text-[10px] uppercase tracking-[0.18em] text-white/78">
+                            {lang === "en" ? "Featured now" : "À découvrir"}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="min-w-0 flex flex-1 flex-col justify-between py-1">
+                      <div>
+                        <div className={`font-semibold tracking-tight text-foreground line-clamp-2 ${isLead ? "text-[1.02rem]" : "text-[0.98rem]"}`}>
+                          {ev.title}
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {formatEventDate(ev.date)} • {ev.city}
+                        </div>
+                        {ev.venue ? (
+                          <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
+                            {ev.venue}
+                          </div>
+                        ) : null}
+                        <p className={`mt-2 text-[12px] leading-5 text-muted-foreground ${isLead ? "line-clamp-3" : "line-clamp-2"}`}>
+                          {ev.description}
+                        </p>
+                      </div>
+                      <div className="mt-3 inline-flex items-center gap-2 text-[11px] font-medium text-foreground">
+                        <span>
+                          {ev.isIllustration
+                            ? lang === "en"
+                              ? "Discover"
+                              : "Découvrir"
+                            : lang === "en"
+                              ? "Open event"
+                              : "Ouvrir l'évènement"}
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <Button variant="outline" className="w-full rounded-2xl" onClick={() => setLocation("/events")}>
+              {lang === "en" ? "See all upcoming events" : "Voir tous les évènements"}
+            </Button>
+          </div>
+
           {/* Stories + filtres principaux */}
           <section className="space-y-3">
             <div className="flex items-end justify-between gap-3">
@@ -884,9 +1024,7 @@ export default function Start() {
           </section>
 
           {/* VIP shortcut (premium, without breaking existing navigation) */}
-          <button
-            type="button"
-            onClick={() => setLocation("/vip")}
+          <div
             className="relative w-full overflow-hidden rounded-[28px] border border-amber-500/20 bg-[linear-gradient(135deg,rgba(20,16,10,0.98),rgba(38,30,17,0.96)_45%,rgba(18,15,11,0.98))] px-4 py-4 text-left shadow-[0_24px_80px_-45px_rgba(245,158,11,0.55)]"
           >
             <div className="pointer-events-none absolute inset-0">
@@ -894,37 +1032,157 @@ export default function Start() {
               <div className="absolute bottom-0 left-0 h-20 w-20 rounded-full bg-amber-300/10 blur-2xl" />
             </div>
 
-            <div className="relative flex items-center justify-between gap-4">
-              <div className="min-w-0 flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-[18px] bg-white/8 text-amber-300 ring-1 ring-white/10">
-                  <Crown className="h-5 w-5" />
+            <div className="relative space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0 flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-[18px] bg-white/8 text-amber-300 ring-1 ring-white/10">
+                    <Crown className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-[0.26em] text-amber-300/85">
+                      {lang === "en" ? "Elite access" : "Accès elite"}
+                    </div>
+                    <div className="mt-1 text-base font-semibold tracking-tight text-white">
+                      {lang === "en" ? "VIP profiles & premium selection" : "Profils VIP & sélection premium"}
+                    </div>
+                    <div className="mt-1 text-[11px] text-white/70">
+                      {lang === "en"
+                        ? "High-priority profiles, premium visibility."
+                        : "Profils premium, visibilité prioritaire."}
+                    </div>
+                    {featuredVipUsesFallback ? (
+                      <div className="mt-1 text-[10px] text-amber-200/80">
+                        {lang === "en"
+                          ? "Selected from the current profiles feed."
+                          : "Sélectionné depuis le feed actuel des profils."}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-[0.26em] text-amber-300/85">
-                    {lang === "en" ? "Elite access" : "Accès elite"}
-                  </div>
-                  <div className="mt-1 text-base font-semibold tracking-tight text-white">
-                    {lang === "en" ? "VIP profiles & premium selection" : "Profils VIP & sélection premium"}
-                  </div>
-                  <div className="mt-1 text-[11px] text-white/70">
-                    {lang === "en"
-                      ? "High-priority profiles, premium visibility."
-                      : "Profils premium, visibilité prioritaire."}
-                  </div>
+                <div className="inline-flex shrink-0 items-center gap-2">
+                  {vipCount ? (
+                    <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-medium text-white ring-1 ring-white/10">
+                      {vipCount} VIP
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setLocation("/vip")}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-white/8 text-white ring-1 ring-white/10"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
-              <div className="inline-flex shrink-0 items-center gap-2">
-                {vipCount ? (
-                  <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-medium text-white ring-1 ring-white/10">
-                    {vipCount} VIP
-                  </span>
-                ) : null}
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/8 text-white ring-1 ring-white/10">
-                  <ChevronRight className="h-4 w-4" />
-                </div>
-              </div>
+
+              {featuredVipProfile ? (
+                <button
+                  type="button"
+                  onClick={() => openProfile(featuredVipProfile.id, [featuredVipProfile.id], "start-vip")}
+                  className="flex min-h-[188px] w-full items-stretch gap-0 overflow-hidden rounded-[26px] bg-white/6 text-left ring-1 ring-white/10"
+                >
+                  <img
+                    src={getProfilePhoto(featuredVipProfile.photoUrl, featuredVipProfile.accountType)}
+                    alt={featuredVipProfile.pseudo}
+                    className="h-auto w-[40%] shrink-0 object-cover"
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      img.onerror = null;
+                      img.src = getDefaultProfilePhoto(featuredVipProfile.accountType);
+                    }}
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col justify-between px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[15px] font-semibold tracking-tight text-white">
+                          {featuredVipProfile.pseudo} • {featuredVipProfile.age}
+                        </div>
+                        <div className="mt-1 text-[11px] text-white/65">
+                          {featuredVipProfile.ville}
+                          {featuredVipProfile.lieu ? ` • ${featuredVipProfile.lieu}` : ""}
+                        </div>
+                      </div>
+                      {featuredVipProfile.tarif ? (
+                        <span className="shrink-0 rounded-full bg-white/10 px-2.5 py-1 text-[10px] text-white ring-1 ring-white/10">
+                          {featuredVipProfile.tarif}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="text-[10px] uppercase tracking-[0.16em] text-amber-300">VIP</span>
+                      <span className="text-[10px] text-white/72">{getAccountTypeLabel(featuredVipProfile.accountType)}</span>
+                      {getAvailabilityMeta(featuredVipProfile.disponibilite) ? (
+                        <span className="text-[10px] text-white/72">
+                          {getAvailabilityMeta(featuredVipProfile.disponibilite)?.label}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-[12px] leading-5 text-white/70 line-clamp-4">
+                      {featuredVipProfile.description ??
+                        (lang === "en"
+                          ? "Open the VIP page to explore the premium selection."
+                          : "Ouvre la page VIP pour découvrir la sélection premium.")}
+                    </p>
+                    <div className="mt-3 inline-flex items-center text-[11px] font-medium text-white">
+                      {lang === "en" ? "Open VIP profile" : "Ouvrir le profil VIP"}
+                    </div>
+                  </div>
+                </button>
+              ) : null}
+
+              {featuredVipEvent ? (
+                <button
+                  type="button"
+                  onClick={() => openEvent({
+                    id: featuredVipEvent.id,
+                    title: featuredVipEvent.title,
+                    date: featuredVipEvent.startsAt,
+                    city: featuredVipEvent.city,
+                    tag: featuredVipEvent.visibility === "private" ? "Privé" : "Public",
+                    description: featuredVipEvent.description ?? "",
+                    imageUrl: featuredVipEvent.imageUrl ?? null,
+                    imageUrls: featuredVipEvent.imageUrls ?? null,
+                    venue: featuredVipEvent.venue ?? null,
+                    isIllustration: false,
+                  })}
+                  className="flex min-h-[154px] w-full items-stretch gap-0 overflow-hidden rounded-[26px] bg-white/[0.045] text-left ring-1 ring-white/10"
+                >
+                  <img
+                    src={featuredVipEvent.imageUrls?.[0] || featuredVipEvent.imageUrl || eventBgParty}
+                    alt={featuredVipEvent.title}
+                    className="h-auto w-[40%] shrink-0 object-cover"
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      img.onerror = null;
+                      img.src = eventBgParty;
+                    }}
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col justify-between px-4 py-4">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-amber-300">
+                        {lang === "en" ? "VIP event" : "Évènement VIP"}
+                      </div>
+                      <div className="mt-1 text-[15px] font-semibold tracking-tight text-white line-clamp-2">
+                        {featuredVipEvent.title}
+                      </div>
+                      <div className="mt-1 text-[11px] text-white/65">
+                        {formatEventDate(featuredVipEvent.startsAt)} • {featuredVipEvent.city}
+                      </div>
+                      <p className="mt-2 text-[12px] leading-5 text-white/70 line-clamp-3">
+                        {featuredVipEvent.description ??
+                          (lang === "en"
+                            ? "Open the VIP event to see the details."
+                            : "Ouvre l'évènement VIP pour voir les détails.")}
+                      </p>
+                    </div>
+                    <div className="mt-3 inline-flex items-center text-[11px] font-medium text-white">
+                      {lang === "en" ? "Open VIP event" : "Ouvrir l'évènement VIP"}
+                    </div>
+                  </div>
+                </button>
+              ) : null}
             </div>
-          </button>
+          </div>
 
           {/* Profils en vedette */}
           <div className="space-y-3">
@@ -1031,73 +1289,6 @@ export default function Start() {
                 </>
               )}
             </div>
-          </div>
-
-          {/* Événements / espaces publicitaires (à venir) */}
-          <div className="space-y-3">
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-xl font-semibold tracking-tight text-foreground">
-                  {lang === "en" ? "Upcoming events" : "Événements à venir"}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {lang === "en"
-                    ? "Published events, private venues and selected gatherings."
-                    : "Évènements publiés, lieux privés et rassemblements sélectionnés."}
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setLocation("/events")}>
-                {lang === "en" ? "See more" : "Voir plus"}
-              </Button>
-            </div>
-
-            <div className="space-y-3">
-              {previewEvents.slice(0, 4).map((ev, idx) => {
-                const bg = eventBackgrounds[idx % eventBackgrounds.length];
-                return (
-                  <div
-                    key={ev.id}
-                    className="group flex w-full items-center gap-3"
-                  >
-                    <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[22px] md:h-36 md:w-36">
-                      <img
-                        src={bg}
-                        alt=""
-                        aria-hidden="true"
-                        className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                        draggable={false}
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/72 via-black/18 to-transparent" />
-                      <span className="absolute left-3 top-3 rounded-full bg-black/50 px-2.5 py-1 text-[10px] text-white">
-                        {ev.tag}
-                      </span>
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="text-base font-semibold tracking-tight text-foreground line-clamp-2">
-                        {ev.title}
-                      </div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">
-                        {formatEventDate(ev.date)} • {ev.city}
-                      </div>
-                      <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-2">
-                        {ev.description}
-                      </p>
-                      <Button
-                        size="sm"
-                        className="mt-3 rounded-full"
-                        onClick={() => setLocation("/events")}
-                      >
-                        {ev.isIllustration ? (lang === "en" ? "Discover" : "Découvrir") : (lang === "en" ? "Participate" : "Participer")}
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <Button variant="outline" className="w-full rounded-2xl" onClick={() => setLocation("/events")}>
-              {lang === "en" ? "See all upcoming events" : "Voir tous les évènements"}
-            </Button>
           </div>
 
         <div className="space-y-3">
@@ -1286,16 +1477,16 @@ export default function Start() {
             <div className="space-y-2.5">
               {(newsLoading ? Array.from({ length: 6 }) : topNews.slice(0, 8)).map((a: any, idx: number) =>
                 newsLoading ? (
-                  <div key={idx} className="h-[164px] rounded-[24px] bg-muted/40" />
+                  <div key={idx} className="h-[144px] border-b border-border/40 bg-muted/15" />
                 ) : (
                   <button
                     key={a.id}
                     type="button"
                     onClick={() => openProfile(a.profile.id, topNews.map((item) => item.profile.id), "start-latest")}
-                    className="group w-full overflow-hidden rounded-[24px] border border-border/70 bg-card/70 text-left shadow-[0_14px_40px_-30px_rgba(0,0,0,0.32)] transition-all hover:border-border hover:bg-card"
+                    className="group w-full border-b border-border/50 py-3 text-left transition-opacity hover:opacity-90"
                   >
-                    <div className="flex min-h-[164px] flex-col sm:min-h-0 sm:flex-row">
-                      <div className="h-[180px] w-full shrink-0 overflow-hidden bg-muted/20 sm:h-auto sm:w-[38%]">
+                    <div className="flex min-h-[144px] items-start gap-3 sm:gap-4">
+                      <div className="h-[136px] w-[106px] shrink-0 overflow-hidden bg-muted/20 sm:h-[152px] sm:w-[118px]">
                           <img
                             src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
                             alt={a.profile.pseudo}
@@ -1308,30 +1499,30 @@ export default function Start() {
                           />
                       </div>
 
-                      <div className="flex min-w-0 flex-1 flex-col justify-between px-3.5 py-3.5 sm:px-4 sm:py-4">
+                      <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                              <span className={`rounded-full px-2.5 py-1 font-semibold tracking-[0.08em] ${getProfileTierMeta(a.profile).className}`}>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+                              <span className={`font-semibold tracking-[0.12em] ${getProfileTierFeedClass(a.profile)}`}>
                                 {getProfileTierMeta(a.profile).label}
                               </span>
-                              <span className="rounded-full border border-border/70 px-2.5 py-1">
+                              <span>
                                 {getAccountTypeLabel(a.profile.accountType)}
                               </span>
-                              <span className="rounded-full border border-border/70 px-2.5 py-1">
+                              <span>
                                 {a.profile.pseudo}
                               </span>
                               {a.profile.isPro ? (
-                                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">PRO</span>
+                                <span className="text-primary">PRO</span>
                               ) : null}
                               {(a.promotionMeta?.badges ?? []).includes("URGENT") ? (
-                                <span className="rounded-full bg-red-500/10 px-2.5 py-1 text-red-500">Urgent</span>
+                                <span className="text-red-500">Urgent</span>
                               ) : null}
                             </div>
-                            <div className="mt-2.5 text-[15px] font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.05rem]">
+                            <div className="mt-1.5 text-[15px] font-semibold tracking-tight text-foreground line-clamp-2 md:text-[1.05rem]">
                               {a.title}
                             </div>
-                            <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
                               <span className="inline-flex items-center gap-1.5">
                                 <MapPin className="h-3.5 w-3.5" />
                                 <span className="truncate">
@@ -1341,10 +1532,10 @@ export default function Start() {
                                 </span>
                               </span>
                               {a.profile.tarif ? (
-                                <span className="rounded-full bg-foreground px-2.5 py-1 text-background">{a.profile.tarif}</span>
+                                <span className="font-medium text-foreground">{a.profile.tarif}</span>
                               ) : null}
                               {getAvailabilityMeta(a.profile.disponibilite) ? (
-                                <span className={`rounded-full px-2.5 py-1 ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
+                                <span className={getAvailabilityMeta(a.profile.disponibilite)?.className}>
                                   {getAvailabilityMeta(a.profile.disponibilite)?.label}
                                 </span>
                               ) : null}
@@ -1352,22 +1543,22 @@ export default function Start() {
                           </div>
                         </div>
 
-                        <p className="mt-3 max-w-3xl text-[12px] leading-5 text-muted-foreground line-clamp-3">
+                        <p className="mt-2.5 max-w-3xl text-[12px] leading-5 text-muted-foreground line-clamp-4">
                           {(a.body ?? a.profile.description) ??
                             (lang === "en"
                               ? "Open the profile to see the full details."
                               : "Ouvre le profil pour voir tous les détails.")}
                         </p>
 
-                        <div className="mt-3.5 flex items-end justify-between gap-3">
-                          <div className="flex flex-wrap items-center gap-2">
+                        <div className="mt-2.5 flex items-end justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
                             {(a.promotionMeta?.badges ?? [])
                               .filter((b: string) => b !== "URGENT")
                               .slice(0, 2)
                               .map((b: string) => (
                                 <span
                                   key={b}
-                                  className="rounded-full border border-border/70 px-2.5 py-1 text-[10px] text-foreground/75"
+                                  className="text-foreground/75"
                                 >
                                   {b === "PROLONGATION" ? "Prolong." : b}
                                 </span>
@@ -1375,14 +1566,14 @@ export default function Start() {
                             {(a.profile.services ?? []).slice(0, 2).map((s: string) => (
                               <span
                                 key={s}
-                                className="rounded-full bg-muted/35 px-2.5 py-1 text-[10px] text-muted-foreground"
+                                className="text-muted-foreground"
                               >
                                 {s}
                               </span>
                             ))}
                           </div>
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-foreground px-2.5 py-1.5 text-[10px] font-medium text-background">
-                            {lang === "en" ? "View profile" : "Voir son profil"}
+                          <span className="inline-flex shrink-0 items-center text-[10px] font-medium text-foreground">
+                            {lang === "en" ? "Open profile" : "Ouvrir le profil"}
                           </span>
                         </div>
                       </div>

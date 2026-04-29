@@ -37,11 +37,11 @@ export default function PasswordReset() {
       );
       return;
     }
-    if (password.length < 6) {
+    if (password.length < 8) {
       setError(
         lang === "en"
-          ? "Password must be at least 6 characters."
-          : "Le mot de passe doit contenir au moins 6 caractères.",
+          ? "Password must be at least 8 characters."
+          : "Le mot de passe doit contenir au moins 8 caractères.",
       );
       return;
     }
@@ -109,7 +109,7 @@ export default function PasswordReset() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={
-                  lang === "en" ? "At least 6 characters" : "Au moins 6 caractères (garde-le secret)"
+                  lang === "en" ? "At least 8 characters" : "Au moins 8 caractères (garde-le secret)"
                 }
                 className="h-11 rounded-full"
               />

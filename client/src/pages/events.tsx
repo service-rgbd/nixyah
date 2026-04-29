@@ -269,6 +269,13 @@ export default function EventsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Button
                           className="rounded-full"
+                          onClick={() => setLocation(`/events/${event.id}`)}
+                        >
+                          Grand aperçu
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="rounded-full"
                           onClick={() => {
                             setSelectedEventId(event.id);
                             setEventDialogOpen(true);
@@ -277,7 +284,7 @@ export default function EventsPage() {
                         >
                           Participer
                         </Button>
-                        <Button variant="outline" className="rounded-full" onClick={() => setLocation("/start")}>
+                        <Button variant="ghost" className="rounded-full" onClick={() => setLocation("/start")}>
                           {lang === "en" ? "Back to start" : "Retour au start"}
                         </Button>
                       </div>

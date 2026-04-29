@@ -56,6 +56,9 @@ import {
   hasProfilesVipColumn,
   hasUsersEmailColumn,
   hasUsersEmailVerificationColumns,
+  hasUsersDeletionScheduleColumns,
+  hasUsersLoginLinkColumns,
+  hasUsersTermsAcceptanceColumns,
   hasEventsVideoUrlColumn,
 } from "./db-capabilities";
 import { getEnv } from "./env";
@@ -245,9 +248,9 @@ function computePromotionMeta(opts: {
   };
 }
 
-const PROFILES_CACHE_TTL_MS = 30 * 1000;
+const PROFILES_CACHE_TTL_MS = 15 * 1000;
 const PROFILES_CACHE_TAG = "profiles:list";
-const ANNONCES_CACHE_TTL_MS = 5 * 60 * 1000;
+const ANNONCES_CACHE_TTL_MS = 15 * 1000;
 const ANNONCES_CACHE_TAG = "annonces:list";
 
 function invalidateProfilesCache() {
@@ -283,6 +286,9 @@ export async function registerRoutes(
   const hasContactPref = await hasProfilesContactPreferenceColumn();
   const hasVip = await hasProfilesVipColumn();
   const hasUsersEmail = await hasUsersEmailColumn();
+  const hasUsersDeletionSchedule = await hasUsersDeletionScheduleColumns();
+  const hasUsersLoginLink = await hasUsersLoginLinkColumns();
+  const hasUsersTermsAcceptance = await hasUsersTermsAcceptanceColumns();
   const hasProfileAttrs = await hasProfilesAttributesColumns();
   const hasUsersEmailVerified = await hasUsersEmailVerificationColumns();
   const hasProfilesBusiness = await hasProfilesBusinessColumns();
@@ -302,6 +308,9 @@ export async function registerRoutes(
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
   const resendFrom = env.RESEND_FROM ?? "NIXYAH <no-reply@nixyah.com>";
+  const TERMS_VERSION = "2026-04-29";
+  const ACCOUNT_DELETION_GRACE_MS = 24 * 60 * 60 * 1000;
+  let lastDeletionSweepAt = 0;
 
   const googleClientId = (env as any).GOOGLE_CLIENT_ID as string | undefined;
   const googleClientSecret = (env as any).GOOGLE_CLIENT_SECRET as string | undefined;
@@ -653,6 +662,7 @@ export async function registerRoutes(
   function isCsrfExemptPath(path: string): boolean {
     return [
       "/api/login",
+      "/api/login/email-link",
       "/api/signup",
       "/api/password/forgot",
       "/api/password/reset",
@@ -673,6 +683,11 @@ export async function registerRoutes(
     req.session.userId = auth.userId;
     req.session.profileId = auth.profileId;
     req.session.csrfToken = csrfTokenFromSessionToken(token);
+    next();
+  });
+
+  app.use(async (_req, _res, next) => {
+    await purgeExpiredScheduledAccountDeletions();
     next();
   });
 
@@ -1339,6 +1354,79 @@ export async function registerRoutes(
       html,
       text: `Une demande de réinitialisation de mot de passe a été reçue.\n\nLien valable 1h : ${resetLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore simplement ce message.`,
     });
+  }
+
+  async function sendMagicLoginEmail(userId: string, email: string) {
+    if (!resend) {
+      console.warn("RESEND_API_KEY not configured – skipping magic login email");
+      return;
+    }
+    if (!hasUsersLoginLink) {
+      throw new Error("Connexion rapide indisponible: migration manquante.");
+    }
+
+    const token = generateToken();
+    const tokenHash = hashOpaqueToken(token);
+    const sentAt = new Date();
+    const expiresAt = new Date(Date.now() + 20 * 60 * 1000); // 20 min
+
+    await db
+      .update(users as any)
+      .set({
+        loginLinkToken: tokenHash,
+        loginLinkSentAt: sentAt,
+        loginLinkExpiresAt: expiresAt,
+      })
+      .where(eq(users.id, userId));
+
+    const loginLink = appUrl(`/api/login/email-link?token=${encodeURIComponent(token)}`);
+    const logoUrl = appUrl("/favicon.png");
+
+    const html = renderEmailLayout({
+      title: "Connexion rapide",
+      intro:
+        "Un lien de connexion rapide a été demandé pour accéder à ton compte depuis ton téléphone ou ton navigateur.",
+      body:
+        "Clique sur le bouton ci-dessous pour ouvrir ta session. Ce lien est valable pendant <strong>20 minutes</strong> et peut être utilisé une seule fois.",
+      buttonLabel: "Ouvrir ma session",
+      buttonUrl: loginLink,
+      logoUrl,
+      footer:
+        `Si tu n'es pas à l'origine de cette demande, ignore simplement cet email.<br /><br />Lien direct : <a href="${loginLink}" target="_blank" rel="noopener" style="color:#111827;word-break:break-all;">${loginLink}</a>`,
+    });
+
+    await resend.emails.send({
+      from: resendFrom,
+      to: email,
+      subject: "Ton lien de connexion rapide",
+      html,
+      text: `Voici ton lien de connexion rapide.\n\nLien valable 20 minutes : ${loginLink}\n\nSi tu n'es pas à l'origine de cette demande, ignore simplement ce message.`,
+    });
+  }
+
+  async function purgeExpiredScheduledAccountDeletions(force = false) {
+    if (!hasUsersDeletionSchedule) return;
+    const now = Date.now();
+    if (!force && now - lastDeletionSweepAt < 60_000) return;
+    lastDeletionSweepAt = now;
+    try {
+      await db.delete(users as any).where(sql`${(users as any).deleteScheduledAt} <= now()`);
+    } catch (e) {
+      console.error("Failed to purge expired scheduled account deletions", e);
+    }
+  }
+
+  async function cancelScheduledDeletionIfAny(userId: string): Promise<boolean> {
+    if (!hasUsersDeletionSchedule) return false;
+    const updated = await db
+      .update(users as any)
+      .set({
+        deleteRequestedAt: null,
+        deleteScheduledAt: null,
+      })
+      .where(and(eq(users.id, userId), gt((users as any).deleteScheduledAt, new Date())))
+      .returning({ id: users.id });
+    return updated.length > 0;
   }
 
   async function isAdmin(req: any): Promise<boolean> {
@@ -2117,6 +2205,8 @@ export async function registerRoutes(
         resetEmail: env.ADMIN_EMAIL ?? "Ra.fils27@hotmail.com",
         telegramUrl: (env as any).SUPPORT_TELEGRAM_URL ?? "https://t.me/+cNj_edHZTyc2YWE0",
         turnstileRequired: Boolean((env as any).TURNSTILE_SECRET_KEY),
+        emailLoginEnabled: Boolean(resend && hasUsersEmail && hasUsersLoginLink),
+        accountDeletionEnabled: Boolean(hasUsersDeletionSchedule),
       });
     }),
   );
@@ -2893,7 +2983,7 @@ export async function registerRoutes(
       const payload = z
         .object({
           token: z.string().min(10).max(200),
-          password: z.string().min(6).max(200),
+          password: z.string().min(8).max(200),
         })
         .parse(req.body);
       const tokenHash = hashOpaqueToken(payload.token);
@@ -2938,6 +3028,191 @@ export async function registerRoutes(
     }),
   );
 
+  app.post(
+    "/api/me/account/delete-request",
+    asyncHandler(async (req, res) => {
+      const userId = req.session?.userId as string | undefined;
+      if (!userId) return res.status(401).json({ message: "Not logged in" });
+      if (!hasUsersDeletionSchedule) {
+        return res.status(503).json({ message: "Suppression de compte indisponible pour le moment." });
+      }
+
+      const deleteRequestedAt = new Date();
+      const deleteScheduledAt = new Date(deleteRequestedAt.getTime() + ACCOUNT_DELETION_GRACE_MS);
+
+      const [updated] = await db
+        .update(users as any)
+        .set({
+          deleteRequestedAt,
+          deleteScheduledAt,
+        })
+        .where(eq(users.id, userId))
+        .returning({ id: users.id });
+
+      if (!updated) {
+        return res.status(404).json({ message: "Compte introuvable." });
+      }
+
+      await new Promise<void>((resolve) => {
+        if (!req.session?.destroy) {
+          clearSessionCookie(res);
+          resolve();
+          return;
+        }
+        req.session.destroy(() => {
+          clearSessionCookie(res);
+          resolve();
+        });
+      });
+
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        ok: true,
+        deleteRequestedAt,
+        deleteScheduledAt,
+      });
+    }),
+  );
+
+  app.post(
+    "/api/login/email-link",
+    asyncHandler(async (req, res) => {
+      if (!hasUsersEmail || !hasUsersLoginLink) {
+        return res.status(503).json({ message: "Connexion rapide indisponible pour le moment." });
+      }
+
+      if (!(await requireTurnstile(req, res, (req.body as any)?.turnstileToken))) return;
+
+      const payload = z
+        .object({
+          email: z.string().email("Entre une adresse email valide.").max(160),
+        })
+        .parse(req.body);
+
+      const email = payload.email.trim().toLowerCase();
+      const [u] = await db
+        .select({
+          id: users.id,
+          email: (users as any).email,
+          emailVerified:
+            hasUsersEmailVerified ? ((users as any).emailVerified as any) : (sql<boolean>`true` as any),
+          loginLinkSentAt:
+            hasUsersLoginLink ? ((users as any).loginLinkSentAt as any) : (sql<Date | null>`null` as any),
+        })
+        .from(users)
+        .where(sql`lower(${(users as any).email}) = ${email}`)
+        .limit(1);
+
+      if (!u || !(u as any).email) {
+        return res.json({ ok: true });
+      }
+
+      if (hasUsersEmailVerified && !(u as any).emailVerified) {
+        return res.json({ ok: true });
+      }
+
+      const [p] = await db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(eq(profiles.userId, u.id))
+        .limit(1);
+      if (!p) return res.json({ ok: true });
+
+      const lastSentAt = (u as any).loginLinkSentAt as Date | null | undefined;
+      if (lastSentAt && Date.now() - new Date(lastSentAt).getTime() < 2 * 60_000) {
+        return res.json({ ok: true, throttled: true });
+      }
+
+      try {
+        await sendMagicLoginEmail(u.id, email);
+      } catch (e) {
+        console.error("Failed to send magic login email", e);
+        return res.status(500).json({ message: "Impossible d'envoyer le lien de connexion pour le moment." });
+      }
+
+      return res.json({ ok: true });
+    }),
+  );
+
+  app.get(
+    "/api/login/email-link",
+    asyncHandler(async (req, res) => {
+      await purgeExpiredScheduledAccountDeletions(true);
+      if (!hasUsersLoginLink) {
+        return res.redirect(appUrl("/login?magic=unavailable", req));
+      }
+
+      const token = z.string().min(10).max(200).parse(req.query.token);
+      const tokenHash = hashOpaqueToken(token);
+      const now = new Date();
+
+      const [u] = await db
+        .select({
+          id: users.id,
+          loginLinkExpiresAt: (users as any).loginLinkExpiresAt,
+          deleteScheduledAt:
+            hasUsersDeletionSchedule ? ((users as any).deleteScheduledAt as any) : (sql<Date | null>`null` as any),
+        })
+        .from(users)
+        .where(
+          or(
+            eq((users as any).loginLinkToken, token),
+            eq((users as any).loginLinkToken, tokenHash),
+          ),
+        )
+        .limit(1);
+
+      if (!u) {
+        return res.redirect(appUrl("/login?magic=invalid", req));
+      }
+
+      const deletionScheduledAt = (u as any).deleteScheduledAt as Date | null | undefined;
+      if (deletionScheduledAt && new Date(deletionScheduledAt).getTime() <= Date.now()) {
+        await db.delete(users as any).where(eq(users.id, u.id));
+        return res.redirect(appUrl("/login?account=deleted", req));
+      }
+
+      const expiresAt = (u as any).loginLinkExpiresAt as Date | null | undefined;
+      if (expiresAt && expiresAt < now) {
+        await db
+          .update(users as any)
+          .set({
+            loginLinkToken: null,
+            loginLinkExpiresAt: null,
+            loginLinkSentAt: null,
+          })
+          .where(eq(users.id, u.id));
+        return res.redirect(appUrl("/login?magic=expired", req));
+      }
+
+      const [p] = await db
+        .select({ id: profiles.id })
+        .from(profiles)
+        .where(eq(profiles.userId, u.id))
+        .limit(1);
+
+      if (!p) {
+        return res.redirect(appUrl("/login?magic=no_profile", req));
+      }
+
+      await cancelScheduledDeletionIfAny(u.id);
+
+      await db
+        .update(users as any)
+        .set({
+          loginLinkToken: null,
+          loginLinkExpiresAt: null,
+          loginLinkSentAt: null,
+        })
+        .where(eq(users.id, u.id));
+
+      await establishAuthenticatedSession(req, res, { userId: u.id, profileId: p.id });
+      await logIpEvent({ req, kind: "login_success", userId: u.id });
+
+      return res.redirect(appUrl("/dashboard?login=magic", req));
+    }),
+  );
+
   app.get(
     "/api/me/account",
     asyncHandler(async (req, res) => {
@@ -2953,6 +3228,8 @@ export async function registerRoutes(
               ? ((users as any).emailVerified as any)
               : (sql<boolean>`false` as any),
           tokensBalance: users.tokensBalance,
+          deleteScheduledAt:
+            hasUsersDeletionSchedule ? ((users as any).deleteScheduledAt as any) : (sql<Date | null>`null` as any),
         })
         .from(users)
         .where(eq(users.id, userId))
@@ -2965,6 +3242,7 @@ export async function registerRoutes(
         email: (u as any).email ?? null,
         emailVerified: (u as any).emailVerified ?? false,
         tokensBalance: Number(u.tokensBalance ?? 0),
+        deleteScheduledAt: (u as any).deleteScheduledAt ?? null,
         emailVerificationAvailable: Boolean(hasUsersEmail && hasUsersEmailVerified),
         resendConfigured: Boolean(env.RESEND_API_KEY),
       });
@@ -3409,6 +3687,7 @@ export async function registerRoutes(
     "/api/login",
     asyncHandler(async (req, res) => {
       await ensureIpNotBanned(req);
+      await purgeExpiredScheduledAccountDeletions(true);
 
       const payload = z
         .object({
@@ -3429,6 +3708,8 @@ export async function registerRoutes(
           id: users.id,
           username: users.username,
           passwordHash: users.passwordHash,
+          deleteScheduledAt:
+            hasUsersDeletionSchedule ? ((users as any).deleteScheduledAt as any) : (sql<Date | null>`null` as any),
         })
         .from(users)
         .where(
@@ -3482,6 +3763,14 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Identifiants invalides" });
       }
 
+      const deletionScheduledAt = (u as any).deleteScheduledAt as Date | null | undefined;
+      if (deletionScheduledAt && new Date(deletionScheduledAt).getTime() <= Date.now()) {
+        await db.delete(users as any).where(eq(users.id, u.id));
+        return res.status(410).json({ message: "Le compte a été supprimé après expiration du délai de 24h." });
+      }
+
+      const deletionCancelled = await cancelScheduledDeletionIfAny(u.id);
+
       const [p] = await db
         .select({ id: profiles.id })
         .from(profiles)
@@ -3500,6 +3789,7 @@ export async function registerRoutes(
         profileId: p.id,
         csrfToken: req.session.csrfToken,
         sessionToken: createSessionToken({ userId: u.id, profileId: p.id }),
+        deletionCancelled,
       });
     }),
   );
@@ -3509,6 +3799,11 @@ export async function registerRoutes(
     asyncHandler(async (req, res) => {
       await ensureIpNotBanned(req);
       if (!(await requireTurnstile(req, res, (req.body as any)?.turnstileToken))) return;
+      if (!hasUsersTermsAcceptance) {
+        return res.status(503).json({
+          message: "Inscription indisponible: validation des conditions non configurée côté serveur.",
+        });
+      }
       // Never let signup continue on top of an already-linked session.
       if (req.session?.userId || req.session?.profileId) {
         return res.status(409).json({ message: "Une session est déjà active. Déconnecte-toi d'abord." });
@@ -3584,7 +3879,12 @@ export async function registerRoutes(
         created = await db.transaction(async (tx) => {
           const accountType = payload.accountType ?? "profile";
           const defaultPhotoUrl = payload.photoUrl ?? getDefaultProfilePhotoUrl(accountType, req);
-          const userValues: any = { username, passwordHash };
+          const userValues: any = {
+            username,
+            passwordHash,
+            termsAcceptedAt: new Date(),
+            termsAcceptedVersion: TERMS_VERSION,
+          };
           if (hasUsersEmail && emailToUse) {
             userValues.email = emailToUse;
             // If coming from verified Google OAuth, mark email as verified immediately.

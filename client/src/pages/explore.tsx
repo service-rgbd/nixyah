@@ -101,10 +101,10 @@ function ProfileRow({
     <button
       type="button"
       onClick={onClick}
-      className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
+      className="group w-full border-b border-border/60 py-3 text-left transition last:border-b-0"
     >
-      <div className="grid items-start gap-4 md:grid-cols-[180px_minmax(0,1fr)] md:gap-5">
-        <div className="relative h-[190px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[230px]">
+      <div className="grid grid-cols-[40%_minmax(0,1fr)] items-start gap-3 sm:gap-4">
+        <div className="relative h-[172px] overflow-hidden rounded-[26px] bg-muted/20 sm:h-[214px]">
           <img
             src={primaryPhoto}
             alt={p.pseudo}
@@ -143,26 +143,26 @@ function ProfileRow({
         <div className="min-w-0">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-lg font-semibold leading-tight text-foreground line-clamp-2 md:text-[1.35rem]">
+              <div className="text-[15px] font-semibold leading-tight text-foreground line-clamp-2 sm:text-lg md:text-[1.35rem]">
                 {title}
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <span className="rounded-full bg-muted/40 px-2.5 py-1">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground sm:text-[11px]">
+                <span>
                   {p.pseudo}
                 </span>
                 {p.isPro ? (
-                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
+                  <span className="uppercase tracking-wide text-primary">
                     pro
                   </span>
                 ) : null}
                 {p.verified ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-400">
+                  <span className="inline-flex items-center gap-1 text-emerald-400">
                     <BadgeCheck className="w-3.5 h-3.5" />
                     {lang === "en" ? "Certified" : "Certifié"}
                   </span>
                 ) : null}
                 {p.tarif ? (
-                  <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
+                  <span className="font-medium text-foreground">
                     {p.tarif}
                   </span>
                 ) : null}
@@ -171,8 +171,8 @@ function ProfileRow({
             <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
           </div>
 
-          <div className="mt-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="mt-2.5">
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground sm:text-sm">
                 <MapPin className="w-4 h-4" />
                 <span className="truncate">
                   {p.ville}
@@ -180,31 +180,31 @@ function ProfileRow({
                   {typeof p.distanceKm === "number" ? ` • ${Math.round(p.distanceKm)} km` : ""}
                 </span>
             </div>
-            <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
+            <div className="mt-2.5 text-[12px] leading-5 text-muted-foreground line-clamp-4 sm:text-sm sm:leading-6">
               {p.description ?? "—"}
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
             {premium ? (
-              <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] text-emerald-400">
+              <span className="text-[10px] text-emerald-400">
                 PREMIUM
               </span>
             ) : null}
             {top ? (
-              <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-[10px] text-sky-400">
+              <span className="text-[10px] text-sky-400">
                 TOP
               </span>
             ) : null}
             {(p.services ?? []).slice(0, 3).map((s) => (
               <span
                 key={s}
-                className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground"
+                className="text-[10px] text-muted-foreground"
               >
                 {s}
               </span>
             ))}
-            <div className="ml-auto text-[11px] text-muted-foreground">
+            <div className="ml-auto text-[10px] text-muted-foreground sm:text-[11px]">
               {p.latestAnnonce?.createdAt ? formatRelativeTime(p.latestAnnonce.createdAt, lang) : ""}
             </div>
           </div>
