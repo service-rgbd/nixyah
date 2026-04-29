@@ -259,16 +259,16 @@ export default function AnnoncesPage() {
 
           {isLoading ? (
             <>
-              <div className="h-28 rounded-2xl bg-muted/40 border border-border" />
-              <div className="h-28 rounded-2xl bg-muted/40 border border-border" />
-              <div className="h-28 rounded-2xl bg-muted/40 border border-border" />
+              <div className="h-[160px] border-b border-border/50 bg-muted/20" />
+              <div className="h-[160px] border-b border-border/50 bg-muted/20" />
+              <div className="h-[160px] border-b border-border/50 bg-muted/20" />
             </>
           ) : error ? (
-            <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+            <div className="py-4 text-sm text-muted-foreground">
               {lang === "en" ? "Unable to load ads." : "Impossible de charger les annonces."}
             </div>
           ) : (data ?? []).length === 0 ? (
-            <div className="rounded-2xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+            <div className="py-4 text-sm text-muted-foreground">
               {lang === "en" ? "No ads found." : "Aucune annonce trouvée."}
             </div>
           ) : (
@@ -277,10 +277,10 @@ export default function AnnoncesPage() {
                 key={a.id}
                 type="button"
                 onClick={() => openProfile(a.profile.id, (data ?? []).map((item) => item.profile.id))}
-                className="group w-full border-b border-border/70 py-4 text-left transition last:border-b-0"
+                className="group w-full border-b border-border/60 py-3 text-left transition last:border-b-0"
               >
-                <div className="grid items-start gap-4 md:grid-cols-[156px_minmax(0,1fr)]">
-                  <div className="relative h-[132px] overflow-hidden rounded-[24px] bg-muted/20 md:h-[170px]">
+                <div className="grid grid-cols-[40%_minmax(0,1fr)] items-start gap-3 sm:gap-4">
+                  <div className="relative h-[148px] overflow-hidden rounded-[26px] bg-muted/20 sm:h-[198px]">
                     <img
                       src={getProfilePhoto(a.profile.photoUrl, a.profile.accountType)}
                       alt={a.profile.pseudo}
@@ -316,30 +316,30 @@ export default function AnnoncesPage() {
                   <div className="min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-base font-semibold text-foreground line-clamp-2 md:text-[1.2rem]">
+                        <div className="text-[15px] font-semibold text-foreground line-clamp-2 sm:text-base md:text-[1.2rem]">
                           {a.title}
                         </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                          <span className="rounded-full bg-muted/40 px-2.5 py-1">
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-muted-foreground sm:text-[11px]">
+                          <span>
                             {a.profile.pseudo}
                           </span>
                           {a.profile.isPro ? (
-                            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-primary">
+                            <span className="uppercase tracking-wide text-primary">
                               pro
                             </span>
                           ) : null}
                           {a.profile.tarif ? (
-                            <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] text-background">
+                            <span className="font-medium text-foreground">
                               {a.profile.tarif}
                             </span>
                           ) : null}
                           {getAvailabilityMeta(a.profile.disponibilite) ? (
-                            <span className={`rounded-full px-2.5 py-1 text-[10px] ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
+                            <span className={`text-[10px] ${getAvailabilityMeta(a.profile.disponibilite)?.className}`}>
                               {getAvailabilityMeta(a.profile.disponibilite)?.label}
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground sm:text-sm">
                           <MapPin className="w-3.5 h-3.5" />
                           <span className="truncate">
                             {a.profile.ville}
@@ -347,23 +347,23 @@ export default function AnnoncesPage() {
                             {typeof a.distanceKm === "number" ? ` • ${a.distanceKm.toFixed(1)} km` : ""}
                           </span>
                         </div>
-                        <div className="mt-3 text-sm leading-6 text-muted-foreground line-clamp-3">
+                        <div className="mt-2.5 text-[12px] leading-5 text-muted-foreground line-clamp-4 sm:text-sm sm:leading-6">
                           {a.profile.description ?? "—"}
                         </div>
                       </div>
                       <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <div className="flex gap-1.5 flex-wrap">
+                    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <div className="flex gap-x-2 gap-y-1 flex-wrap">
                         {(a.promotionMeta?.badges ?? []).filter((b) => b !== "URGENT").slice(0, 3).map((b) => (
-                          <span key={b} className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-foreground/80">
+                          <span key={b} className="text-[10px] text-foreground/80">
                             {b === "PROLONGATION" ? "Prolong." : b}
                           </span>
                         ))}
                       </div>
                       {(a.profile.services ?? []).slice(0, 3).map((s) => (
-                        <span key={s} className="rounded-full bg-muted/40 px-2.5 py-1 text-[10px] text-muted-foreground">
+                        <span key={s} className="text-[10px] text-muted-foreground">
                           {s}
                         </span>
                       ))}

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { clearSession, getProfileId } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import logoTitle from "@assets/logo-titre.png";
-import { apiFetch, apiGetJson, apiRequest } from "@/lib/queryClient";
+import { apiFetch, apiGetJson, apiRequest, refreshProfileSurfaceData } from "@/lib/queryClient";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -125,6 +125,8 @@ export default function Dashboard() {
   const [pendingStoryToggle, setPendingStoryToggle] = useState<DashboardStory | null>(null);
   const [tokenPackages, setTokenPackages] = useState<Array<{ id: string; label: string; tokens: number; currency: string; amount: number }> | null>(null);
   const [buyingTokens, setBuyingTokens] = useState(false);
+  const [showDeleteAccountDialog, setShowDeleteAccountDialog] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const scrollToId = (id: string) => {
     const el = document.getElementById(id);
@@ -147,6 +149,25 @@ export default function Dashboard() {
     }
   };
 
+  const handleDeleteAccountRequest = async () => {
+    if (deletingAccount) return;
+    setDeletingAccount(true);
+    try {
+      await apiRequest("POST", "/api/me/account/delete-request");
+      clearSession();
+      queryClient.clear();
+      window.location.href = "/login?account=deletion_requested";
+    } catch (e: any) {
+      toast({
+        title: lang === "en" ? "Deletion unavailable" : "Suppression indisponible",
+        description: e?.message ?? undefined,
+      });
+    } finally {
+      setDeletingAccount(false);
+      setShowDeleteAccountDialog(false);
+    }
+  };
+
   const { data, isLoading } = useQuery<ApiProfileDetail | null>({
     queryKey: profileId ? [`/api/profiles/${profileId}`] : ["__no_profile__"],
     enabled: Boolean(profileId),
@@ -157,6 +178,7 @@ export default function Dashboard() {
     email: string | null;
     emailVerified?: boolean;
     tokensBalance?: number;
+    deleteScheduledAt?: string | null;
     emailVerificationAvailable?: boolean;
     resendConfigured?: boolean;
   }>({
@@ -251,7 +273,7 @@ export default function Dashboard() {
             ...(ville ? { ville } : {}),
             ...(lieu ? { lieu } : {}),
           });
-          await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+          await refreshProfileSurfaceData(queryClient, profileId);
           toast({
             title: lang === "en" ? "Location saved" : "Position enregistrée",
             description:
@@ -323,11 +345,11 @@ export default function Dashboard() {
   const eventList = myEvents ?? [];
 
   const tokenBalance = Number(account?.tokensBalance ?? 0);
+  const scheduledDeletionAt = account?.deleteScheduledAt ? new Date(account.deleteScheduledAt) : null;
+  const deletionPending = Boolean(scheduledDeletionAt && !Number.isNaN(scheduledDeletionAt.getTime()));
   const applyStoryToggle = async (story: DashboardStory, nextActive: boolean) => {
     await apiRequest("PATCH", `/api/me/stories/${story.id}`, { active: nextActive });
-    await queryClient.invalidateQueries({ queryKey: ["/api/me/stories"] });
-    await queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
-    await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+    await refreshProfileSurfaceData(queryClient, profileId);
   };
 
   const handleStoryToggle = async (story: DashboardStory) => {
@@ -514,6 +536,33 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={showDeleteAccountDialog} onOpenChange={setShowDeleteAccountDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {lang === "en" ? "Delete this account?" : "Supprimer ce profil ?"}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {lang === "en"
+                ? "The account is scheduled for deletion in 24 hours. Signing in again before the deadline cancels the deletion automatically."
+                : "Le compte sera programmé pour suppression dans 24h. Une reconnexion avant l’échéance annulera automatiquement la suppression."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            {lang === "en"
+              ? "After confirmation, you will be signed out immediately."
+              : "Après confirmation, tu seras déconnecté immédiatement."}
+          </div>
+          <DialogFooter className="pt-2">
+            <Button variant="ghost" type="button" onClick={() => setShowDeleteAccountDialog(false)} disabled={deletingAccount}>
+              {lang === "en" ? "Cancel" : "Annuler"}
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDeleteAccountRequest} disabled={deletingAccount}>
+              {deletingAccount ? (lang === "en" ? "Scheduling…" : "Programmation…") : lang === "en" ? "Schedule deletion" : "Programmer la suppression"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <main className="px-4 pb-10 space-y-5 pt-4">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mx-auto max-w-md space-y-5">
           <div className="flex items-center justify-between border-b border-border/70 pb-4">
@@ -616,7 +665,7 @@ export default function Dashboard() {
                       checked={Boolean(data.visible ?? true)}
                       onCheckedChange={async (checked) => {
                         await apiRequest("PATCH", "/api/me/profile", { visible: Boolean(checked) });
-                        await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+                        await refreshProfileSurfaceData(queryClient, profileId);
                       }}
                       data-testid="switch-profile-visible"
                     />
@@ -742,8 +791,7 @@ export default function Dashboard() {
                             className={annonce.active ? "h-11 rounded-2xl border-border/70 bg-muted/10 hover:bg-muted/20" : "h-11 rounded-2xl"}
                             onClick={async () => {
                               await apiRequest("PATCH", `/api/annonces/${annonce.id}`, { active: !annonce.active });
-                              await queryClient.invalidateQueries({ queryKey: ["/api/me/annonces"] });
-                              await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+                              await refreshProfileSurfaceData(queryClient, profileId);
                             }}
                           >
                             {annonce.active ? (lang === "en" ? "Unpublish" : "Dépublier") : (lang === "en" ? "Republish" : "Republier")}
@@ -1024,7 +1072,7 @@ export default function Dashboard() {
                   checked={Boolean(data?.visible ?? true)}
                   onCheckedChange={async (checked) => {
                     await apiRequest("PATCH", "/api/me/profile", { visible: Boolean(checked) });
-                    await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+                    await refreshProfileSurfaceData(queryClient, profileId);
                   }}
                 />
               </div>
@@ -1104,7 +1152,7 @@ export default function Dashboard() {
                         showTelegram,
                         contactPreference,
                       });
-                      await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+                      await refreshProfileSurfaceData(queryClient, profileId);
                     }}
                   >
                     {lang === "en" ? "Save contact" : "Enregistrer le contact"}
@@ -1164,7 +1212,7 @@ export default function Dashboard() {
                         }
                         setShowLocation(value);
                         await apiRequest("PATCH", "/api/me/profile", { showLocation: value });
-                        await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
+                        await refreshProfileSurfaceData(queryClient, profileId);
                       }}
                     />
                   </div>
@@ -1340,6 +1388,58 @@ export default function Dashboard() {
                     onClick={() => setLocation("/email/verify")}
                   >
                     {lang === "en" ? "Open email verification" : "Ouvrir la vérification email"}
+                  </Button>
+                </div>
+              </details>
+              <details id="section-account-deletion" className="border-b border-border/70 pb-4">
+                <summary className="cursor-pointer select-none py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+                        <AlertCircle className="w-4 h-4 text-destructive" />
+                        <span>{lang === "en" ? "Profile deletion" : "Suppression du profil"}</span>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {lang === "en"
+                          ? "24-hour safety window before the account is fully removed."
+                          : "Fenêtre de sécurité de 24h avant suppression définitive."}
+                      </div>
+                    </div>
+                    <span className="text-xs text-muted-foreground">{lang === "en" ? "Open" : "Ouvrir"}</span>
+                  </div>
+                </summary>
+                <div className="space-y-3 pb-4">
+                  {deletionPending ? (
+                    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-foreground">
+                      <div className="font-medium">
+                        {lang === "en" ? "Deletion already scheduled" : "Suppression déjà programmée"}
+                      </div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {lang === "en"
+                          ? `Sign in again before ${scheduledDeletionAt?.toLocaleString("en-GB")} to cancel it automatically.`
+                          : `Reconnecte-toi avant le ${scheduledDeletionAt?.toLocaleString("fr-FR")} pour l’annuler automatiquement.`}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-border/70 bg-background px-4 py-3 text-sm text-muted-foreground">
+                      {lang === "en"
+                        ? "If you confirm, the account will be disconnected immediately and permanently deleted after 24 hours unless you sign in again before the deadline."
+                        : "Si tu confirmes, le compte sera déconnecté immédiatement puis supprimé définitivement après 24h, sauf si tu te reconnectes avant l’échéance."}
+                    </div>
+                  )}
+                  <Button
+                    variant="outline"
+                    className="h-11 w-full rounded-2xl border-destructive/30 bg-destructive/5 text-destructive hover:bg-destructive/10"
+                    disabled={deletionPending}
+                    onClick={() => setShowDeleteAccountDialog(true)}
+                  >
+                    {deletionPending
+                      ? lang === "en"
+                        ? "Deletion pending"
+                        : "Suppression en attente"
+                      : lang === "en"
+                        ? "Delete my profile"
+                        : "Supprimer mon profil"}
                   </Button>
                 </div>
               </details>

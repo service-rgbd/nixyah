@@ -9,6 +9,7 @@ import { apiGetJson, apiRequest, API_BASE_URL, queryClient } from "@/lib/queryCl
 import { setSessionIds } from "@/lib/session";
 import { useI18n } from "@/lib/i18n";
 import { Turnstile } from "@/components/turnstile";
+import { toast } from "@/hooks/use-toast";
 import logoTitle from "@assets/logo-titre.png";
 
 export default function Login() {
@@ -19,19 +20,27 @@ export default function Login() {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [resetEmail, setResetEmail] = useState<string | null>(null);
   const [turnstileRequired, setTurnstileRequired] = useState(false);
+  const [emailLoginEnabled, setEmailLoginEnabled] = useState(false);
+  const [magicLoading, setMagicLoading] = useState(false);
+  const [magicDone, setMagicDone] = useState(false);
   const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY as string | undefined;
   const hasSiteKey = Boolean(siteKey && String(siteKey).trim().length > 0);
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username.trim());
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiGetJson<{ resetEmail?: string | null; turnstileRequired?: boolean }>("/api/support");
+        const data = await apiGetJson<{ resetEmail?: string | null; turnstileRequired?: boolean; emailLoginEnabled?: boolean }>(
+          "/api/support",
+        );
         if (cancelled) return;
         setResetEmail(data.resetEmail ?? null);
         setTurnstileRequired(Boolean(data.turnstileRequired));
+        setEmailLoginEnabled(Boolean(data.emailLoginEnabled));
       } catch {
         // ignore
       }
@@ -45,7 +54,21 @@ export default function Login() {
     try {
       const url = new URL(window.location.href);
       const oauth = url.searchParams.get("oauth");
-      if (!oauth) return;
+      const magic = url.searchParams.get("magic");
+      const account = url.searchParams.get("account");
+      if (account === "deletion_requested") {
+        setNotice(
+          lang === "en"
+            ? "Account deletion is scheduled in 24 hours. Sign in again before the deadline to cancel it automatically."
+            : "La suppression du compte est programmée dans 24h. Reconnecte-toi avant l’échéance pour l’annuler automatiquement.",
+        );
+      } else if (account === "deleted") {
+        setNotice(
+          lang === "en"
+            ? "The deletion delay expired and the account has been removed."
+            : "Le délai a expiré et le compte a été supprimé.",
+        );
+      }
       const map: Record<string, { fr: string; en: string }> = {
         google_error: { fr: "Connexion Google refusée.", en: "Google sign-in was canceled." },
         missing_code: { fr: "Code Google manquant. Réessaie.", en: "Missing Google code. Please retry." },
@@ -54,11 +77,15 @@ export default function Login() {
         userinfo_error: { fr: "Impossible de lire ton profil Google.", en: "Unable to fetch Google profile." },
         email_unverified: { fr: "Email Google non vérifié.", en: "Google email is not verified." },
         email_column_missing: { fr: "Email indisponible côté serveur (DB).", en: "Email column missing on server." },
+        invalid: { fr: "Lien de connexion invalide.", en: "Invalid sign-in link." },
+        expired: { fr: "Lien de connexion expiré. Demande-en un nouveau.", en: "Sign-in link expired. Request a new one." },
+        unavailable: { fr: "Connexion rapide indisponible pour le moment.", en: "Quick sign-in is unavailable right now." },
         not_linked: { fr: "Aucun compte trouvé. Inscris-toi avec Google.", en: "No account found. Sign up with Google." },
         no_profile: { fr: "Compte sans profil. Contacte l’admin.", en: "Account has no profile." },
         server_error: { fr: "Erreur serveur OAuth. Réessaie.", en: "OAuth server error. Please retry." },
       };
-      const msg = map[oauth];
+      const key = oauth || magic;
+      const msg = key ? map[key] : undefined;
       if (!msg) return;
       setError(lang === "en" ? msg.en : msg.fr);
     } catch {
@@ -68,6 +95,7 @@ export default function Login() {
 
   const handleLogin = async () => {
     setError(null);
+    setNotice(null);
     if (turnstileRequired && !hasSiteKey) {
       setError(
         lang === "en"
@@ -90,6 +118,15 @@ export default function Login() {
       const json = await res.json();
       queryClient.clear();
       setSessionIds({ userId: json.userId, profileId: json.profileId }, json.csrfToken ?? null, json.sessionToken ?? null);
+      if (json?.deletionCancelled) {
+        toast({
+          title: lang === "en" ? "Deletion canceled" : "Suppression annulée",
+          description:
+            lang === "en"
+              ? "Your account was restored because you signed in within 24 hours."
+              : "Ton compte a été conservé car tu t’es reconnecté dans le délai de 24h.",
+        });
+      }
       setLocation("/dashboard");
     } catch (e: any) {
       setError(e?.message ?? (lang === "en" ? "Login failed" : "Connexion impossible"));
@@ -101,6 +138,44 @@ export default function Login() {
   const handleGoogleLogin = () => {
     const state = encodeURIComponent("/dashboard");
     window.location.href = `${API_BASE_URL}/api/auth/google?state=${state}`;
+  };
+
+  const handleMagicLogin = async () => {
+    setError(null);
+    setNotice(null);
+    setMagicDone(false);
+    if (!emailLooksValid) {
+      setError(lang === "en" ? "Enter a valid email address first." : "Entre d'abord une adresse email valide.");
+      return;
+    }
+    if (turnstileRequired && !hasSiteKey) {
+      setError(
+        lang === "en"
+          ? "Security check is enabled on the server, but the frontend Turnstile site key is missing."
+          : "La sécurité Turnstile est activée sur le serveur, mais la clé VITE_TURNSTILE_SITE_KEY manque côté Cloudflare.",
+      );
+      return;
+    }
+    if (turnstileRequired && !turnstileToken) {
+      setError(lang === "en" ? "Please complete the anti-bot check." : "Valide le contrôle anti-bot (Turnstile).");
+      return;
+    }
+
+    setMagicLoading(true);
+    try {
+      await apiRequest("POST", "/api/login/email-link", {
+        email: username.trim(),
+        ...(turnstileToken ? { turnstileToken } : {}),
+      });
+      setMagicDone(true);
+    } catch (e: any) {
+      setError(
+        e?.message ??
+          (lang === "en" ? "Unable to send the sign-in link right now." : "Impossible d'envoyer le lien de connexion pour le moment."),
+      );
+    } finally {
+      setMagicLoading(false);
+    }
   };
 
   return (
@@ -140,6 +215,11 @@ export default function Login() {
             {error && (
               <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-sm text-destructive">
                 {error}
+              </div>
+            )}
+            {notice && (
+              <div className="p-3 rounded-xl bg-primary/10 border border-primary/20 text-sm text-foreground">
+                {notice}
               </div>
             )}
 
@@ -223,6 +303,41 @@ export default function Login() {
                   ? "Sign in"
                   : "Se connecter"}
             </Button>
+
+            {emailLoginEnabled ? (
+              <div className="space-y-3 border-b border-border/70 pb-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full h-11 rounded-full gap-2"
+                  onClick={handleMagicLogin}
+                  disabled={magicLoading || !emailLooksValid}
+                >
+                  <Mail className="w-4 h-4" />
+                  <span className="text-xs font-medium">
+                    {magicLoading
+                      ? lang === "en"
+                        ? "Sending sign-in link…"
+                        : "Envoi du lien…"
+                      : lang === "en"
+                        ? "Send quick sign-in link"
+                        : "Recevoir un lien de connexion rapide"}
+                  </span>
+                </Button>
+                <p className="text-center text-[11px] text-muted-foreground">
+                  {lang === "en"
+                    ? "Enter your email above to open your session directly from your phone."
+                    : "Entre ton email ci-dessus pour ouvrir ta session directement depuis ton téléphone."}
+                </p>
+                {magicDone ? (
+                  <p className="text-center text-[11px] text-muted-foreground">
+                    {lang === "en"
+                      ? "If the account exists, a sign-in link has been sent to your inbox."
+                      : "Si le compte existe, un lien de connexion a été envoyé dans ta boîte mail."}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="space-y-3 border-t border-border/70 pt-5">
               <Button

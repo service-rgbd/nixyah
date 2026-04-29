@@ -23,6 +23,7 @@ const Explore = lazy(() => import("@/pages/explore"));
 const Vip = lazy(() => import("@/pages/vip"));
 const EventsPage = lazy(() => import("@/pages/events"));
 const EventsNewPage = lazy(() => import("@/pages/events-new"));
+const EventDetailPage = lazy(() => import("@/pages/event-detail"));
 const EventRegistrationsPage = lazy(() => import("@/pages/event-registrations"));
 const ProfileDetail = lazy(() => import("@/pages/profile"));
 const Signup = lazy(() => import("@/pages/signup"));
@@ -135,6 +136,7 @@ function Router() {
       <Route path="/start" component={Start} />
       <Route path="/events" component={EventsPage} />
       <Route path="/events/new" component={EventsNewPage} />
+      <Route path="/events/:id" component={EventDetailPage} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/dashboard/events/:id/registrations" component={EventRegistrationsPage} />
       <Route path="/stories/new" component={StoriesNewPage} />

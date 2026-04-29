@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiFetch, apiRequest } from "@/lib/queryClient";
+import { apiFetch, apiRequest, queryClient, refreshEventSurfaceData } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type MyEvent = {
@@ -203,8 +203,7 @@ export default function EventsNewPage() {
         await apiRequest("POST", "/api/me/events", payload);
       }
 
-      await queryClient.invalidateQueries({ queryKey: ["/api/me/events"] });
-      await queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      await refreshEventSurfaceData(queryClient);
       toast({
         title: editingEvent ? "Évènement mis à jour" : "Évènement créé",
         description:

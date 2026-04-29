@@ -1,5 +1,10 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+const DEFAULT_QUERY_STALE_MS = 30 * 1000;
+const DEFAULT_QUERY_GC_MS = 30 * 60 * 1000;
+const DISCOVERY_QUERY_STALE_MS = 15 * 1000;
+const ACCOUNT_QUERY_STALE_MS = 5 * 1000;
+
 const envApiBaseUrl =
   typeof import.meta !== "undefined" &&
   import.meta.env?.DEV &&
@@ -193,11 +198,96 @@ export const queryClient = new QueryClient({
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
       refetchOnWindowFocus: false,
-      staleTime: Infinity,
+      staleTime: DEFAULT_QUERY_STALE_MS,
+      gcTime: DEFAULT_QUERY_GC_MS,
       retry: false,
     },
     mutations: {
       retry: false,
     },
   },
+});
+
+function matchesApiPrefix(value: string, prefix: string) {
+  return value === prefix || value.startsWith(`${prefix}?`) || value.startsWith(`${prefix}/`);
+}
+
+export async function invalidateApiPrefixes(
+  client: QueryClient,
+  prefixes: string[],
+) {
+  const uniquePrefixes = Array.from(new Set(prefixes.filter(Boolean)));
+  if (uniquePrefixes.length === 0) return;
+
+  await client.invalidateQueries({
+    predicate: (query) => {
+      const firstKey = query.queryKey[0];
+      return (
+        typeof firstKey === "string" &&
+        uniquePrefixes.some((prefix) => matchesApiPrefix(firstKey, prefix))
+      );
+    },
+  });
+}
+
+export async function refreshProfileSurfaceData(
+  client: QueryClient,
+  profileId?: string | null,
+) {
+  await invalidateApiPrefixes(client, [
+    "/api/annonces",
+    "/api/profiles",
+    "/api/stories",
+    "/api/me/account",
+    "/api/me/annonces",
+    "/api/me/stories",
+    profileId ? `/api/profiles/${profileId}` : "",
+  ]);
+}
+
+export async function refreshEventSurfaceData(client: QueryClient) {
+  await invalidateApiPrefixes(client, [
+    "/api/events",
+    "/api/me/events",
+  ]);
+}
+
+queryClient.setQueryDefaults(["/api/annonces"], {
+  staleTime: DISCOVERY_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/profiles"], {
+  staleTime: DISCOVERY_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/stories"], {
+  staleTime: DISCOVERY_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/events"], {
+  staleTime: DISCOVERY_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/me/account"], {
+  staleTime: ACCOUNT_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/me/annonces"], {
+  staleTime: ACCOUNT_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/me/stories"], {
+  staleTime: ACCOUNT_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
+});
+
+queryClient.setQueryDefaults(["/api/me/events"], {
+  staleTime: ACCOUNT_QUERY_STALE_MS,
+  gcTime: DEFAULT_QUERY_GC_MS,
 });
