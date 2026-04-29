@@ -22,6 +22,7 @@ let hasEventsVideoUrlPromise: Promise<boolean> | null = null;
 let hasUsersLoginLinkPromise: Promise<boolean> | null = null;
 let hasUsersDeletionSchedulePromise: Promise<boolean> | null = null;
 let hasUsersTermsAcceptancePromise: Promise<boolean> | null = null;
+let hasUsersSessionTokenInvalidBeforePromise: Promise<boolean> | null = null;
 
 async function hasColumn(tableName: string, columnName: string): Promise<boolean> {
   try {
@@ -180,6 +181,12 @@ export async function hasUsersTermsAcceptanceColumns(): Promise<boolean> {
   if (hasUsersTermsAcceptancePromise) return hasUsersTermsAcceptancePromise;
   hasUsersTermsAcceptancePromise = hasColumn("users", "terms_accepted_at");
   return hasUsersTermsAcceptancePromise;
+}
+
+export async function hasUsersSessionTokenInvalidBeforeColumn(): Promise<boolean> {
+  if (hasUsersSessionTokenInvalidBeforePromise) return hasUsersSessionTokenInvalidBeforePromise;
+  hasUsersSessionTokenInvalidBeforePromise = hasColumn("users", "session_token_invalid_before");
+  return hasUsersSessionTokenInvalidBeforePromise;
 }
 
 

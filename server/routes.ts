@@ -58,6 +58,7 @@ import {
   hasUsersEmailVerificationColumns,
   hasUsersDeletionScheduleColumns,
   hasUsersLoginLinkColumns,
+  hasUsersSessionTokenInvalidBeforeColumn,
   hasUsersTermsAcceptanceColumns,
   hasEventsVideoUrlColumn,
 } from "./db-capabilities";
@@ -288,6 +289,7 @@ export async function registerRoutes(
   const hasUsersEmail = await hasUsersEmailColumn();
   const hasUsersDeletionSchedule = await hasUsersDeletionScheduleColumns();
   const hasUsersLoginLink = await hasUsersLoginLinkColumns();
+  const hasUsersSessionTokenInvalidBefore = await hasUsersSessionTokenInvalidBeforeColumn();
   const hasUsersTermsAcceptance = await hasUsersTermsAcceptanceColumns();
   const hasProfileAttrs = await hasProfilesAttributesColumns();
   const hasUsersEmailVerified = await hasUsersEmailVerificationColumns();
@@ -389,12 +391,6 @@ export async function registerRoutes(
     return origins;
   }
 
-  function hasTrustedCsrfOrigin(req: any): boolean {
-    const requestOrigin = extractOrigin(req.get?.("origin")) || extractOrigin(req.get?.("referer"));
-    if (!requestOrigin) return false;
-    return allowedCsrfOrigins(req).has(requestOrigin);
-  }
-
   function appUrl(path: string, req?: any): string {
     let base = String(env.APP_BASE_URL || "").trim();
     if ((!base || isLocalFrontend(base)) && req) {
@@ -449,6 +445,250 @@ export async function registerRoutes(
     if (key) searchParams.set("key", key);
     if (sourceUrl) searchParams.set("fallbackUrl", sourceUrl);
     return apiUrl(req, `/api/media?${searchParams.toString()}`);
+  }
+
+  function normalizeMediaKey(value: unknown): string | null {
+    const key = String(value ?? "").trim();
+    if (!key || key.length > 255) return null;
+    if (!/^(photo|video)\/\d{4}-\d{2}-\d{2}\/[A-Za-z0-9._-]+$/.test(key)) return null;
+    return key;
+  }
+
+  function buildPublicMediaUrl(key: string): string | null {
+    const publicBase = String(env.R2_PUBLIC_BASE_URL ?? "").trim().replace(/\/+$/, "");
+    return publicBase ? `${publicBase}/${key}` : null;
+  }
+
+  function getAllowedMediaOrigins(req: any): Set<string> {
+    const origins = new Set<string>();
+    const pushOrigin = (candidate: string | null | undefined) => {
+      const origin = extractOrigin(candidate);
+      if (origin) origins.add(origin);
+    };
+
+    allowedCsrfOrigins(req).forEach((origin) => origins.add(origin));
+    pushOrigin(apiBaseUrl(req));
+    pushOrigin(appUrl("/", req));
+    pushOrigin(env.R2_PUBLIC_BASE_URL);
+
+    return origins;
+  }
+
+  function getAllowedMediaFallbackUrl(req: any, rawUrl: string | null | undefined): string | null {
+    const url = sanitizeUrl(rawUrl);
+    if (!url) return null;
+    try {
+      const parsed = new URL(url);
+      return getAllowedMediaOrigins(req).has(parsed.origin) ? parsed.toString() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function hasReadableMediaReference(req: any, key: string): Promise<boolean> {
+    const profileId = String(req.session?.profileId ?? "").trim() || null;
+    const publicUrl = buildPublicMediaUrl(key);
+    const keyLike = `%/${key}`;
+
+    const exists = async (query: any) => {
+      const result = await db.execute(query);
+      return (((result as any)?.rows ?? []) as any[]).length > 0;
+    };
+
+    if (profileId) {
+      if (
+        await exists(
+          sql`select 1 from ${profiles}
+              where ${profiles.id} = ${profileId}
+                and (
+                  ${profiles.photoKey} = ${key}
+                  or ${profiles.photoUrl} = ${publicUrl}
+                  or ${profiles.photoUrl} like ${keyLike}
+                )
+              limit 1`,
+        )
+      ) {
+        return true;
+      }
+
+      if (
+        hasProfileMedia &&
+        (await exists(
+          sql`select 1 from ${profileMedia}
+              where ${profileMedia.profileId} = ${profileId}
+                and (
+                  ${profileMedia.key} = ${key}
+                  or ${profileMedia.url} = ${publicUrl}
+                  or ${profileMedia.url} like ${keyLike}
+                )
+              limit 1`,
+        ))
+      ) {
+        return true;
+      }
+
+      if (
+        hasStories &&
+        (await exists(
+          sql`select 1 from ${stories}
+              where ${stories.profileId} = ${profileId}
+                and (
+                  ${stories.mediaKey} = ${key}
+                  or ${stories.mediaUrl} = ${publicUrl}
+                  or ${stories.mediaUrl} like ${keyLike}
+                )
+              limit 1`,
+        ))
+      ) {
+        return true;
+      }
+
+      if (
+        await exists(
+          sql`select 1 from ${events}
+              where ${events.ownerProfileId} = ${profileId}
+                and (
+                  ${events.imageUrl} = ${publicUrl}
+                  or ${events.imageUrl} like ${keyLike}
+                  ${hasEventsVideoUrl
+                    ? sql`or ${events.videoUrl} = ${publicUrl}
+                           or ${events.videoUrl} like ${keyLike}`
+                    : sql``}
+                  or exists (
+                    select 1
+                    from unnest(coalesce(${events.imageUrls}, array[]::text[])) as media_url
+                    where media_url = ${publicUrl}
+                      or media_url like ${keyLike}
+                  )
+                )
+              limit 1`,
+        )
+      ) {
+        return true;
+      }
+
+      if (
+        await exists(
+          sql`select 1 from ${adultProductsTable}
+              where ${(adultProductsTable as any).ownerProfileId} = ${profileId}
+                and (
+                  ${adultProductsTable.imageUrl} = ${publicUrl}
+                  or ${adultProductsTable.imageUrl} like ${keyLike}
+                )
+              limit 1`,
+        )
+      ) {
+        return true;
+      }
+    }
+
+    if (
+      await exists(
+        sql`select 1 from ${profiles}
+            where ${hasProfilesVisibility ? sql`${profiles.visible} = true and` : sql``}
+              (
+                ${profiles.photoKey} = ${key}
+                or ${profiles.photoUrl} = ${publicUrl}
+                or ${profiles.photoUrl} like ${keyLike}
+              )
+            limit 1`,
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      hasProfileMedia &&
+      (await exists(
+        sql`select 1
+            from ${profileMedia} pm
+            inner join ${profiles} p on p.id = pm.profile_id
+            where ${hasProfilesVisibility ? sql`p.visible = true and` : sql``}
+              (
+                pm.key = ${key}
+                or pm.url = ${publicUrl}
+                or pm.url like ${keyLike}
+              )
+            limit 1`,
+      ))
+    ) {
+      return true;
+    }
+
+    if (
+      hasStories &&
+      (await exists(
+        sql`select 1 from ${stories}
+            where ${stories.active} = true
+              and ${stories.visibility} = 'public'
+              and (
+                ${stories.mediaKey} = ${key}
+                or ${stories.mediaUrl} = ${publicUrl}
+                or ${stories.mediaUrl} like ${keyLike}
+              )
+            limit 1`,
+      ))
+    ) {
+      return true;
+    }
+
+    if (
+      await exists(
+        sql`select 1 from ${events}
+            where ${events.status} = 'published'
+              and ${events.visibility} = 'public'
+              and (
+                ${events.imageUrl} = ${publicUrl}
+                or ${events.imageUrl} like ${keyLike}
+                ${hasEventsVideoUrl
+                  ? sql`or ${events.videoUrl} = ${publicUrl}
+                         or ${events.videoUrl} like ${keyLike}`
+                  : sql``}
+                or exists (
+                  select 1
+                  from unnest(coalesce(${events.imageUrls}, array[]::text[])) as media_url
+                  where media_url = ${publicUrl}
+                    or media_url like ${keyLike}
+                )
+              )
+            limit 1`,
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      await exists(
+        sql`select 1 from ${adultProductsTable}
+            where ${adultProductsTable.active} = true
+              and (
+                ${adultProductsTable.imageUrl} = ${publicUrl}
+                or ${adultProductsTable.imageUrl} like ${keyLike}
+              )
+            limit 1`,
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      hasSalons &&
+      (await exists(
+        sql`select 1 from ${salons}
+            where ${salons.active} = true
+              and exists (
+                select 1
+                from unnest(coalesce(${salons.mediaUrls}, array[]::text[])) as media_url
+                where media_url = ${publicUrl}
+                  or media_url like ${keyLike}
+              )
+            limit 1`,
+      ))
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   function resolveStoryMedia(req: any, row: { mediaUrl?: string | null; mediaKey?: string | null }): string | null {
@@ -512,6 +752,7 @@ export async function registerRoutes(
 
   const SESSION_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const SESSION_TOKEN_TTL_MS = SESSION_COOKIE_MAX_AGE_MS;
+  const identifierThrottleStore = new Map<string, { count: number; resetAt: number }>();
 
   function getSessionSecret(): string {
     return process.env.SECRET_TOKEN || process.env.SESSION_SECRET || "dev-secret";
@@ -573,11 +814,13 @@ export async function registerRoutes(
   }
 
   function createSessionToken(auth: { userId: string; profileId: string }): string {
+    const issuedAt = Date.now();
     const payload = Buffer.from(
       JSON.stringify({
         userId: auth.userId,
         profileId: auth.profileId,
-        exp: Date.now() + SESSION_TOKEN_TTL_MS,
+        iat: issuedAt,
+        exp: issuedAt + SESSION_TOKEN_TTL_MS,
       }),
       "utf8",
     ).toString("base64url");
@@ -585,7 +828,9 @@ export async function registerRoutes(
     return `${payload}.${signature}`;
   }
 
-  function readSessionToken(token: string | null | undefined): { userId: string; profileId: string } | null {
+  function readSessionToken(
+    token: string | null | undefined,
+  ): { userId: string; profileId: string; issuedAt: number } | null {
     const raw = String(token ?? "").trim();
     if (!raw) return null;
     const [payload, signature] = raw.split(".");
@@ -600,11 +845,15 @@ export async function registerRoutes(
       const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
         userId?: string;
         profileId?: string;
+        iat?: number;
         exp?: number;
       };
       if (!decoded?.userId || !decoded?.profileId || !decoded?.exp) return null;
-      if (Number(decoded.exp) <= Date.now()) return null;
-      return { userId: String(decoded.userId), profileId: String(decoded.profileId) };
+      const expiresAt = Number(decoded.exp);
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
+      const issuedAt = Number(decoded.iat ?? expiresAt - SESSION_TOKEN_TTL_MS);
+      if (!Number.isFinite(issuedAt) || issuedAt <= 0) return null;
+      return { userId: String(decoded.userId), profileId: String(decoded.profileId), issuedAt };
     } catch {
       return null;
     }
@@ -675,11 +924,24 @@ export async function registerRoutes(
     res.redirect(url);
   }
 
-  app.use((req, _res, next) => {
+  app.use(async (req, _res, next) => {
     if (req.session?.userId && req.session?.profileId) return next();
     const token = String(req.get?.("x-session-token") ?? "").trim();
     const auth = readSessionToken(token);
     if (!auth || !req.session) return next();
+    if (hasUsersSessionTokenInvalidBefore) {
+      const [userRow] = await db
+        .select({
+          sessionTokenInvalidBefore: (users as any).sessionTokenInvalidBefore as any,
+        })
+        .from(users)
+        .where(eq(users.id, auth.userId))
+        .limit(1);
+      const invalidBefore = (userRow as any)?.sessionTokenInvalidBefore as Date | null | undefined;
+      if (invalidBefore && new Date(invalidBefore).getTime() >= auth.issuedAt) {
+        return next();
+      }
+    }
     req.session.userId = auth.userId;
     req.session.profileId = auth.profileId;
     req.session.csrfToken = csrfTokenFromSessionToken(token);
@@ -693,7 +955,13 @@ export async function registerRoutes(
 
   async function requireTurnstile(req: any, res: any, token: unknown): Promise<boolean> {
     const secret = (env as any).TURNSTILE_SECRET_KEY as string | undefined;
-    if (!secret) return true; // disabled / not configured
+    if (!secret) {
+      if (process.env.NODE_ENV === "production") {
+        res.status(503).json({ message: "Validation anti-bot indisponible pour le moment." });
+        return false;
+      }
+      return true;
+    }
 
     const t = typeof token === "string" ? token.trim() : "";
     if (!t) {
@@ -753,6 +1021,31 @@ export async function registerRoutes(
 
   function generateToken(): string {
     return crypto.randomBytes(32).toString("hex");
+  }
+
+  function checkIdentifierRateLimit(kind: string, rawIdentifier: string, max: number, windowMs: number) {
+    const identifier = rawIdentifier.trim().toLowerCase();
+    if (!identifier) return { allowed: true, retryAfterSec: 0 };
+
+    const now = Date.now();
+    const key = `${kind}:${identifier}`;
+    const entry = identifierThrottleStore.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      identifierThrottleStore.set(key, { count: 1, resetAt: now + windowMs });
+      return { allowed: true, retryAfterSec: 0 };
+    }
+
+    if (entry.count >= max) {
+      return {
+        allowed: false,
+        retryAfterSec: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)),
+      };
+    }
+
+    entry.count += 1;
+    identifierThrottleStore.set(key, entry);
+    return { allowed: true, retryAfterSec: 0 };
   }
 
   async function getPaystackTransaction(reference: string) {
@@ -1404,6 +1697,28 @@ export async function registerRoutes(
     });
   }
 
+  async function revokeUserSessions(userId: string, opts?: { invalidateSessionToken?: boolean }) {
+    if (!userId) return;
+
+    if (hasUsersSessionTokenInvalidBefore && opts?.invalidateSessionToken !== false) {
+      await db
+        .update(users as any)
+        .set({
+          sessionTokenInvalidBefore: new Date(),
+        })
+        .where(eq(users.id, userId));
+    }
+
+    try {
+      await db.execute(sql`
+        delete from user_sessions
+        where (sess::jsonb ->> 'userId') = ${userId}
+      `);
+    } catch (error) {
+      console.warn("Failed to revoke persisted sessions for user", userId, error);
+    }
+  }
+
   async function purgeExpiredScheduledAccountDeletions(force = false) {
     if (!hasUsersDeletionSchedule) return;
     const now = Date.now();
@@ -1471,17 +1786,7 @@ export async function registerRoutes(
   }
 
   function getClientIp(req: any): string | null {
-    const xfwd = req.headers?.["x-forwarded-for"];
-    if (typeof xfwd === "string" && xfwd.length > 0) {
-      const first = xfwd.split(",")[0]?.trim();
-      if (first) return first;
-    }
-    if (Array.isArray(xfwd) && xfwd[0]) {
-      return String(xfwd[0]).split(",")[0]?.trim() || null;
-    }
-    const ip = (req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress) as
-      | string
-      | undefined;
+    const ip = (req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress) as string | undefined;
     if (!ip) return null;
     // Strip IPv6 prefix if contained
     if (ip.startsWith("::ffff:")) return ip.substring(7);
@@ -1734,10 +2039,6 @@ export async function registerRoutes(
     const provided = String(req.get("x-csrf-token") ?? "").trim();
 
     if (expected && provided && expected === provided) {
-      return next();
-    }
-
-    if (hasTrustedCsrfOrigin(req)) {
       return next();
     }
 
@@ -2259,6 +2560,7 @@ export async function registerRoutes(
         .where(
           and(
             eq(events.status, "published"),
+            eq(events.visibility, "public"),
             or(
               gt(events.endsAt, now),
               and(isNull(events.endsAt), gt(events.startsAt, now)),
@@ -2295,6 +2597,8 @@ export async function registerRoutes(
     "/api/events/:id",
     asyncHandler(async (req, res) => {
       const id = z.string().uuid().parse(req.params.id);
+      const sessionProfileId = req.session?.profileId as string | undefined;
+      const admin = await isAdmin(req);
       const [row] = await db
         .select({
           id: events.id,
@@ -2328,7 +2632,16 @@ export async function registerRoutes(
         })
         .from(events)
         .innerJoin(profiles, eq(events.ownerProfileId, profiles.id))
-        .where(and(eq(events.id, id), eq(events.status, "published")))
+        .where(
+          and(
+            eq(events.id, id),
+            eq(events.status, "published"),
+            or(
+              eq(events.visibility, "public"),
+              admin ? sql`true` : sessionProfileId ? eq(events.ownerProfileId, sessionProfileId) : sql`false`,
+            ),
+          ),
+        )
         .limit(1);
 
       if (!row) return res.status(404).json({ message: "Évènement introuvable" });
@@ -2644,8 +2957,17 @@ export async function registerRoutes(
         if (!eventRow || eventRow.status !== "published") {
           throw Object.assign(new Error("Évènement introuvable"), { status: 404 });
         }
+        if (eventRow.visibility !== "public") {
+          throw Object.assign(new Error("Évènement introuvable"), { status: 404 });
+        }
         if (new Date(eventRow.startsAt).getTime() <= Date.now()) {
           throw Object.assign(new Error("Les inscriptions sont closes pour cet évènement."), { status: 400 });
+        }
+        if (eventRow.priceType === "paid") {
+          throw Object.assign(
+            new Error("Les inscriptions automatiques aux évènements payants ne sont pas disponibles en ligne."),
+            { status: 403 },
+          );
         }
 
         const [existing] = await tx
@@ -2807,14 +3129,45 @@ export async function registerRoutes(
     asyncHandler(async (req, res) => {
       const payload = z
         .object({
-          eventId: z.string().min(2).max(80),
-          eventTitle: z.string().min(2).max(180),
-          eventDate: z.string().min(4).max(40),
+          eventId: z.string().uuid(),
+          eventTitle: z.string().min(2).max(180).optional(),
+          eventDate: z.string().min(4).max(40).optional(),
           name: z.string().min(2).max(80),
           contact: z.string().min(3).max(120),
           message: z.string().max(800).optional().nullable(),
         })
         .parse(req.body);
+
+      const [eventRow] = await db
+        .select({
+          id: events.id,
+          title: events.title,
+          startsAt: events.startsAt,
+          status: events.status,
+          visibility: events.visibility,
+          priceType: events.priceType,
+        })
+        .from(events)
+        .where(eq(events.id, payload.eventId))
+        .limit(1);
+
+      if (!eventRow || eventRow.status !== "published" || eventRow.visibility !== "public") {
+        return res.status(404).json({ message: "Évènement introuvable" });
+      }
+      if (new Date(eventRow.startsAt).getTime() <= Date.now()) {
+        return res.status(400).json({ message: "Les inscriptions sont closes pour cet évènement." });
+      }
+      if (eventRow.priceType === "paid") {
+        return res.status(403).json({
+          message: "Les demandes automatiques pour les évènements payants ne sont pas disponibles en ligne.",
+        });
+      }
+
+      const safeTitle = escapeHtml(eventRow.title);
+      const safeDate = escapeHtml(new Date(eventRow.startsAt).toLocaleString("fr-FR"));
+      const safeName = escapeHtml(payload.name);
+      const safeContact = escapeHtml(payload.contact);
+      const safeMessage = escapeHtml(payload.message || "—");
 
       const adminEmail = env.ADMIN_EMAIL ?? null;
 
@@ -2823,19 +3176,19 @@ export async function registerRoutes(
         await resend.emails.send({
           from: resendFrom,
           to: adminEmail,
-          subject: `RSVP évènement – ${payload.eventTitle}`,
+          subject: `RSVP évènement – ${eventRow.title}`,
           html: `
             <p><strong>Nouvelle demande de participation</strong></p>
-            <p><strong>Évènement</strong>: ${payload.eventTitle}</p>
-            <p><strong>Date</strong>: ${payload.eventDate}</p>
-            <p><strong>Nom</strong>: ${payload.name}</p>
-            <p><strong>Contact</strong>: ${payload.contact}</p>
-            <p><strong>Message</strong>: ${String(payload.message ?? "").replace(/</g, "&lt;") || "—"}</p>
+            <p><strong>Évènement</strong>: ${safeTitle}</p>
+            <p><strong>Date</strong>: ${safeDate}</p>
+            <p><strong>Nom</strong>: ${safeName}</p>
+            <p><strong>Contact</strong>: ${safeContact}</p>
+            <p><strong>Message</strong>: ${safeMessage}</p>
           `,
           text:
             `Nouvelle demande de participation\n\n` +
-            `Évènement: ${payload.eventTitle}\n` +
-            `Date: ${payload.eventDate}\n` +
+            `Évènement: ${eventRow.title}\n` +
+            `Date: ${new Date(eventRow.startsAt).toLocaleString("fr-FR")}\n` +
             `Nom: ${payload.name}\n` +
             `Contact: ${payload.contact}\n` +
             `Message: ${payload.message ?? "—"}\n`,
@@ -2847,20 +3200,20 @@ export async function registerRoutes(
           await resend.emails.send({
             from: resendFrom,
             to: payload.contact,
-            subject: `Confirmation – ${payload.eventTitle}`,
+            subject: `Confirmation – ${eventRow.title}`,
             html: `
-              <p>Bonjour ${payload.name},</p>
+              <p>Bonjour ${safeName},</p>
               <p>Ta demande de participation est bien enregistrée.</p>
-              <p><strong>Évènement</strong>: ${payload.eventTitle}<br/>
-              <strong>Date</strong>: ${payload.eventDate}</p>
+              <p><strong>Évènement</strong>: ${safeTitle}<br/>
+              <strong>Date</strong>: ${safeDate}</p>
               <p>Nous te contacterons avant la date pour confirmer les détails.</p>
               <p>— L'équipe NIXYAH</p>
             `,
             text:
               `Bonjour ${payload.name},\n\n` +
               `Ta demande de participation est bien enregistrée.\n` +
-              `Évènement: ${payload.eventTitle}\n` +
-              `Date: ${payload.eventDate}\n\n` +
+              `Évènement: ${eventRow.title}\n` +
+              `Date: ${new Date(eventRow.startsAt).toLocaleString("fr-FR")}\n\n` +
               `Nous te contacterons avant la date pour confirmer les détails.\n` +
               `— L'équipe NIXYAH\n`,
           });
@@ -2945,6 +3298,10 @@ export async function registerRoutes(
 
       const ident = payload.identifier.trim();
       const identLower = ident.toLowerCase();
+      const forgotLimit = checkIdentifierRateLimit("password-forgot", identLower, 6, 15 * 60_000);
+      if (!forgotLimit.allowed) {
+        return res.json({ ok: true, throttled: true });
+      }
 
       const [u] = await db
         .select({
@@ -3024,6 +3381,8 @@ export async function registerRoutes(
         })
         .where(eq(users.id, u.id));
 
+      await revokeUserSessions(u.id);
+
       res.json({ ok: true });
     }),
   );
@@ -3052,6 +3411,8 @@ export async function registerRoutes(
       if (!updated) {
         return res.status(404).json({ message: "Compte introuvable." });
       }
+
+      await revokeUserSessions(userId);
 
       await new Promise<void>((resolve) => {
         if (!req.session?.destroy) {
@@ -3090,6 +3451,10 @@ export async function registerRoutes(
         .parse(req.body);
 
       const email = payload.email.trim().toLowerCase();
+      const emailLinkLimit = checkIdentifierRateLimit("login-email-link", email, 6, 15 * 60_000);
+      if (!emailLinkLimit.allowed) {
+        return res.json({ ok: true, throttled: true });
+      }
       const [u] = await db
         .select({
           id: users.id,
@@ -3147,22 +3512,72 @@ export async function registerRoutes(
       const now = new Date();
 
       const [u] = await db
-        .select({
+        .update(users as any)
+        .set({
+          loginLinkToken: null,
+          loginLinkExpiresAt: null,
+          loginLinkSentAt: null,
+        })
+        .where(
+          and(
+            or(
+              eq((users as any).loginLinkToken, token),
+              eq((users as any).loginLinkToken, tokenHash),
+            ),
+            or(
+              isNull((users as any).loginLinkExpiresAt),
+              sql`${(users as any).loginLinkExpiresAt} >= ${now}`,
+            ),
+          ),
+        )
+        .returning({
           id: users.id,
           loginLinkExpiresAt: (users as any).loginLinkExpiresAt,
           deleteScheduledAt:
             hasUsersDeletionSchedule ? ((users as any).deleteScheduledAt as any) : (sql<Date | null>`null` as any),
-        })
-        .from(users)
-        .where(
-          or(
-            eq((users as any).loginLinkToken, token),
-            eq((users as any).loginLinkToken, tokenHash),
-          ),
-        )
-        .limit(1);
+        });
 
       if (!u) {
+        const [stale] = await db
+          .select({
+            id: users.id,
+            loginLinkExpiresAt: (users as any).loginLinkExpiresAt,
+            deleteScheduledAt:
+              hasUsersDeletionSchedule ? ((users as any).deleteScheduledAt as any) : (sql<Date | null>`null` as any),
+          })
+          .from(users)
+          .where(
+            or(
+              eq((users as any).loginLinkToken, token),
+              eq((users as any).loginLinkToken, tokenHash),
+            ),
+          )
+          .limit(1);
+
+        if (!stale) {
+          return res.redirect(appUrl("/login?magic=invalid", req));
+        }
+
+        const staleDeletionScheduledAt = (stale as any).deleteScheduledAt as Date | null | undefined;
+        if (staleDeletionScheduledAt && new Date(staleDeletionScheduledAt).getTime() <= Date.now()) {
+          await db.delete(users as any).where(eq(users.id, stale.id));
+          return res.redirect(appUrl("/login?account=deleted", req));
+        }
+
+        await db
+          .update(users as any)
+          .set({
+            loginLinkToken: null,
+            loginLinkExpiresAt: null,
+            loginLinkSentAt: null,
+          })
+          .where(eq(users.id, stale.id));
+
+        const staleExpiresAt = (stale as any).loginLinkExpiresAt as Date | null | undefined;
+        if (staleExpiresAt && staleExpiresAt < now) {
+          return res.redirect(appUrl("/login?magic=expired", req));
+        }
+
         return res.redirect(appUrl("/login?magic=invalid", req));
       }
 
@@ -3196,15 +3611,6 @@ export async function registerRoutes(
       }
 
       await cancelScheduledDeletionIfAny(u.id);
-
-      await db
-        .update(users as any)
-        .set({
-          loginLinkToken: null,
-          loginLinkExpiresAt: null,
-          loginLinkSentAt: null,
-        })
-        .where(eq(users.id, u.id));
 
       await establishAuthenticatedSession(req, res, { userId: u.id, profileId: p.id });
       await logIpEvent({ req, kind: "login_success", userId: u.id });
@@ -3653,12 +4059,14 @@ export async function registerRoutes(
   app.get(
     "/api/media",
     asyncHandler(async (req, res) => {
-      const key = z
+      const rawKey = z
         .string()
         .optional()
         .transform((value) => value?.trim() || "")
         .parse(req.query.key);
-      const fallbackUrl = sanitizeUrl(
+      const key = normalizeMediaKey(rawKey);
+      const fallbackUrl = getAllowedMediaFallbackUrl(
+        req,
         z
           .string()
           .optional()
@@ -3670,7 +4078,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Missing media reference" });
       }
 
-      if (key && (await hasObjectInR2(key))) {
+      if (key && (await hasReadableMediaReference(req, key)) && (await hasObjectInR2(key))) {
         const signedUrl = await createPresignedRead(key, 60 * 60);
         return res.redirect(signedUrl);
       }
@@ -3703,6 +4111,12 @@ export async function registerRoutes(
 
       const identifier = payload.username.trim();
       const identLower = identifier.toLowerCase();
+      const loginLimit = checkIdentifierRateLimit("login", identLower, 12, 15 * 60_000);
+      if (!loginLimit.allowed) {
+        await logIpEvent({ req, kind: "login_identifier_rate_limited" });
+        res.setHeader("Retry-After", String(loginLimit.retryAfterSec));
+        return res.status(429).json({ message: "Trop de tentatives. Réessaie un peu plus tard." });
+      }
       const [u] = await db
         .select({
           id: users.id,
@@ -3877,7 +4291,7 @@ export async function registerRoutes(
       let created;
       try {
         created = await db.transaction(async (tx) => {
-          const accountType = payload.accountType ?? "profile";
+          const accountType = payload.accountType === "adult_shop" ? "adult_shop" : "profile";
           const defaultPhotoUrl = payload.photoUrl ?? getDefaultProfilePhotoUrl(accountType, req);
           const userValues: any = {
             username,
@@ -4011,9 +4425,9 @@ export async function registerRoutes(
       const payload = z
         .object({
           productId: z.string().min(1),
-          productName: z.string().min(1),
-          price: z.string().min(1),
-          size: z.string().min(1),
+          productName: z.string().min(1).optional(),
+          price: z.string().min(1).optional(),
+          size: z.string().min(1).optional(),
           phone: z.string().min(6).max(32),
           address: z.string().min(4).max(256),
           deliveryTime: z.string().min(2).max(64),
@@ -4032,18 +4446,45 @@ export async function registerRoutes(
       }
 
       const profileId = req.session?.profileId as string | undefined;
+      const [product] = await db
+        .select({
+          id: adultProductsTable.id,
+          name: adultProductsTable.name,
+          price: adultProductsTable.price,
+          size: adultProductsTable.size,
+          stockQty: adultProductsTable.stockQty,
+          active: adultProductsTable.active,
+        })
+        .from(adultProductsTable)
+        .where(and(eq(adultProductsTable.id, payload.productId), eq(adultProductsTable.active, true)))
+        .limit(1);
+
+      if (!product) {
+        return res.status(404).json({ message: "Produit introuvable ou indisponible." });
+      }
+      if (Number(product.stockQty ?? 0) <= 0) {
+        return res.status(409).json({ message: "Ce produit n'est plus disponible actuellement." });
+      }
+
+      const productName = String(product.name);
+      const productPrice = String(product.price);
+      const productSize = String(product.size ?? payload.size ?? "Standard");
+      const phone = payload.phone.trim();
+      const address = payload.address.trim();
+      const deliveryTime = payload.deliveryTime.trim();
+      const note = payload.note?.trim() || null;
 
       const textLines = [
-        "🧾 *Nouvelle commande produit adulte*",
+        "Nouvelle commande produit",
         "",
-        `• Produit: ${payload.productName} (${payload.productId})`,
-        `• Prix: ${payload.price} — ${payload.size}`,
+        `• Produit: ${productName} (${payload.productId})`,
+        `• Prix: ${productPrice} — ${productSize}`,
         "",
-        `• Téléphone: ${payload.phone}`,
-        `• Adresse: ${payload.address}`,
-        `• Heure de livraison souhaitée: ${payload.deliveryTime}`,
+        `• Téléphone: ${phone}`,
+        `• Adresse: ${address}`,
+        `• Heure de livraison souhaitée: ${deliveryTime}`,
         `• Paiement: ${payload.paymentMethod === "delivery" ? "À la livraison" : "Direct (inscrit)"}`,
-        payload.note ? `• Note client: ${payload.note}` : null,
+        note ? `• Note client: ${note}` : null,
         "",
         userId ? `• userId: ${userId}` : "• userId: anonyme",
         profileId ? `• profileId: ${profileId}` : "• profileId: inconnu",
@@ -4059,7 +4500,6 @@ export async function registerRoutes(
         const body = new URLSearchParams({
           chat_id: env.TELEGRAM_CHAT_ID,
           text,
-          parse_mode: "Markdown",
         });
         const tgRes = await fetch(url, {
           method: "POST",
@@ -4083,20 +4523,20 @@ export async function registerRoutes(
           .send({
             from: resendFrom,
             to: "customer@nixyah.com",
-            subject: `Nouvelle commande: ${payload.productName}`,
+            subject: `Nouvelle commande: ${productName}`,
             html: renderEmailLayout({
               title: "Nouvelle commande produit",
               intro: "Une commande vient d’être passée depuis la boutique énergie et produits masculins.",
               body:
-                `<strong>Produit</strong>: ${payload.productName} (${payload.productId})<br />` +
-                `<strong>Prix</strong>: ${payload.price} — ${payload.size}<br />` +
-                `<strong>Téléphone</strong>: ${payload.phone}<br />` +
-                `<strong>Adresse</strong>: ${payload.address}<br />` +
-                `<strong>Heure souhaitée</strong>: ${payload.deliveryTime}<br />` +
+                `<strong>Produit</strong>: ${escapeHtml(productName)} (${escapeHtml(payload.productId)})<br />` +
+                `<strong>Prix</strong>: ${escapeHtml(productPrice)} — ${escapeHtml(productSize)}<br />` +
+                `<strong>Téléphone</strong>: ${escapeHtml(phone)}<br />` +
+                `<strong>Adresse</strong>: ${escapeHtml(address)}<br />` +
+                `<strong>Heure souhaitée</strong>: ${escapeHtml(deliveryTime)}<br />` +
                 `<strong>Paiement</strong>: ${payload.paymentMethod === "delivery" ? "À la livraison" : "Direct"}<br />` +
-                `${payload.note ? `<strong>Note client</strong>: ${payload.note}<br />` : ""}` +
-                `<strong>Utilisateur</strong>: ${userId ?? "anonyme"}<br />` +
-                `<strong>Profil</strong>: ${profileId ?? "inconnu"}`,
+                `${note ? `<strong>Note client</strong>: ${escapeHtml(note)}<br />` : ""}` +
+                `<strong>Utilisateur</strong>: ${escapeHtml(userId ?? "anonyme")}<br />` +
+                `<strong>Profil</strong>: ${escapeHtml(profileId ?? "inconnu")}`,
               buttonLabel: "Ouvrir l’administration",
               buttonUrl: appUrl("/admin"),
               logoUrl: appUrl("/favicon.png"),
@@ -4104,13 +4544,13 @@ export async function registerRoutes(
             }),
             text:
               `Nouvelle commande produit\n\n` +
-              `Produit: ${payload.productName} (${payload.productId})\n` +
-              `Prix: ${payload.price} — ${payload.size}\n` +
-              `Téléphone: ${payload.phone}\n` +
-              `Adresse: ${payload.address}\n` +
-              `Heure souhaitée: ${payload.deliveryTime}\n` +
+              `Produit: ${productName} (${payload.productId})\n` +
+              `Prix: ${productPrice} — ${productSize}\n` +
+              `Téléphone: ${phone}\n` +
+              `Adresse: ${address}\n` +
+              `Heure souhaitée: ${deliveryTime}\n` +
               `Paiement: ${payload.paymentMethod === "delivery" ? "À la livraison" : "Direct"}\n` +
-              `${payload.note ? `Note client: ${payload.note}\n` : ""}` +
+              `${note ? `Note client: ${note}\n` : ""}` +
               `Utilisateur: ${userId ?? "anonyme"}\n` +
               `Profil: ${profileId ?? "inconnu"}\n`,
           })
