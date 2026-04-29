@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ImagePlus, X } from "lucide-react";
+import { ArrowLeft, ImagePlus, Video, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,7 @@ type MyEvent = {
   contactEmail?: string | null;
   imageUrl?: string | null;
   imageUrls?: string[] | null;
+  videoUrl?: string | null;
   status: "draft" | "published" | "cancelled";
 };
 
@@ -70,6 +71,9 @@ export default function EventsNewPage() {
   const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
+  const [existingVideoUrl, setExistingVideoUrl] = useState<string | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<"draft" | "published">("published");
   const [legalNoticeAccepted, setLegalNoticeAccepted] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -90,7 +94,9 @@ export default function EventsNewPage() {
     setContactEmail(editingEvent.contactEmail ?? "");
     setStatus(editingEvent.status === "cancelled" ? "draft" : editingEvent.status);
     setExistingImageUrls(Array.from(new Set([editingEvent.imageUrl, ...(editingEvent.imageUrls ?? [])].filter(Boolean) as string[])).slice(0, 2));
+    setExistingVideoUrl(editingEvent.videoUrl ?? null);
     setPhotoFiles([]);
+    setVideoFile(null);
   }, [editingEvent]);
 
   useEffect(() => {
@@ -101,12 +107,25 @@ export default function EventsNewPage() {
     };
   }, [photoFiles]);
 
-  const displayedImages = photoPreviews.length ? photoPreviews : existingImageUrls;
+  useEffect(() => {
+    if (!videoFile) {
+      setVideoPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(videoFile);
+    setVideoPreview(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [videoFile]);
 
-  async function uploadPhoto(file: File) {
+  const displayedImages = photoPreviews.length ? photoPreviews : existingImageUrls;
+  const displayedVideo = videoPreview ?? existingVideoUrl;
+
+  async function uploadMedia(file: File, kind: "photo" | "video") {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("kind", "photo");
+    formData.append("kind", kind);
 
     const res = await apiFetch("/api/uploads/direct", {
       method: "POST",
@@ -114,7 +133,7 @@ export default function EventsNewPage() {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(text || "Impossible d'envoyer cette photo.");
+      throw new Error(text || (kind === "video" ? "Impossible d'envoyer cette vidéo." : "Impossible d'envoyer cette photo."));
     }
     const json = (await res.json()) as { publicUrl?: string; viewUrl?: string };
     return json.publicUrl ?? json.viewUrl ?? "";
@@ -125,6 +144,14 @@ export default function EventsNewPage() {
     setPhotoFiles(picked);
     if (picked.length) {
       setExistingImageUrls([]);
+    }
+  };
+
+  const onPickVideo = (files: FileList | null) => {
+    const picked = Array.from(files ?? []).find((file) => file.type.startsWith("video/")) ?? null;
+    setVideoFile(picked);
+    if (picked) {
+      setExistingVideoUrl(null);
     }
   };
 
@@ -142,15 +169,18 @@ export default function EventsNewPage() {
     try {
       const imageUrls = photoFiles.length
         ? (
-            await Promise.all(photoFiles.slice(0, 2).map((file) => uploadPhoto(file)))
+            await Promise.all(photoFiles.slice(0, 2).map((file) => uploadMedia(file, "photo")))
           ).filter(Boolean)
         : existingImageUrls.slice(0, 2);
+      const videoUrl = videoFile
+        ? await uploadMedia(videoFile, "video")
+        : existingVideoUrl;
 
       const payload = {
-        title,
-        description: description || null,
-        city,
-        venue: venue || null,
+        title: title.trim(),
+        description: description.trim() || null,
+        city: city.trim(),
+        venue: venue.trim() || null,
         startsAt: new Date(startsAt).toISOString(),
         endsAt: endsAt ? new Date(endsAt).toISOString() : null,
         visibility,
@@ -158,10 +188,11 @@ export default function EventsNewPage() {
         priceAmount: priceType === "paid" ? Number(priceAmount || 0) : 0,
         priceCurrency: "XOF",
         capacity: capacity ? Number(capacity) : null,
-        contactWhatsapp: contactWhatsapp || null,
-        contactEmail: contactEmail || null,
+        contactWhatsapp: contactWhatsapp.trim() || null,
+        contactEmail: contactEmail.trim().toLowerCase() || null,
         imageUrl: imageUrls[0] || null,
         imageUrls,
+        videoUrl: videoUrl || null,
         legalNoticeAccepted: true,
         status,
       };
@@ -203,7 +234,7 @@ export default function EventsNewPage() {
               {editingEvent ? "Modifier l’évènement" : "Créer un évènement"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              La première publication d’évènement est gratuite pour les profils autorisés, puis chaque annonce coûte 5 crédits. Tout est saisi directement sur la page, avec jusqu’à 2 photos pour présenter la soirée.
+              La première publication d’évènement est gratuite pour les profils autorisés, puis chaque annonce coûte 5 crédits. Ajoute jusqu’à 2 photos et une courte vidéo d’illustration pour présenter l’ambiance.
             </p>
           </div>
 
@@ -333,6 +364,53 @@ export default function EventsNewPage() {
                     />
                   ))}
                 </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-4 border-b border-border/70 pb-6">
+              <div>
+                <Label>Courte vidéo d’illustration</Label>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Ajoute une vidéo courte pour montrer l’ambiance générale de l’évènement.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  id="event-video"
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={(e) => onPickVideo(e.target.files)}
+                />
+                <label htmlFor="event-video">
+                  <span className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border px-4 py-2 text-sm text-foreground">
+                    <Video className="h-4 w-4" />
+                    Choisir une vidéo
+                  </span>
+                </label>
+                {(existingVideoUrl || videoFile) ? (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 text-sm text-muted-foreground"
+                    onClick={() => {
+                      setExistingVideoUrl(null);
+                      setVideoFile(null);
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                    Retirer la vidéo
+                  </button>
+                ) : null}
+              </div>
+
+              {displayedVideo ? (
+                <video
+                  src={displayedVideo}
+                  controls
+                  playsInline
+                  className="h-56 w-full rounded-2xl object-cover"
+                />
               ) : null}
             </div>
 

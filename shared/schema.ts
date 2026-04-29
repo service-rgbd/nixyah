@@ -233,6 +233,7 @@ export const events = pgTable("events", {
   contactEmail: varchar("contact_email", { length: 160 }),
   imageUrl: text("image_url"),
   imageUrls: text("image_urls").array(),
+  videoUrl: text("video_url"),
   publicationCreditsCharged: integer("publication_credits_charged").notNull().default(15),
   legalNoticeAccepted: boolean("legal_notice_accepted").notNull().default(false),
   status: eventStatusEnum("status").notNull().default("draft"),
@@ -463,16 +464,44 @@ export const insertEventSchema = createInsertSchema(events).pick({
   contactEmail: true,
   imageUrl: true,
   imageUrls: true,
+  videoUrl: true,
   publicationCreditsCharged: true,
   legalNoticeAccepted: true,
   status: true,
 });
 
+const nullableTrimmedString = (max: number) =>
+  z.preprocess((value) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    const next = String(value).trim();
+    return next.length ? next : null;
+  }, z.string().max(max).nullable().optional());
+
+const nullableUrl = z.preprocess((value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const next = String(value).trim();
+  return next.length ? next : null;
+}, z.string().url().nullable().optional());
+
+const nullableEmail = z.preprocess((value) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const next = String(value).trim();
+  return next.length ? next : null;
+}, z.string().email("Email invalide").max(160).nullable().optional());
+
 const eventSchemaBase = z.object({
-  title: z.string().min(2).max(180),
-  description: z.string().max(5000).optional().nullable(),
-  city: z.string().min(1).max(128),
-  venue: z.string().max(255).optional().nullable(),
+  title: z.preprocess((value) => String(value ?? "").trim(), z.string().min(2).max(180)),
+  description: z.preprocess((value) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    const next = String(value).trim();
+    return next.length ? next : null;
+  }, z.string().max(5000).nullable().optional()),
+  city: z.preprocess((value) => String(value ?? "").trim(), z.string().min(1).max(128)),
+  venue: nullableTrimmedString(255),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime().optional().nullable(),
   visibility: z.enum(["public", "private"]),
@@ -480,10 +509,17 @@ const eventSchemaBase = z.object({
   priceAmount: z.coerce.number().int().min(0).max(100000000).optional().nullable(),
   priceCurrency: z.string().min(3).max(8).default("XOF"),
   capacity: z.coerce.number().int().min(1).max(100000).optional().nullable(),
-  contactWhatsapp: z.string().max(32).optional().nullable(),
-  contactEmail: z.string().email("Email invalide").max(160).optional().nullable(),
-  imageUrl: z.string().url().optional().nullable(),
-  imageUrls: z.array(z.string().url()).max(2).optional().nullable(),
+  contactWhatsapp: nullableTrimmedString(32),
+  contactEmail: nullableEmail,
+  imageUrl: nullableUrl,
+  imageUrls: z.preprocess((value) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    return Array.isArray(value)
+      ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : value;
+  }, z.array(z.string().url()).max(2).nullable().optional()),
+  videoUrl: nullableUrl,
   legalNoticeAccepted: z.literal(true),
   status: z.enum(["draft", "published"]).default("published"),
 });

@@ -31,6 +31,7 @@ type ApiEvent = {
   capacity?: number | null;
   imageUrl?: string | null;
   imageUrls?: string[] | null;
+  videoUrl?: string | null;
   registrationsCount: number;
   spotsLeft?: number | null;
 };
@@ -213,15 +214,26 @@ export default function EventsPage() {
                 >
                   <div className="grid gap-0 md:grid-cols-[220px_minmax(0,1fr)]">
                     <div className="relative h-48 overflow-hidden md:h-full">
-                      <img
-                        src={event.imageUrls?.[0] || event.imageUrl || bg}
-                        alt=""
-                        aria-hidden="true"
-                        loading="lazy"
-                        decoding="async"
-                        className="absolute inset-0 h-full w-full object-cover"
-                        draggable={false}
-                      />
+                      {event.videoUrl ? (
+                        <video
+                          src={event.videoUrl}
+                          className="absolute inset-0 h-full w-full object-cover"
+                          muted
+                          playsInline
+                          autoPlay
+                          loop
+                        />
+                      ) : (
+                        <img
+                          src={event.imageUrls?.[0] || event.imageUrl || bg}
+                          alt=""
+                          aria-hidden="true"
+                          loading="lazy"
+                          decoding="async"
+                          className="absolute inset-0 h-full w-full object-cover"
+                          draggable={false}
+                        />
+                      )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
                       <div className="absolute left-4 top-4">
                         <span className="rounded-full bg-black/45 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white">
@@ -302,6 +314,14 @@ export default function EventsPage() {
               </div>
             ) : !eventInfoAccepted ? (
               <div className="space-y-4">
+                {selectedEvent?.videoUrl ? (
+                  <video
+                    src={selectedEvent.videoUrl}
+                    controls
+                    playsInline
+                    className="h-56 w-full rounded-2xl object-cover"
+                  />
+                ) : null}
                 {selectedEvent?.imageUrls?.length ? (
                   <div className={`grid gap-3 ${selectedEvent.imageUrls.length > 1 ? "sm:grid-cols-2" : ""}`}>
                     {selectedEvent.imageUrls.map((url, index) => (
