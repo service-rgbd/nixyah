@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
-import { apiFetch, apiRequest } from "@/lib/queryClient";
+import { apiFetch, apiRequest, queryClient, refreshProfileSurfaceData } from "@/lib/queryClient";
 import { getProfileId } from "@/lib/session";
 import {
   STORY_FREE_STORY_LIMIT,
@@ -187,10 +187,7 @@ export default function StoriesNewPage() {
         saleDescription: saleKind !== "none" ? saleDescription.trim() || undefined : undefined,
       });
 
-      await queryClient.invalidateQueries({ queryKey: ["/api/me/stories"] });
-      await queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
-      await queryClient.invalidateQueries({ queryKey: [`/api/profiles/${profileId}`] });
-      await queryClient.invalidateQueries({ queryKey: ["/api/me/account"] });
+      await refreshProfileSurfaceData(queryClient, profileId);
       toast({ title: "Publication réussie", description: "La vidéo est maintenant disponible." });
       setLocation("/dashboard");
     } catch (e: any) {

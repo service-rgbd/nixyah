@@ -103,7 +103,7 @@ app.use(
   }) as unknown as RequestHandler,
 );
 app.use(
-  ["/api/login", "/api/signup", "/api/password/forgot", "/api/password/reset"],
+  ["/api/login", "/api/login/email-link", "/api/signup", "/api/password/forgot", "/api/password/reset"],
   rateLimit({
     windowMs: 15 * 60_000,
     max: 25,

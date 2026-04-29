@@ -19,6 +19,9 @@ let hasAnnoncesTablePromise: Promise<boolean> | null = null;
 let hasAnnoncesPromotionPromise: Promise<boolean> | null = null;
 let hasStoriesTablePromise: Promise<boolean> | null = null;
 let hasEventsVideoUrlPromise: Promise<boolean> | null = null;
+let hasUsersLoginLinkPromise: Promise<boolean> | null = null;
+let hasUsersDeletionSchedulePromise: Promise<boolean> | null = null;
+let hasUsersTermsAcceptancePromise: Promise<boolean> | null = null;
 
 async function hasColumn(tableName: string, columnName: string): Promise<boolean> {
   try {
@@ -159,6 +162,24 @@ export async function hasEventsVideoUrlColumn(): Promise<boolean> {
   if (hasEventsVideoUrlPromise) return hasEventsVideoUrlPromise;
   hasEventsVideoUrlPromise = hasColumn("events", "video_url");
   return hasEventsVideoUrlPromise;
+}
+
+export async function hasUsersLoginLinkColumns(): Promise<boolean> {
+  if (hasUsersLoginLinkPromise) return hasUsersLoginLinkPromise;
+  hasUsersLoginLinkPromise = hasColumn("users", "login_link_token");
+  return hasUsersLoginLinkPromise;
+}
+
+export async function hasUsersDeletionScheduleColumns(): Promise<boolean> {
+  if (hasUsersDeletionSchedulePromise) return hasUsersDeletionSchedulePromise;
+  hasUsersDeletionSchedulePromise = hasColumn("users", "delete_scheduled_at");
+  return hasUsersDeletionSchedulePromise;
+}
+
+export async function hasUsersTermsAcceptanceColumns(): Promise<boolean> {
+  if (hasUsersTermsAcceptancePromise) return hasUsersTermsAcceptancePromise;
+  hasUsersTermsAcceptancePromise = hasColumn("users", "terms_accepted_at");
+  return hasUsersTermsAcceptancePromise;
 }
 
 

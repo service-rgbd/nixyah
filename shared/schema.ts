@@ -34,6 +34,13 @@ export const users = pgTable("users", {
   emailVerificationSentAt: timestamp("email_verification_sent_at", { withTimezone: true }),
   resetPasswordToken: text("reset_password_token"),
   resetPasswordExpiresAt: timestamp("reset_password_expires_at", { withTimezone: true }),
+  loginLinkToken: text("login_link_token"),
+  loginLinkExpiresAt: timestamp("login_link_expires_at", { withTimezone: true }),
+  loginLinkSentAt: timestamp("login_link_sent_at", { withTimezone: true }),
+  deleteRequestedAt: timestamp("delete_requested_at", { withTimezone: true }),
+  deleteScheduledAt: timestamp("delete_scheduled_at", { withTimezone: true }),
+  termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+  termsAcceptedVersion: varchar("terms_accepted_version", { length: 32 }),
   passwordHash: text("password_hash").notNull(),
   tokensBalance: integer("tokens_balance").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -348,8 +355,11 @@ export const signupSchema = z.object({
     .regex(/^[a-zA-Z0-9._-]+$/, "Identifiant invalide"),
   // Pseudo public
   pseudo: z.string().min(2).max(64),
-  password: z.string().min(6).max(200),
+  password: z.string().min(8, "Le mot de passe doit contenir au moins 8 caractères.").max(200),
   email: z.string().email("Email invalide").max(160),
+  acceptTerms: z.boolean().refine((value) => value === true, {
+    message: "Tu dois confirmer que tu as lu et accepté les conditions d'utilisation.",
+  }),
   // optional: can be sent after R2 upload later
   photoUrl: z.string().url().optional(),
   photoKey: z.string().min(1).optional(),

@@ -12,7 +12,24 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath, { index: false }));
+  app.use(
+    express.static(distPath, {
+      index: false,
+      etag: true,
+      maxAge: 0,
+      setHeaders: (res, filePath) => {
+        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          return;
+        }
+        if (/\.(png|jpg|jpeg|gif|webp|avif|svg|ico|woff2?|ttf|otf|json)$/i.test(filePath)) {
+          res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
+          return;
+        }
+        res.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+      },
+    }),
+  );
 
   // Fall through to index.html if the file doesn't exist, while injecting
   // route-aware SEO meta tags into the HTML shell.

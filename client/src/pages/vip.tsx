@@ -28,6 +28,23 @@ type ApiProfile = {
   disponibilite?: { date: string; heureDebut: string; duree: string } | null;
 };
 
+type VipEvent = {
+  id: string;
+  title: string;
+  description?: string | null;
+  city: string;
+  venue?: string | null;
+  startsAt: string;
+  createdAt?: string;
+  imageUrl?: string | null;
+  imageUrls?: string[] | null;
+  videoUrl?: string | null;
+  organizer?: {
+    profileId: string;
+    pseudo: string;
+  } | null;
+};
+
 function scoreProfile(p: ApiProfile): number {
   const badges = p.latestAnnonce?.badges ?? [];
   const premium = badges.includes("PREMIUM");
@@ -246,7 +263,7 @@ function VipMiniCard({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; l
     <button
       type="button"
       onClick={onOpen}
-      className="shrink-0 w-[250px] overflow-hidden rounded-[28px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(41,30,13,0.96),rgba(23,20,16,0.98))] shadow-[0_18px_60px_-45px_rgba(245,158,11,0.45)]"
+      className="shrink-0 w-[270px] overflow-hidden rounded-[30px] border border-amber-500/20 bg-[linear-gradient(180deg,rgba(41,30,13,0.96),rgba(23,20,16,0.98))] shadow-[0_22px_70px_-45px_rgba(245,158,11,0.48)]"
     >
       <div className="relative h-[150px]">
         <img
@@ -326,10 +343,10 @@ function RegularRow({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; la
     <button
       type="button"
       onClick={onOpen}
-      className="group w-full overflow-hidden border-b border-border/70 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/10"
+      className="group w-full overflow-hidden border-b border-border/50 py-3 text-left transition-colors last:border-b-0 hover:bg-amber-500/[0.03]"
     >
-      <div className="flex gap-3">
-        <div className="relative h-[112px] w-[92px] shrink-0 overflow-hidden rounded-2xl bg-muted/30">
+      <div className="grid grid-cols-[40%_minmax(0,1fr)] gap-3 sm:gap-4">
+        <div className="relative h-[148px] shrink-0 overflow-hidden rounded-[26px] bg-muted/30 sm:h-[190px]">
           <img
             src={getProfilePhoto(p.photoUrl, p.accountType)}
             alt={p.pseudo}
@@ -358,8 +375,8 @@ function RegularRow({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; la
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-foreground leading-snug line-clamp-2">{title}</div>
-          <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+          <div className="text-[15px] font-semibold text-foreground leading-snug line-clamp-2 sm:text-base">{title}</div>
+          <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground sm:text-xs">
             <MapPin className="w-3.5 h-3.5" />
             <span className="truncate">
               {p.ville}
@@ -390,11 +407,11 @@ function RegularRow({ p, onOpen, lang }: { p: ApiProfile; onOpen: () => void; la
               </span>
             ))}
           </div>
-          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted/35 px-2.5 py-1 text-[10px] text-foreground/80">
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-500/8 px-2.5 py-1 text-[10px] text-foreground/80 ring-1 ring-amber-500/10">
             <Calendar className="h-3 w-3 text-muted-foreground" />
             {availability}
           </div>
-          <div className="mt-2 text-[11px] text-muted-foreground line-clamp-2">{p.description ?? "—"}</div>
+          <div className="mt-2 text-[11px] leading-5 text-muted-foreground line-clamp-3">{p.description ?? "—"}</div>
         </div>
       </div>
     </button>
@@ -413,14 +430,10 @@ export default function Vip() {
     limit: "80",
   }).toString()}`;
 
-  const allQuery = `/api/profiles?${new URLSearchParams({
-    proOnly: "1",
-    includeLatestAnnonce: "1",
-    limit: "200",
-  }).toString()}`;
-
   const { data: vipRaw, isLoading: vipLoading } = useQuery<ApiProfile[]>({ queryKey: [vipQuery] });
-  const { data: allRaw, isLoading: allLoading } = useQuery<ApiProfile[]>({ queryKey: [allQuery] });
+  const { data: vipEventsRaw = [], isLoading: vipEventLoading } = useQuery<VipEvent[]>({
+    queryKey: ["/api/events?limit=12"],
+  });
 
   const vip = useMemo(() => {
     return (vipRaw ?? [])
@@ -428,25 +441,30 @@ export default function Vip() {
       .slice()
       .sort((a, b) => scoreProfile(b) - scoreProfile(a));
   }, [vipRaw]);
-
-  const regular = useMemo(() => {
-    const vips = new Set(vip.map((p) => p.id));
-    return (allRaw ?? [])
-      .filter((p) => p && !vips.has(p.id))
-      .slice()
-      .sort((a, b) => scoreProfile(b) - scoreProfile(a));
-  }, [allRaw, vip]);
-
   const [selectedVipId, setSelectedVipId] = useState<string | null>(null);
   useEffect(() => {
     if (!selectedVipId && vip.length) setSelectedVipId(vip[0].id);
   }, [selectedVipId, vip]);
 
-  const selectedVip = useMemo(() => vip.find((p) => p.id === selectedVipId) ?? (vip[0] ?? null), [vip, selectedVipId]);
+  const selectedVip = useMemo(
+    () => vip.find((p) => p.id === selectedVipId) ?? (vip[0] ?? null),
+    [vip, selectedVipId],
+  );
+  const otherVipProfiles = useMemo(
+    () => vip.filter((profile) => profile.id !== selectedVip?.id),
+    [vip, selectedVip?.id],
+  );
+  const vipEvent = useMemo(() => {
+    return [...vipEventsRaw].sort((a, b) => {
+      const aTime = new Date(a.createdAt ?? a.startsAt).getTime();
+      const bTime = new Date(b.createdAt ?? b.startsAt).getTime();
+      return bTime - aTime;
+    })[0] ?? null;
+  }, [vipEventsRaw]);
 
   const pageSize = 10;
   const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(regular.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(otherVipProfiles.length / pageSize));
   const pageSafe = Math.min(Math.max(0, page), pageCount - 1);
   useEffect(() => {
     if (page !== pageSafe) setPage(pageSafe);
@@ -454,11 +472,11 @@ export default function Vip() {
 
   const paged = useMemo(() => {
     const start = pageSafe * pageSize;
-    return regular.slice(start, start + pageSize);
-  }, [regular, pageSafe]);
+    return otherVipProfiles.slice(start, start + pageSize);
+  }, [otherVipProfiles, pageSafe]);
 
   const openProfile = (id: string) => {
-    rememberProfileBook([...vip.map((profile) => profile.id), ...regular.map((profile) => profile.id)], "vip");
+    rememberProfileBook(vip.map((profile) => profile.id), "vip");
     setLocation(`/profile/${id}`);
   };
 
@@ -477,12 +495,12 @@ export default function Vip() {
           </Button>
           <div className="flex-1 text-center">
             <div className="text-sm font-semibold tracking-tight text-foreground">
-              {lang === "en" ? "VIP profiles & premium visibility" : "Profils VIP & visibilité premium"}
+              {lang === "en" ? "VIP profiles" : "Profils VIP"}
             </div>
             <div className="text-[11px] text-muted-foreground">
               {lang === "en"
-                ? "Priority profiles with premium visibility."
-                : "Profils prioritaires a visibilite premium."}
+                ? "Premium selection, simple and direct."
+                : "Sélection premium, simple et directe."}
             </div>
           </div>
           <Button
@@ -501,23 +519,23 @@ export default function Vip() {
         <div className="mx-auto max-w-[980px] space-y-5">
           <VipHero p={selectedVip} lang={lang} onOpen={openProfile} />
 
-          <div className="sticky top-[calc(env(safe-area-inset-top)+4.25rem)] z-20 -mx-4 border-y border-border bg-background/85 px-4 py-3 backdrop-blur">
+          <div className="sticky top-[calc(env(safe-area-inset-top)+0.5rem)] z-30 -mx-4 border-y border-amber-500/10 bg-background px-4 py-2">
             <div className="flex items-center justify-between gap-2">
               <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                 <Crown className="w-4 h-4 text-amber-400" />
                 <span className="font-medium text-foreground">
-                  {lang === "en" ? "VIP first" : "VIP en premier"}
+                  {lang === "en" ? "Premium selection" : "Sélection premium"}
                 </span>
                 <span className="text-muted-foreground">•</span>
                 <span>{vip.length} {lang === "en" ? "profiles" : "profils"}</span>
               </div>
               {vip.length ? (
                 <div className="text-[10px] text-muted-foreground">
-                  {lang === "en" ? "Pinned" : "Épinglé"}
+                  {lang === "en" ? "VIP only" : "VIP seulement"}
                 </div>
               ) : null}
             </div>
-            <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+            <div className="mt-2 flex gap-3 overflow-x-auto pb-1">
               {vipLoading ? (
                 <div className="text-xs text-muted-foreground">{lang === "en" ? "Loading VIP…" : "Chargement VIP…"}</div>
               ) : vip.length ? (
@@ -528,34 +546,93 @@ export default function Vip() {
                 ))
               ) : (
                 <div className="text-xs text-muted-foreground">
-                  {lang === "en" ? "No VIP profiles yet." : "Aucun profil VIP pour le moment."}
+                  {lang === "en" ? "No VIP profile yet." : "Aucun profil VIP pour le moment."}
                 </div>
               )}
             </div>
           </div>
 
+          <div className="space-y-2">
+            <div className="text-sm font-semibold text-foreground">
+              {lang === "en" ? "VIP event" : "Évènement VIP"}
+            </div>
+            {vipEventLoading ? (
+              <div className="text-sm text-muted-foreground">{lang === "en" ? "Loading event…" : "Chargement de l'évènement…"}</div>
+            ) : vipEvent ? (
+              <button
+                type="button"
+                onClick={() => setLocation(`/events/${vipEvent.id}`)}
+                className="group flex w-full items-stretch gap-3 text-left"
+              >
+                <img
+                  src={vipEvent.imageUrls?.[0] || vipEvent.imageUrl || getDefaultProfilePhoto("profile")}
+                  alt={vipEvent.title}
+                  className="h-[150px] w-[40%] shrink-0 rounded-[26px] object-cover"
+                />
+                <div className="min-w-0 flex flex-1 flex-col justify-between py-1">
+                  <div>
+                    <div className="text-[15px] font-semibold tracking-tight text-foreground line-clamp-2 sm:text-base">
+                      {vipEvent.title}
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "fr-FR", {
+                        day: "2-digit",
+                        month: "long",
+                        year: "numeric",
+                      }).format(new Date(vipEvent.startsAt))}{" "}
+                      • {vipEvent.city}
+                    </div>
+                    {vipEvent.venue ? (
+                      <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
+                        {vipEvent.venue}
+                      </div>
+                    ) : null}
+                    <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-3">
+                      {vipEvent.description ?? (lang === "en" ? "Open the event to read full details." : "Ouvre l'évènement pour voir tous les détails.")}
+                    </p>
+                  </div>
+                  <div className="mt-3 inline-flex items-center gap-2 text-[11px] font-medium text-foreground">
+                    <span>{lang === "en" ? "Open event" : "Ouvrir l'évènement"}</span>
+                    <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                  </div>
+                </div>
+              </button>
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                {lang === "en" ? "No VIP event published yet." : "Aucun évènement VIP publié pour le moment."}
+              </div>
+            )}
+          </div>
+
           <div className="pt-2">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-foreground">
-                {lang === "en" ? "More profiles" : "Autres profils"}
+              <div>
+                <div className="text-sm font-semibold text-foreground">
+                  {lang === "en" ? "Other VIP profiles" : "Autres profils VIP"}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  {lang === "en"
+                    ? "Only profiles marked VIP appear here."
+                    : "Seuls les profils marqués VIP apparaissent ici."}
+                </div>
               </div>
               <div className="text-[11px] text-muted-foreground">
-                {regular.length ? `${pageSafe + 1}/${pageCount}` : "—"}
+                {otherVipProfiles.length ? `${pageSafe + 1}/${pageCount}` : "—"}
               </div>
             </div>
             <div className="mt-3 space-y-3">
-              {(vipLoading || allLoading) && !paged.length ? (
+              {vipLoading && !paged.length ? (
                 <div className="text-sm text-muted-foreground">{lang === "en" ? "Loading…" : "Chargement…"}</div>
               ) : paged.length ? (
                 paged.map((p) => <RegularRow key={p.id} p={p} lang={lang} onOpen={() => openProfile(p.id)} />)
               ) : (
-                <div className="rounded-3xl border border-border bg-card/60 p-5 text-sm text-muted-foreground">
-                  {lang === "en" ? "No profiles found." : "Aucun profil trouvé."}
+                <div className="rounded-3xl border border-amber-500/10 bg-card/60 p-5 text-sm text-muted-foreground">
+                  {lang === "en" ? "No other VIP profiles found." : "Aucun autre profil VIP trouvé."}
                 </div>
               )}
             </div>
 
-            {regular.length > pageSize ? (
+            {otherVipProfiles.length > pageSize ? (
               <div className="mt-4 flex items-center justify-between">
                 <Button
                   variant="outline"
