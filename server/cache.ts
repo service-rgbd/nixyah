@@ -51,6 +51,18 @@ export async function getOrSet<T>(
   return value;
 }
 
+export function peek<T>(key: string): T | null {
+  const now = Date.now();
+  const existing = store.get(key);
+  if (!existing) return null;
+  if (existing.expiresAt <= now) {
+    removeKeyFromTags(key, existing);
+    store.delete(key);
+    return null;
+  }
+  return existing.value as T;
+}
+
 export function invalidate(pattern: RegExp | string) {
   const keys = Array.from(store.keys());
   for (const key of keys) {

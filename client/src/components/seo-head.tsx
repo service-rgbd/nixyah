@@ -20,7 +20,13 @@ function sanitizeStructuredData(payload: JsonLdValue): JsonLdValue | null {
   const sanitized = items.filter((item): item is Record<string, unknown> => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     const context = item["@context"];
-    return typeof context === "string" && context.length > 0;
+    if (typeof context === "string") {
+      return context.trim().length > 0;
+    }
+    if (Array.isArray(context)) {
+      return context.some((value) => typeof value === "string" && value.trim().length > 0);
+    }
+    return false;
   });
   if (!sanitized.length) return null;
   return Array.isArray(payload) ? sanitized : sanitized[0];

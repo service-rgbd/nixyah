@@ -856,7 +856,7 @@ export default function Dashboard() {
                 <div>
                   <div className="text-base font-semibold text-foreground">Mes évènements</div>
                   <div className="text-sm text-muted-foreground">
-                    Publication à 15 crédits. Suivi des inscrits et rappels email.
+                    Première publication offerte, puis 5 crédits. Suivi des inscrits et rappels email.
                   </div>
                 </div>
                 <Button className="rounded-2xl" onClick={() => setLocation("/events/new")}>
