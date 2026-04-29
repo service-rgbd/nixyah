@@ -336,6 +336,21 @@ export default function Start() {
     queryKey: ["/api/events?limit=3"],
   });
 
+  type AdultProductPreview = {
+    id: string;
+    name: string;
+    subtitle?: string | null;
+    description?: string | null;
+    imageUrl: string;
+    price: string;
+    size?: string | null;
+    tag?: string | null;
+  };
+
+  const { data: adultProductsData } = useQuery<AdultProductPreview[]>({
+    queryKey: ["/api/adult-products?limit=4"],
+  });
+
   const previewEvents = useMemo<StartEventPreview[]>(
     () => {
       if ((liveEvents ?? []).length > 0) {
@@ -373,6 +388,108 @@ export default function Start() {
   const selectedEvent = useMemo(
     () => previewEvents.find((e) => e.id === selectedEventId) ?? null,
     [selectedEventId, previewEvents],
+  );
+
+  type WellnessCard = {
+    id: string;
+    target: string;
+    type: "spa" | "private_massage" | "residence";
+    name: string;
+    city: string;
+    location: string | null;
+    description: string;
+    hours: string | null;
+    image: string;
+    metaTypes: Array<"spa" | "private_massage" | "residence">;
+    source: "salon" | "profile";
+  };
+
+  const wellnessCards = useMemo(() => {
+    const salonCards: WellnessCard[] = (salonsData ?? []).map((s) => {
+      const salonType: WellnessCard["type"] =
+        s.type === "spa" || s.type === "private_massage" || s.type === "residence" ? s.type : "spa";
+
+      return {
+        id: `salon-${s.id}`,
+        target: "/annonces",
+        type: salonType,
+        name: s.name,
+        city: s.ville,
+        location: s.address ?? null,
+        description:
+          s.description ??
+          (salonType === "spa"
+            ? "Ambiance spa, détente ciblée et accueil soigné."
+            : salonType === "private_massage"
+              ? "Prestations bien-être discrètes dans un cadre privé."
+              : "Résidence meublée discrète pour séjours et rendez-vous organisés."),
+        hours: s.openingHours ?? null,
+        image: (s.mediaUrls && s.mediaUrls[0]) || (salonType === "residence" ? resiPhoto : spaPhoto),
+        metaTypes: [salonType],
+        source: "salon",
+      };
+    });
+
+    const profileCards: WellnessCard[] = (profilesAll ?? [])
+      .filter((profile) => profile.accountType === "salon" || profile.accountType === "residence")
+      .map((profile) => {
+        const text = [profile.description, profile.lieu, ...(profile.services ?? [])]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        const metaTypes: WellnessCard["metaTypes"] =
+          profile.accountType === "residence"
+            ? ["residence"]
+            : text.includes("spa")
+              ? ["spa"]
+              : text.includes("massage")
+                ? ["private_massage"]
+                : ["spa", "private_massage"];
+
+        return {
+          id: `profile-${profile.id}`,
+          target: `/profile/${profile.id}`,
+          type: profile.accountType === "residence" ? "residence" : metaTypes[0],
+          name: profile.pseudo,
+          city: profile.ville,
+          location: profile.lieu ?? null,
+          description:
+            profile.description ??
+            (profile.accountType === "residence"
+              ? "Résidence disponible avec présentation claire et accès discret."
+              : "Espace bien-être présenté par un profil salon, visible directement depuis le feed."),
+          hours: null,
+          image: getProfilePhoto(profile.photoUrl, profile.accountType),
+          metaTypes,
+          source: "profile" as const,
+        };
+      });
+
+    const merged: WellnessCard[] = [...salonCards];
+    for (const card of profileCards) {
+      if (!merged.some((item) => item.name === card.name && item.city === card.city && item.type === card.type)) {
+        merged.push(card);
+      }
+    }
+    return merged;
+  }, [profilesAll, salonsData]);
+
+  const filteredWellnessCards = useMemo(
+    () =>
+      wellnessCards.filter((card) => {
+        if (spaFilter === "all") return true;
+        if (spaFilter === "spa") return card.metaTypes.includes("spa");
+        if (spaFilter === "private") return card.metaTypes.includes("private_massage");
+        if (spaFilter === "residence") return card.metaTypes.includes("residence");
+        return true;
+      }),
+    [spaFilter, wellnessCards],
+  );
+
+  const adultProductsPreview = useMemo(
+    () =>
+      (adultProductsData && adultProductsData.length ? adultProductsData : maleProducts.slice(0, 4)).slice(0, 4),
+    [adultProductsData],
   );
 
   const openProfile = (id: string, ids?: string[], source = "start") => {
@@ -1291,7 +1408,7 @@ export default function Start() {
             </div>
           </div>
 
-        <div className="space-y-3">
+          <div className="space-y-3">
           <div className="flex items-end justify-between">
             <div>
               <div className="text-xl font-semibold tracking-tight text-foreground">
@@ -1308,39 +1425,39 @@ export default function Start() {
             </Button>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-            {maleProducts.slice(0, 4).map((p) => (
+            {adultProductsPreview.map((p) => (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => setLocation(`/adult-products/${p.id}`)}
-                className="flex w-[94%] shrink-0 gap-3 overflow-hidden rounded-[24px] border border-border/70 bg-card/40 px-3 py-3 text-left transition-colors hover:bg-muted/10 sm:w-[70%] md:w-[52%] lg:w-[38%]"
+                className="flex w-[92%] shrink-0 gap-3 overflow-hidden rounded-[24px] border border-border/70 bg-card/40 px-3 py-3 text-left transition-colors hover:bg-muted/10 sm:w-[72%] md:w-[54%] lg:w-[40%]"
               >
-                <img src={p.imageUrl} alt={p.name} className="h-[96px] w-[96px] shrink-0 rounded-[20px] object-cover" />
+                <img src={p.imageUrl} alt={p.name} className="h-[108px] w-[108px] shrink-0 rounded-[20px] object-cover" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold tracking-tight text-foreground line-clamp-2">{p.name}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-                          {p.tag}
-                        </span>
-                        <span className="rounded-full bg-muted/40 px-2 py-0.5 text-[10px] text-foreground/85">
-                          {p.size}
-                        </span>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {[p.tag, p.size].filter(Boolean).join(" • ")}
                       </div>
                     </div>
                     <span className="shrink-0 rounded-full bg-foreground px-2.5 py-1 text-[10px] font-medium text-background">
                       {p.price}
                     </span>
                   </div>
-                  <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-2">{p.description}</p>
+                  <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-3">
+                    {p.description ?? p.subtitle ?? (lang === "en" ? "Open the product to view details." : "Ouvre le produit pour voir les détails.")}
+                  </p>
+                  <div className="mt-3 text-[11px] font-medium text-foreground">
+                    {lang === "en" ? "Open product" : "Ouvrir le produit"}
+                  </div>
                 </div>
               </button>
             ))}
             <button
               type="button"
               onClick={() => setLocation("/adult-products")}
-              className="flex w-[78%] shrink-0 items-center justify-center rounded-[24px] border border-dashed border-border/70 bg-muted/20 px-4 py-4 text-sm text-muted-foreground transition-colors hover:bg-muted/40 sm:w-[52%] md:w-[36%] lg:w-[28%]"
+              className="flex w-[70%] shrink-0 items-center justify-center rounded-[24px] border border-dashed border-border/70 bg-muted/20 px-4 py-4 text-sm text-muted-foreground transition-colors hover:bg-muted/40 sm:w-[48%] md:w-[34%] lg:w-[26%]"
             >
               {lang === "en" ? "See all products" : "Voir tous les produits"}
             </button>
@@ -1386,74 +1503,56 @@ export default function Start() {
               })}
             </div>
             <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
-              {salonsLoading && (
-                <div className="min-w-[220px] h-40 rounded-3xl bg-muted/40 border border-border" />
-              )}
-              {!salonsLoading &&
-                (salonsData ?? [])
-                  .filter((s) => {
-                    if (spaFilter === "all") return true;
-                    if (spaFilter === "spa") return s.type === "spa";
-                    if (spaFilter === "private") return s.type === "private_massage";
-                    if (spaFilter === "residence") return s.type === "residence";
-                    return true;
-                  })
-                  .map((s) => {
-                    const image =
-                      (s.mediaUrls && s.mediaUrls[0]) ||
-                      (s.type === "residence" ? resiPhoto : spaPhoto);
-                    const hours = s.openingHours;
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => setLocation("/annonces")}
-                        className="min-w-[220px] max-w-[240px] rounded-3xl bg-card border border-border overflow-hidden shadow-sm text-left"
-                      >
-                        <div className="relative h-40">
-                          <img
-                            src={image}
-                            alt={s.name}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[11px] text-white/90">
-                            <span className="px-2 py-0.5 rounded-full bg-black/50 border border-white/10">
-                              {s.type === "spa"
-                                ? "SPA"
-                                : s.type === "private_massage"
-                                  ? "Massage privé"
-                                  : "Résidence"}
-                            </span>
-                            {hours && (
-                              <span className="font-semibold bg-white/10 text-xs px-2 py-1 rounded-full flex items-center gap-1">
-                                <Sparkles className="w-3 h-3" />
-                                {hours}
-                              </span>
-                            )}
+              {salonsLoading && !wellnessCards.length ? (
+                <>
+                  <div className="min-w-[240px] h-[220px] rounded-[28px] bg-muted/40" />
+                  <div className="min-w-[240px] h-[220px] rounded-[28px] bg-muted/40" />
+                </>
+              ) : filteredWellnessCards.length ? (
+                filteredWellnessCards.slice(0, 4).map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => setLocation(card.target)}
+                    className="flex min-w-[250px] max-w-[272px] shrink-0 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card/50 text-left transition-opacity hover:opacity-95"
+                  >
+                    <div className="relative h-[150px] overflow-hidden">
+                      <img src={card.image} alt={card.name} className="h-full w-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                      <div className="absolute left-3 top-3 text-[10px] uppercase tracking-[0.14em] text-white/90">
+                        {card.type === "spa" ? "SPA" : card.type === "private_massage" ? "Massage privé" : "Résidence"}
+                      </div>
+                    </div>
+                    <div className="min-w-0 flex-1 px-4 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold tracking-tight text-foreground line-clamp-2">{card.name}</div>
+                          <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
+                            {[card.city, card.location].filter(Boolean).join(" • ")}
                           </div>
                         </div>
-                        <div className="p-3 space-y-1">
-                          <div className="text-sm font-semibold text-foreground line-clamp-2">
-                            {s.name}
-                          </div>
-                          <p className="text-[11px] text-muted-foreground line-clamp-3">
-                            {s.description ??
-                              (s.type === "spa"
-                                ? "Ambiance spa, huiles chaudes et détente complète."
-                                : s.type === "private_massage"
-                                  ? "Sélection de prestations bien-être proposées dans un cadre discret."
-                                  : "Appartements meublés discrets pour séjours, passages et rendez-vous organisés.")}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })}
-              {!salonsLoading && (salonsData?.length ?? 0) === 0 && (
-                <div className="min-w-[220px] rounded-3xl border border-border bg-muted/30 px-4 py-3 text-[12px] text-muted-foreground">
+                        {card.hours ? (
+                          <span className="shrink-0 text-[10px] text-foreground/85">{card.hours}</span>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-[12px] leading-5 text-muted-foreground line-clamp-3">{card.description}</p>
+                      <div className="mt-3 text-[11px] font-medium text-foreground">
+                        {card.source === "profile"
+                          ? lang === "en"
+                            ? "Open profile"
+                            : "Ouvrir le profil"
+                          : lang === "en"
+                            ? "Open selection"
+                            : "Ouvrir la sélection"}
+                      </div>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="min-w-[250px] rounded-[24px] border border-border bg-muted/20 px-4 py-3 text-[12px] text-muted-foreground">
                   {lang === "en"
-                    ? "No spa, massage room or residence available yet."
-                    : "Aucun SPA, salon privé ou résidence disponible pour le moment."}
+                    ? "No spa, private massage or residence matches this filter yet."
+                    : "Aucun spa, massage privé ou résidence ne correspond à ce filtre pour le moment."}
                 </div>
               )}
             </div>
