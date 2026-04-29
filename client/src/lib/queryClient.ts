@@ -126,6 +126,13 @@ async function throwIfResNotOk(res: Response) {
         if (data && typeof (data as any).message === "string") {
           message = (data as any).message;
         }
+        if (
+          data &&
+          Array.isArray((data as any).details) &&
+          typeof (data as any).details[0]?.message === "string"
+        ) {
+          message = (data as any).details[0].message;
+        }
       } else {
         const text = await res.text();
         if (text) message = text;

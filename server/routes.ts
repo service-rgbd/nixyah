@@ -56,6 +56,7 @@ import {
   hasProfilesVipColumn,
   hasUsersEmailColumn,
   hasUsersEmailVerificationColumns,
+  hasEventsVideoUrlColumn,
 } from "./db-capabilities";
 import { getEnv } from "./env";
 import { Resend } from "resend";
@@ -263,7 +264,11 @@ function asyncHandler(
   return (req, res, next) => {
     fn(req, res, next).catch((err) => {
       if (err?.name === "ZodError") {
-        return res.status(400).json({ message: "Invalid request", details: err.errors });
+        const firstMessage =
+          Array.isArray(err?.errors) && typeof err.errors[0]?.message === "string"
+            ? err.errors[0].message
+            : "Invalid request";
+        return res.status(400).json({ message: firstMessage, details: err.errors });
       }
       next(err);
     });
@@ -292,6 +297,7 @@ export async function registerRoutes(
   const hasAnnonces = await hasAnnoncesTable();
   const hasAnnoncesPromotion = await hasAnnoncesPromotionColumn();
   const hasStories = await hasStoriesTable();
+  const hasEventsVideoUrl = await hasEventsVideoUrlColumn();
   const env = getEnv();
 
   const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
@@ -2142,8 +2148,10 @@ export async function registerRoutes(
           priceCurrency: events.priceCurrency,
           capacity: events.capacity,
           contactWhatsapp: events.contactWhatsapp,
+          contactEmail: events.contactEmail,
           imageUrl: events.imageUrl,
           imageUrls: events.imageUrls,
+          videoUrl: hasEventsVideoUrl ? events.videoUrl : (sql<string | null>`null` as any),
           status: events.status,
           createdAt: events.createdAt,
           organizerPseudo: profiles.pseudo,
@@ -2184,6 +2192,7 @@ export async function registerRoutes(
               photoUrl: sanitizeUrl(row.organizerPhotoUrl),
             },
             imageUrl: sanitizeUrl(row.imageUrl),
+            videoUrl: sanitizeUrl(row.videoUrl),
             registrationsCount,
             spotsLeft: capacity === null ? null : Math.max(0, capacity - registrationsCount),
           };
@@ -2215,6 +2224,7 @@ export async function registerRoutes(
           contactEmail: events.contactEmail,
           imageUrl: events.imageUrl,
           imageUrls: events.imageUrls,
+          videoUrl: hasEventsVideoUrl ? events.videoUrl : (sql<string | null>`null` as any),
           status: events.status,
           organizerPseudo: profiles.pseudo,
           organizerPhotoUrl: profiles.photoUrl,
@@ -2246,6 +2256,7 @@ export async function registerRoutes(
           photoUrl: sanitizeUrl(row.organizerPhotoUrl),
         },
         imageUrl: sanitizeUrl(row.imageUrl),
+        videoUrl: sanitizeUrl(row.videoUrl),
         registrationsCount,
         spotsLeft: capacity === null ? null : Math.max(0, capacity - registrationsCount),
       });
@@ -2274,6 +2285,7 @@ export async function registerRoutes(
           contactEmail: events.contactEmail,
           imageUrl: events.imageUrl,
           imageUrls: events.imageUrls,
+          videoUrl: hasEventsVideoUrl ? events.videoUrl : (sql<string | null>`null` as any),
           status: events.status,
           publicationCreditsCharged: events.publicationCreditsCharged,
           createdAt: events.createdAt,
@@ -2294,6 +2306,7 @@ export async function registerRoutes(
         rows.map((row) => ({
           ...row,
           imageUrls: normalizeEventImageUrls(row.imageUrls as string[] | null | undefined, row.imageUrl),
+          videoUrl: sanitizeUrl(row.videoUrl),
           registrationsCount: Number(row.registrationsCount ?? 0),
         })),
       );
@@ -2359,6 +2372,7 @@ export async function registerRoutes(
             contactEmail: payload.contactEmail?.trim().toLowerCase() || null,
             imageUrl: primaryImageUrl,
             imageUrls: eventImageUrls.length ? eventImageUrls : primaryImageUrl ? [primaryImageUrl] : null,
+            ...(hasEventsVideoUrl ? { videoUrl: payload.videoUrl ?? null } : {}),
             publicationCreditsCharged,
             legalNoticeAccepted: true,
             status: payload.status ?? "published",
@@ -2416,6 +2430,7 @@ export async function registerRoutes(
       if (payload.contactWhatsapp !== undefined) nextValues.contactWhatsapp = payload.contactWhatsapp?.trim() || null;
       if (payload.contactEmail !== undefined) nextValues.contactEmail = payload.contactEmail?.trim().toLowerCase() || null;
       if (payload.imageUrl !== undefined) nextValues.imageUrl = payload.imageUrl ?? null;
+      if (hasEventsVideoUrl && payload.videoUrl !== undefined) nextValues.videoUrl = payload.videoUrl ?? null;
       if (eventImageUrls !== undefined) {
         nextValues.imageUrls = eventImageUrls.length ? eventImageUrls : null;
         if (payload.imageUrl === undefined) {
