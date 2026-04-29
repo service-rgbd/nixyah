@@ -37,6 +37,7 @@ export const users = pgTable("users", {
   loginLinkToken: text("login_link_token"),
   loginLinkExpiresAt: timestamp("login_link_expires_at", { withTimezone: true }),
   loginLinkSentAt: timestamp("login_link_sent_at", { withTimezone: true }),
+  sessionTokenInvalidBefore: timestamp("session_token_invalid_before", { withTimezone: true }),
   deleteRequestedAt: timestamp("delete_requested_at", { withTimezone: true }),
   deleteScheduledAt: timestamp("delete_scheduled_at", { withTimezone: true }),
   termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
@@ -346,7 +347,12 @@ export const signupSchema = z.object({
   age: z.coerce.number().int().min(18).max(99),
   ville: z.string().min(1).max(128),
   lieu: z.string().min(1).max(64).optional(),
-  accountType: z.enum(["profile", "residence", "salon", "adult_shop"]).optional(),
+  accountType: z
+    .enum(["profile", "residence", "salon", "adult_shop"])
+    .optional()
+    .refine((value) => value === undefined || value === "profile" || value === "adult_shop", {
+      message: "Les comptes salon et residence sont activés manuellement après vérification.",
+    }),
   // Identifiant de connexion (non affiché publiquement)
   username: z
     .string()

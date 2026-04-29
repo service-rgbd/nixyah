@@ -41,6 +41,7 @@ export class MemStorage implements IStorage {
       loginLinkToken: null,
       loginLinkExpiresAt: null,
       loginLinkSentAt: null,
+      sessionTokenInvalidBefore: null,
       deleteRequestedAt: null,
       deleteScheduledAt: null,
       termsAcceptedAt: null,
