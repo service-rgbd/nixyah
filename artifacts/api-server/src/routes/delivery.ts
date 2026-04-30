@@ -1389,7 +1389,8 @@ router.post("/delivery/jobs/:jobId/complete", requireVerifiedCourier, async (req
       return res.status(404).json({ error: "NotFound", message: "Mission introuvable ou invalide" });
     }
 
-    const destinationPoint = toPoint(activeJob.deliveryLatitude, activeJob.deliveryLongitude);
+    const hydratedJob = await hydrateDeliveryJobCoordinates(activeJob);
+    const destinationPoint = toPoint(hydratedJob.deliveryLatitude, hydratedJob.deliveryLongitude);
     const courierPoint = toPoint(latitude, longitude);
     if (!destinationPoint || !courierPoint) {
       return res.status(409).json({

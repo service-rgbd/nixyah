@@ -18,8 +18,16 @@ import { SvgUri } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CachedRemoteBackground, CachedRemoteImage, prefetchRemoteImages } from "@/components/CachedRemoteImage";
+import { apiFetch } from "@/constants/api";
 import Colors from "@/constants/colors";
-import { getProductsByUniverse, getStoresByUniverse } from "@/constants/commerce-catalog";
+import {
+  type CommerceApiProduct,
+  type CommerceApiStore,
+  type CommerceCatalogResponse,
+  getProductsByUniverse,
+  getStoresByUniverse,
+  resolveCommerceProductVisual,
+} from "@/constants/commerce-catalog";
 import { Chef, Dish, useApp } from "@/contexts/AppContext";
 
 const quickCollectionImageA = require("@/assets/images/en-ce-moment.jpg");
@@ -46,6 +54,45 @@ const CUISINE_CHIPS = [
   { id: "dioula", label: "Dioula", filter: "Dioula", emoji: "🍲", tone: "#F2DFC6" },
   { id: "events", label: "Événements", filter: "Événements", emoji: "🎉", tone: "#F6DCCB" },
 ];
+
+type SearchQuickFilter = "all" | "online" | "verified" | "nearby";
+
+const SEARCH_QUICK_FILTERS: Array<{
+  id: SearchQuickFilter;
+  label: string;
+  icon: React.ComponentProps<typeof Feather>["name"];
+}> = [
+  { id: "all", label: "Tout", icon: "sliders" },
+  { id: "online", label: "En ligne", icon: "radio" },
+  { id: "verified", label: "Vérifiées", icon: "shield" },
+  { id: "nearby", label: "Proches", icon: "navigation" },
+];
+
+function normalizeSearchText(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getSearchTokens(value: string) {
+  return normalizeSearchText(value).split(" ").filter(Boolean);
+}
+
+function matchesSearchTokens(tokens: string[], values: Array<string | null | undefined>) {
+  if (!tokens.length) {
+    return true;
+  }
+
+  const haystack = values.map((value) => normalizeSearchText(value)).filter(Boolean).join(" ");
+  return tokens.every((token) => haystack.includes(token));
+}
 
 function UniverseShortcutCard({
   label,
@@ -338,6 +385,34 @@ function DiscoveryChip({
   );
 }
 
+function SearchQuickFilterChip({
+  label,
+  icon,
+  active,
+  onPress,
+}: {
+  label: string;
+  icon: React.ComponentProps<typeof Feather>["name"];
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.quickFilterChip, active && styles.quickFilterChipActive]}
+      onPress={onPress}
+    >
+      <Feather name={icon} size={13} color={active ? "#FFF7EF" : "#7A5D43"} />
+      <Text style={[styles.quickFilterChipText, active && styles.quickFilterChipTextActive]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function FilterSectionTitle({ title }: { title: string }) {
+  return <Text style={styles.filterSectionTitle}>{title}</Text>;
+}
+
 function CollectionCard({
   title,
   subtitle,
@@ -368,6 +443,66 @@ function CollectionCard({
         <Text style={styles.collectionSubtitle}>{subtitle}</Text>
       </View>
     </CachedRemoteBackground>
+  );
+}
+
+function CommercePreviewCard({
+  product,
+  store,
+}: {
+  product: CommerceApiProduct;
+  store: CommerceApiStore;
+}) {
+  return (
+    <Pressable
+      style={styles.commercePreviewCard}
+      onPress={() =>
+        router.push({
+          pathname: "/client/commerce-store/[storeId]",
+          params: { storeId: store.id, universe: store.universe },
+        })
+      }
+    >
+      <Image
+        source={resolveCommerceProductVisual({
+          name: product.name,
+          visualKey: product.visualKey,
+          imageUrl: product.imageUrl,
+          universe: store.universe,
+        })}
+        style={styles.commercePreviewImage}
+      />
+      <View style={styles.commercePreviewBody}>
+        <View
+          style={[
+            styles.commercePreviewUniversePill,
+            { backgroundColor: `${store.accentColor}16` },
+          ]}
+        >
+          <Text style={[styles.commercePreviewUniverseText, { color: store.accentColor }]}>
+            {store.universe === "supermarkets"
+              ? "Alimentaire"
+              : store.universe === "courses"
+                ? "Express"
+                : "Boutique"}
+          </Text>
+        </View>
+        <Text style={styles.commercePreviewName} numberOfLines={2}>
+          {product.name}
+        </Text>
+        <Text style={styles.commercePreviewMeta} numberOfLines={1}>
+          {store.name} · {product.category}
+        </Text>
+        <View style={styles.commercePreviewFooter}>
+          <Text style={styles.commercePreviewPrice}>
+            {product.price.toLocaleString("fr-FR")} FCFA
+          </Text>
+          <Text style={[styles.commercePreviewAction, { color: store.accentColor }]}>
+            Voir
+          </Text>
+        </View>
+      </View>
+    </Pressable>
   );
 }
 
@@ -443,6 +578,8 @@ function ChefRowCard({
 }) {
   const variantLabel =
     variant === "trending" ? "🔥 Tendance" : variant === "online" && chef.isOnline ? "En ligne" : null;
+  const topDish = getTopDish(chef);
+  const zoneLabel = chef.zone ?? chef.location.split(",")[0];
 
   return (
     <Pressable
@@ -488,6 +625,9 @@ function ChefRowCard({
           </View>
         ) : null}
         <Text style={styles.chefRowSpecialty} numberOfLines={1}>{chef.specialty}</Text>
+        <Text style={styles.chefRowHook} numberOfLines={2}>
+          {topDish ? `${topDish.name} · ${getStartingPrice(chef)}` : "Cuisine maison soignée, profil à découvrir."}
+        </Text>
 
         <View style={styles.chefRowMetrics}>
           <View style={styles.metricPill}>
@@ -507,9 +647,9 @@ function ChefRowCard({
         <View style={styles.chefRowFooter}>
           <View style={styles.chefRowFooterLeft}>
             <Feather name="map-pin" size={11} color="#A18069" />
-            <Text style={styles.chefRowFooterText} numberOfLines={1}>{chef.location.split(",")[0]}</Text>
+            <Text style={styles.chefRowFooterText} numberOfLines={1}>{zoneLabel}</Text>
           </View>
-          <Text style={styles.chefRowStartingPrice}>{getStartingPrice(chef)}</Text>
+          <Text style={styles.chefRowStartingPrice}>Voir le profil</Text>
         </View>
 
         <View style={styles.chefRowDelivery}>
@@ -526,7 +666,12 @@ export default function SearchScreen() {
   const { chefs, favorites, toggleFavorite, isLoadingChefs } = useApp();
   const [query, setQuery] = useState("");
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
+  const [selectedQuickFilter, setSelectedQuickFilter] = useState<SearchQuickFilter>("all");
+  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [showFilterDetails, setShowFilterDetails] = useState(false);
   const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [commerceStores, setCommerceStores] = useState<CommerceApiStore[]>([]);
+  const [commerceProductsWithPhotos, setCommerceProductsWithPhotos] = useState<CommerceApiProduct[]>([]);
   const defaultChefProfileUri = useMemo(() => resolveLocalAssetUri(defaultChefProfileAsset), []);
 
   // Request location once on mount
@@ -543,30 +688,147 @@ export default function SearchScreen() {
     })();
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const universes = ["courses", "supermarkets", "boutiques"] as const;
+        const responses = await Promise.all(
+          universes.map(async (universe) => {
+            const response = await apiFetch<CommerceCatalogResponse>(`/commerce/catalog?universe=${universe}`);
+            return response;
+          })
+        );
+
+        if (!active) {
+          return;
+        }
+
+        const stores = responses.flatMap((response) => response.stores ?? []);
+        const products = responses
+          .flatMap((response) => response.products ?? [])
+          .filter((product) => typeof product.imageUrl === "string" && product.imageUrl.trim().length > 0);
+
+        setCommerceStores(stores);
+        setCommerceProductsWithPhotos(products);
+      } catch (error) {
+        console.warn("Failed to load commerce previews for explorer", error);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const onlineCount = chefs.filter((chef) => chef.isOnline).length;
   const verifiedCount = chefs.filter((chef) => chef.isVerified).length;
-  const isFiltering = query.trim().length > 0 || selectedFilter !== null;
+  const searchTokens = useMemo(() => getSearchTokens(query), [query]);
+  const isFiltering =
+    query.trim().length > 0 ||
+    selectedFilter !== null ||
+    selectedQuickFilter !== "all" ||
+    selectedZone !== null;
   const coursePreviewCount = getProductsByUniverse("courses").length;
   const supermarketStoreCount = getStoresByUniverse("supermarkets").length;
   const boutiquePreviewCount = getProductsByUniverse("boutiques").length;
+  const commerceStoresById = useMemo(
+    () => new Map(commerceStores.map((store) => [store.id, store])),
+    [commerceStores]
+  );
+  const foodPreviewProducts = useMemo(
+    () =>
+      commerceProductsWithPhotos
+        .filter((product) => commerceStoresById.get(product.storeId)?.universe === "supermarkets")
+        .slice(0, 8),
+    [commerceProductsWithPhotos, commerceStoresById]
+  );
+  const coursePreviewProducts = useMemo(
+    () =>
+      commerceProductsWithPhotos
+        .filter((product) => commerceStoresById.get(product.storeId)?.universe === "courses")
+        .slice(0, 6),
+    [commerceProductsWithPhotos, commerceStoresById]
+  );
+  const boutiquePreviewProducts = useMemo(
+    () =>
+      commerceProductsWithPhotos
+        .filter((product) => commerceStoresById.get(product.storeId)?.universe === "boutiques")
+        .slice(0, 6),
+    [commerceProductsWithPhotos, commerceStoresById]
+  );
+  const commercePreviewSections = useMemo(
+    () => [
+      {
+        id: "food",
+        title: "Produits alimentaires",
+        caption: "Rayons utiles visibles directement dans Explorer.",
+        products: foodPreviewProducts,
+      },
+      {
+        id: "courses",
+        title: "Courses express",
+        caption: "Petites courses rapides, organisées en horizontal.",
+        products: coursePreviewProducts,
+      },
+      {
+        id: "boutiques",
+        title: "Boutiques & enseignes",
+        caption: "Sélections cadeaux et achats spécialisés en un coup d'œil.",
+        products: boutiquePreviewProducts,
+      },
+    ],
+    [boutiquePreviewProducts, coursePreviewProducts, foodPreviewProducts]
+  );
+  const availableZones = useMemo(
+    () =>
+      Array.from(new Set(chefs.map((chef) => (chef.zone ?? chef.location.split(",")[0]).trim()).filter(Boolean))).slice(
+        0,
+        8
+      ),
+    [chefs]
+  );
+  const activeFilterCount = [
+    selectedFilter !== null,
+    selectedQuickFilter !== "all",
+    selectedZone !== null,
+  ].filter(Boolean).length;
 
   const filteredChefs = useMemo(
     () =>
       [...chefs]
         .filter((chef) => {
-          const normalizedQuery = query.trim().toLowerCase();
           const matchesQuery =
-            !normalizedQuery ||
-            chef.name.toLowerCase().includes(normalizedQuery) ||
-            chef.specialty.toLowerCase().includes(normalizedQuery) ||
-            chef.location.toLowerCase().includes(normalizedQuery) ||
-            chef.dishes.some((dish) => dish.name.toLowerCase().includes(normalizedQuery));
+            searchTokens.length === 0 ||
+            matchesSearchTokens(searchTokens, [
+              chef.name,
+              chef.specialty,
+              chef.location,
+              chef.zone ?? "",
+              ...chef.dishes.map((dish) => dish.name),
+            ]);
 
           const matchesFilter =
-            selectedFilter === null || chef.specialty.toLowerCase().includes(selectedFilter.toLowerCase());
+            selectedFilter === null ||
+            matchesSearchTokens(getSearchTokens(selectedFilter), [
+              chef.specialty,
+              ...chef.dishes.map((dish) => dish.name),
+            ]);
 
-          return matchesQuery && matchesFilter;
+          const matchesQuickFilter =
+            selectedQuickFilter === "all" ||
+            (selectedQuickFilter === "online" && chef.isOnline) ||
+            (selectedQuickFilter === "verified" && chef.isVerified) ||
+            (selectedQuickFilter === "nearby" &&
+              userCoords !== null &&
+              resolveZoneCoords(`${chef.location} ${chef.zone ?? ""}`) !== null);
+          const matchesZone =
+            selectedZone === null ||
+            normalizeSearchText(chef.zone ?? chef.location.split(",")[0]) === normalizeSearchText(selectedZone);
+
+          return matchesQuery && matchesFilter && matchesQuickFilter && matchesZone;
         })
         .sort(
           (a, b) =>
@@ -577,8 +839,27 @@ export default function SearchScreen() {
             Number(b.stars ?? 0) - Number(a.stars ?? 0) ||
             b.reviewCount - a.reviewCount
         ),
-    [chefs, query, selectedFilter]
+    [chefs, searchTokens, selectedFilter, selectedQuickFilter, selectedZone, userCoords]
   );
+
+  const filteredCommerceProducts = useMemo(() => {
+    if (!searchTokens.length) {
+      return [];
+    }
+
+    return commerceProductsWithPhotos
+      .filter((product) => {
+        const store = commerceStoresById.get(product.storeId);
+        return matchesSearchTokens(searchTokens, [
+          product.name,
+          product.category,
+          product.description,
+          store?.name ?? "",
+          store?.location ?? "",
+        ]);
+      })
+      .slice(0, 12);
+  }, [commerceProductsWithPhotos, commerceStoresById, searchTokens]);
 
   const spotlightChef = filteredChefs[0] ?? null;
   const trendingChefs = filteredChefs.slice(0, 3);
@@ -657,10 +938,21 @@ export default function SearchScreen() {
               <Text style={styles.pageEyebrow}>Explore</Text>
               <Text style={styles.pageTitle}>Cuisines autour de vous</Text>
             </View>
-            <View style={styles.headerCounterBubble}>
-              <Text style={styles.headerCounterValue}>{formatCompact(chefs.length)}</Text>
-              <Text style={styles.headerCounterLabel}>cuisines</Text>
-            </View>
+            <Pressable
+              style={[styles.headerFilterButton, showFilterDetails && styles.headerFilterButtonActive]}
+              onPress={() => setShowFilterDetails((current) => !current)}
+            >
+              {activeFilterCount > 0 ? (
+                <View style={styles.headerFilterBadge}>
+                  <Text style={styles.headerFilterBadgeText}>{activeFilterCount}</Text>
+                </View>
+              ) : null}
+              <Feather
+                name="filter"
+                size={18}
+                color={showFilterDetails ? "#FFF7EF" : Colors.light.text}
+              />
+            </Pressable>
           </View>
 
           <View style={styles.searchBox}>
@@ -668,7 +960,7 @@ export default function SearchScreen() {
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="Plat, quartier, envie du moment..."
+              placeholder="Plat, produit, enseigne, quartier..."
               placeholderTextColor={Colors.light.textTertiary}
               style={styles.searchInput}
               autoCorrect={false}
@@ -679,6 +971,7 @@ export default function SearchScreen() {
               </Pressable>
             ) : null}
           </View>
+
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.discoveryChipsRow}>
@@ -689,10 +982,111 @@ export default function SearchScreen() {
               emoji={item.emoji}
               tone={item.tone}
               active={selectedFilter === item.filter}
-              onPress={() => setSelectedFilter(item.filter)}
+              onPress={() => setSelectedFilter((current) => (current === item.filter ? null : item.filter))}
             />
           ))}
         </ScrollView>
+
+        {showFilterDetails ? (
+          <View style={styles.filterPanel}>
+            <View style={styles.filterPanelHeader}>
+              <Text style={styles.filterPanelTitle}>Paramètres de filtrage</Text>
+              {activeFilterCount > 0 ? (
+                <Pressable
+                  style={styles.filterResetPill}
+                  onPress={() => {
+                    setSelectedQuickFilter("all");
+                    setSelectedZone(null);
+                    setSelectedFilter(null);
+                  }}
+                >
+                  <Text style={styles.filterResetText}>Réinitialiser</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <View style={styles.filterPanelSection}>
+              <FilterSectionTitle title="Disponibilité" />
+              <Text style={styles.filterSectionHint}>Choisissez le niveau de visibilité souhaité.</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickFiltersRow}>
+              {SEARCH_QUICK_FILTERS.map((item) => (
+                <SearchQuickFilterChip
+                  key={item.id}
+                  label={item.label}
+                  icon={item.icon}
+                  active={selectedQuickFilter === item.id}
+                  onPress={() => setSelectedQuickFilter(item.id)}
+                />
+              ))}
+            </ScrollView>
+
+            <View style={styles.filterPanelSection}>
+              <FilterSectionTitle title="Quartiers" />
+              <Text style={styles.filterSectionHint}>Affichez d’abord les profils du bon secteur.</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickFiltersRow}>
+              <SearchQuickFilterChip
+                label="Tous les quartiers"
+                icon="map-pin"
+                active={selectedZone === null}
+                onPress={() => setSelectedZone(null)}
+              />
+              {availableZones.map((zone) => (
+                <SearchQuickFilterChip
+                  key={zone}
+                  label={zone}
+                  icon="map-pin"
+                  active={selectedZone === zone}
+                  onPress={() => setSelectedZone((current) => (current === zone ? null : zone))}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {isFiltering ? (
+          <View style={styles.searchSummaryRow}>
+            <Text style={styles.searchSummaryText}>
+              {filteredChefs.length} cuisine{filteredChefs.length > 1 ? "s" : ""}
+            </Text>
+            {query.trim().length > 0 ? (
+              <Text style={styles.searchSummaryText}>
+                {filteredCommerceProducts.length} produit{filteredCommerceProducts.length > 1 ? "s" : ""}
+              </Text>
+            ) : null}
+            {selectedZone ? <Text style={styles.searchSummaryText}>{selectedZone}</Text> : null}
+          </View>
+        ) : null}
+
+        {!isFiltering && !query.trim().length && foodPreviewProducts.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Produits du supermarché</Text>
+              <Text style={styles.sectionCaption}>Produits avec vraies photos visibles, en accès rapide.</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.commercePreviewRow}
+            >
+              {foodPreviewProducts.map((product) => {
+                const store = commerceStoresById.get(product.storeId);
+                if (!store) {
+                  return null;
+                }
+
+                return (
+                  <CommercePreviewCard
+                    key={`food-top-${product.id}`}
+                    product={product}
+                    store={store}
+                  />
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
 
         {!isFiltering && trendingChefs.length ? (
           <View style={styles.sectionBlock}>
@@ -734,6 +1128,8 @@ export default function SearchScreen() {
             onPress={() => {
               setQuery("");
               setSelectedFilter(null);
+              setSelectedQuickFilter("all");
+              setSelectedZone(null);
             }}
           />
           <UniverseShortcutCard
@@ -761,6 +1157,41 @@ export default function SearchScreen() {
             onPress={() => router.push("/client/boutiques")}
           />
         </ScrollView>
+
+        {!query.trim().length
+          ? commercePreviewSections
+              .filter((section) => section.id !== "food")
+              .map((section) =>
+              section.products.length ? (
+                <View key={section.id} style={styles.sectionBlock}>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>{section.title}</Text>
+                    <Text style={styles.sectionCaption}>{section.caption}</Text>
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.commercePreviewRow}
+                  >
+                    {section.products.map((product) => {
+                      const store = commerceStoresById.get(product.storeId);
+                      if (!store) {
+                        return null;
+                      }
+
+                      return (
+                        <CommercePreviewCard
+                          key={`${section.id}-${product.id}`}
+                          product={product}
+                          store={store}
+                        />
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : null
+            )
+          : null}
 
         <View style={styles.sectionBlock}>
           <View style={styles.sectionHeader}>
@@ -851,6 +1282,37 @@ export default function SearchScreen() {
           </View>
         ) : null}
 
+        {query.trim().length > 0 && filteredCommerceProducts.length > 0 ? (
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Produits & enseignes</Text>
+              <Text style={styles.sectionCaption}>
+                La recherche remonte aussi les rayons commerce utiles.
+              </Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.commercePreviewRow}
+            >
+              {filteredCommerceProducts.map((product) => {
+                const store = commerceStoresById.get(product.storeId);
+                if (!store) {
+                  return null;
+                }
+
+                return (
+                  <CommercePreviewCard
+                    key={`search-product-${product.id}`}
+                    product={product}
+                    store={store}
+                  />
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
+
         {isLoadingChefs ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={Colors.light.tint} size="large" />
@@ -866,6 +1328,8 @@ export default function SearchScreen() {
               onPress={() => {
                 setQuery("");
                 setSelectedFilter(null);
+                setSelectedQuickFilter("all");
+              setSelectedZone(null);
               }}
             >
               <Text style={styles.emptyButtonText}>Réinitialiser</Text>
@@ -1001,25 +1465,34 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_400Regular",
     color: "#6B5A52",
   },
-  headerCounterBubble: {
-    borderRadius: 22,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: "#FDE7C7",
+  headerFilterButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: "center",
-    minWidth: 84,
+    justifyContent: "center",
+    backgroundColor: "#FDE7C7",
+    position: "relative",
   },
-  headerCounterValue: {
-    fontSize: 20,
-    lineHeight: 24,
+  headerFilterButtonActive: {
+    backgroundColor: "#201612",
+  },
+  headerFilterBadge: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#D9652B",
+  },
+  headerFilterBadgeText: {
+    fontSize: 10,
     fontFamily: "Poppins_700Bold",
-    color: "#201612",
-  },
-  headerCounterLabel: {
-    marginTop: 2,
-    fontSize: 11,
-    fontFamily: "Poppins_500Medium",
-    color: "#7A5D43",
+    color: "#FFF7EF",
   },
   searchBox: {
     marginTop: 18,
@@ -1039,6 +1512,59 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Poppins_400Regular",
     color: Colors.light.text,
+  },
+  filterPanel: {
+    marginTop: 12,
+    marginHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderRadius: 22,
+    backgroundColor: "#FFF9F3",
+    borderWidth: 1,
+    borderColor: "rgba(126,99,79,0.10)",
+    gap: 6,
+  },
+  filterPanelHeader: {
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  filterPanelTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Poppins_700Bold",
+    color: "#201612",
+  },
+  filterResetPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#F7E9D6",
+  },
+  filterResetText: {
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#A85A31",
+  },
+  filterPanelSection: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    gap: 4,
+  },
+  filterSectionTitle: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    color: "#8B5A3C",
+  },
+  filterSectionHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: "Poppins_400Regular",
+    color: "#7A5D43",
   },
   heroBanner: {
     overflow: "hidden",
@@ -1118,6 +1644,11 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     gap: 10,
   },
+  quickFiltersRow: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 10,
+  },
   discoveryChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1136,6 +1667,46 @@ const styles = StyleSheet.create({
   },
   discoveryChipLabelActive: {
     color: "#fff",
+  },
+  quickFilterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.84)",
+    borderWidth: 1,
+    borderColor: "rgba(126,99,79,0.12)",
+  },
+  quickFilterChipActive: {
+    backgroundColor: "#201612",
+    borderColor: "#201612",
+  },
+  quickFilterChipText: {
+    fontSize: 12,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#7A5D43",
+  },
+  quickFilterChipTextActive: {
+    color: "#FFF7EF",
+  },
+  searchSummaryRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  searchSummaryText: {
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    backgroundColor: "#F7E9D6",
+    fontSize: 11,
+    fontFamily: "Poppins_600SemiBold",
+    color: "#A85A31",
+    overflow: "hidden",
   },
   universeSection: {
     marginTop: 20,
@@ -1302,6 +1873,67 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_400Regular",
     color: "rgba(255,255,255,0.82)",
   },
+  commercePreviewRow: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  commercePreviewCard: {
+    width: 188,
+    backgroundColor: "#FFF9F4",
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(126,99,79,0.10)",
+  },
+  commercePreviewImage: {
+    width: "100%",
+    height: 126,
+  },
+  commercePreviewBody: {
+    padding: 12,
+    gap: 6,
+  },
+  commercePreviewUniversePill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  commercePreviewUniverseText: {
+    fontSize: 10,
+    fontFamily: "Poppins_700Bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  commercePreviewName: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontFamily: "Poppins_700Bold",
+    color: "#201612",
+  },
+  commercePreviewMeta: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: "Poppins_400Regular",
+    color: "#74635A",
+  },
+  commercePreviewFooter: {
+    marginTop: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  commercePreviewPrice: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+    color: Colors.light.tintDark,
+  },
+  commercePreviewAction: {
+    fontSize: 12,
+    fontFamily: "Poppins_700Bold",
+  },
   spotlightCard: {
     marginHorizontal: 16,
     borderRadius: 0,
@@ -1309,7 +1941,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   spotlightMedia: {
-    height: 330,
+    height: 304,
     justifyContent: "space-between",
   },
   spotlightMediaRadius: {
@@ -1415,16 +2047,16 @@ const styles = StyleSheet.create({
   },
   chefRowCard: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingBottom: 14,
+    alignItems: "flex-start",
+    gap: 10,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(120,104,96,0.10)",
   },
   chefRowMediaColumn: {
-    width: 64,
+    width: 106,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
   },
   chefRowVariantBadge: {
     flexDirection: "row",
@@ -1467,7 +2099,7 @@ const styles = StyleSheet.create({
   chefRowInfoPanel: {
     flex: 1,
     minWidth: 0,
-    paddingTop: 4,
+    paddingTop: 9,
     paddingRight: 2,
   },
   chefRowHeaderLine: {
@@ -1490,16 +2122,23 @@ const styles = StyleSheet.create({
   },
   chefRowSpecialty: {
     marginTop: 3,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 18,
     fontFamily: "Poppins_400Regular",
     color: "#74635A",
+  },
+  chefRowHook: {
+    marginTop: 7,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: "Poppins_500Medium",
+    color: "#3F2E26",
   },
   chefRowMetrics: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 7,
-    marginTop: 10,
+    marginTop: 8,
   },
   metricPill: {
     flexDirection: "row",
@@ -1516,7 +2155,7 @@ const styles = StyleSheet.create({
     color: "#4B372D",
   },
   chefRowFooter: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1539,15 +2178,18 @@ const styles = StyleSheet.create({
   chefRowStartingPrice: {
     fontSize: 12,
     fontFamily: "Poppins_700Bold",
-    color: Colors.light.tintDark,
+    color: "#B15C31",
   },
   chefRowAvatarFloat: {
     position: "relative",
+    width: 102,
+    alignItems: "center",
+    marginTop: 14,
   },
   chefRowAvatarRing: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 102,
+    height: 102,
+    borderRadius: 51,
     borderWidth: 0,
     overflow: "hidden",
     backgroundColor: "#EFE2D2",
@@ -1555,24 +2197,24 @@ const styles = StyleSheet.create({
   chefRowAvatar: {
     width: "100%",
     height: "100%",
-    borderRadius: 30,
+    borderRadius: 51,
   },
   chefRowAvatarFallback: {
     alignItems: "center",
     justifyContent: "center",
   },
   chefRowAvatarInitials: {
-    fontSize: 20,
+    fontSize: 28,
     fontFamily: "Poppins_700Bold",
     color: "#6F5444",
   },
   chefRowOnlineIndicator: {
     position: "absolute",
-    bottom: 3,
-    right: 2,
-    width: 13,
-    height: 13,
-    borderRadius: 7,
+    bottom: 6,
+    right: 6,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: "#34C759",
     borderWidth: 2,
     borderColor: "#fff",
@@ -1581,7 +2223,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    marginTop: 8,
+    marginTop: 6,
   },
   chefRowDeliveryText: {
     fontSize: 11,
@@ -1607,9 +2249,9 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   nearbyAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: "#EFE2D2",
   },
   nearbyAvatarFallback: {
@@ -1618,7 +2260,7 @@ const styles = StyleSheet.create({
   },
   nearbyAvatarInitials: {
     fontFamily: "Poppins_700Bold",
-    fontSize: 16,
+    fontSize: 18,
     color: "#6F5444",
   },
   nearbyOnlineDot: {
