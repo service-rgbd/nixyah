@@ -16,7 +16,7 @@ services:
       - key: EXPO_PUBLIC_API_URL
         value: https://api.nixyah.com/api
       - key: EXPO_PUBLIC_APP_URL
-        value: mobile://
+        value: nixyah://
       - key: R2_PUBLIC_BASE_URL
         value: https://media.nixyah.com
 

@@ -9,6 +9,7 @@ import {
   passkeyChallengesTable,
 } from "@workspace/db/schema";
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { verifyToken } from "@clerk/backend";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth.js";
 import crypto from "crypto";
 import { isOwnedUploadUrl } from "../lib/uploads.js";
@@ -26,9 +27,10 @@ import { PASSKEY_CHALLENGE_TTL_MS, getPasskeyConfig } from "../lib/passkeys.js";
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM ?? "no-reply@example.com";
 const RESEND_USER_AGENT = "Ivory-Diaspora/1.0";
-const MOBILE_APP_URL = process.env.EXPO_PUBLIC_APP_URL ?? "mobile://";
+const MOBILE_APP_URL = process.env.EXPO_PUBLIC_APP_URL ?? "nixyah://";
 const LOGIN_LOCK_THRESHOLD = 3;
 const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
 
 function normalizeApiBaseUrl(rawValue: string | undefined): string | null {
   if (!rawValue) {
@@ -77,6 +79,10 @@ function withQuery(base: string, params: Record<string, string | undefined>) {
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value as string)}`)
     .join("&");
   return query ? `${base}?${query}` : base;
+}
+
+function buildMobileAppUrl(path: string, params: Record<string, string | undefined> = {}) {
+  return withQuery(joinUrl(MOBILE_APP_URL, path), params);
 }
 
 function escapeHtml(value: string) {
@@ -136,8 +142,104 @@ function renderConfirmationPage({
 </html>`;
 }
 
+function renderPasswordResetPage({
+  token,
+  appOpenUrl,
+}: {
+  token: string;
+  appOpenUrl: string;
+}) {
+  const postUrl = `${API_BASE_URL}/auth/reset-password`;
+  return `<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nouveau mot de passe - Nixyah</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #FFF7ED; color: #1F2937; }
+      .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+      .card { width: 100%; max-width: 520px; background: #ffffff; border-radius: 28px; padding: 28px; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12); border: 1px solid rgba(196, 82, 42, 0.14); }
+      .badge { display: inline-block; padding: 8px 14px; border-radius: 999px; background: rgba(196, 82, 42, 0.10); color: #C4522A; font-weight: 700; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+      h1 { margin: 18px 0 10px; font-size: 26px; line-height: 1.2; }
+      p { margin: 0; font-size: 15px; line-height: 1.7; color: #4B5563; }
+      label { display: block; margin-top: 16px; font-size: 13px; font-weight: 700; color: #374151; }
+      input { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 14px 16px; border-radius: 14px; border: 1px solid #E5E7EB; font-size: 16px; }
+      .actions { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+      .button { display: inline-block; text-align: center; padding: 14px 20px; border-radius: 16px; border: none; font-size: 15px; font-weight: 700; cursor: pointer; text-decoration: none; }
+      .button-primary { background: #C4522A; color: #ffffff; }
+      .button-secondary { background: #F3F4F6; color: #1F2937; }
+      .note { margin-top: 16px; font-size: 13px; color: #6B7280; line-height: 1.6; }
+      .alert { margin-top: 16px; padding: 12px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; display: none; }
+      .alert-error { background: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; }
+      .alert-success { background: #ECFDF5; color: #047857; border: 1px solid #A7F3D0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <span class="badge">Nixyah</span>
+        <h1>Choisissez un nouveau mot de passe</h1>
+        <p>Vous pouvez reinitialiser votre mot de passe ici, meme si l'application ne s'ouvre pas depuis l'email.</p>
+        <form id="reset-form">
+          <label for="password">Nouveau mot de passe</label>
+          <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" />
+          <label for="confirm">Confirmer le mot de passe</label>
+          <input id="confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8" />
+          <div class="actions">
+            <button class="button button-primary" type="submit">Enregistrer le mot de passe</button>
+            <a class="button button-secondary" href="${escapeHtml(appOpenUrl)}">Ouvrir dans l'application</a>
+          </div>
+        </form>
+        <div id="alert" class="alert" role="status"></div>
+        <p class="note">Le lien « Ouvrir dans l'application » fonctionne si Nixyah est installee sur cet appareil. Sinon, utilisez le formulaire ci-dessus.</p>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var token = ${JSON.stringify(token)};
+        var postUrl = ${JSON.stringify(postUrl)};
+        var form = document.getElementById("reset-form");
+        var alertEl = document.getElementById("alert");
+        function showAlert(message, tone) {
+          alertEl.textContent = message;
+          alertEl.className = "alert alert-" + tone;
+          alertEl.style.display = "block";
+        }
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+          var password = document.getElementById("password").value;
+          var confirm = document.getElementById("confirm").value;
+          if (password !== confirm) {
+            showAlert("Les mots de passe ne correspondent pas.", "error");
+            return;
+          }
+          fetch(postUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: token, password: password }),
+          })
+            .then(function (response) {
+              return response.json().then(function (body) {
+                if (!response.ok) {
+                  throw new Error(body && body.message ? body.message : "La reinitialisation a echoue.");
+                }
+                showAlert(body.message || "Mot de passe mis a jour. Vous pouvez vous connecter.", "success");
+                form.style.display = "none";
+              });
+            })
+            .catch(function (error) {
+              showAlert(error.message || "La reinitialisation a echoue.", "error");
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>`;
+}
+
 async function sendConfirmationEmail(to: string, name: string, token: string) {
-  const appConfirmUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/confirm"), { token });
+  const appConfirmUrl = buildMobileAppUrl("/auth/confirm", { token });
   const browserConfirmUrl = withQuery(joinUrl(API_BASE_URL, "/auth/confirm"), { token });
   const body = {
     from: RESEND_FROM,
@@ -196,7 +298,7 @@ async function sendPasswordResetEmail(
   options?: { reason?: "manual" | "lockout" }
 ) {
   const reason = options?.reason ?? "manual";
-  const appResetUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/reset-password"), { token });
+  const appResetUrl = buildMobileAppUrl("/auth/reset-password", { token, status: "ready" });
   const browserResetUrl = withQuery(joinUrl(API_BASE_URL, "/auth/reset-password"), { token });
   const intro =
     reason === "lockout"
@@ -218,9 +320,9 @@ async function sendPasswordResetEmail(
               </div>
               <div style="padding:28px;">
                 <p style="margin:0 0 18px;font-size:15px;line-height:1.7;color:#4B5563;">Ce lien est valable pendant 1 heure et debloquera votre compte une fois le nouveau mot de passe defini.</p>
-                <a href="${appResetUrl}" style="display:inline-block;padding:14px 22px;border-radius:12px;background:#C4522A;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;">Choisir un nouveau mot de passe</a>
-                <p style="margin:22px 0 8px;font-size:13px;line-height:1.7;color:#6B7280;">Si le bouton ne fonctionne pas, utilisez ce lien de secours :</p>
-                <a href="${browserResetUrl}" style="font-size:13px;line-height:1.7;color:#C4522A;word-break:break-word;text-decoration:none;">${browserResetUrl}</a>
+                <a href="${browserResetUrl}" style="display:inline-block;padding:14px 22px;border-radius:12px;background:#C4522A;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;">Choisir un nouveau mot de passe</a>
+                <p style="margin:22px 0 8px;font-size:13px;line-height:1.7;color:#6B7280;">Ce lien s'ouvre dans le navigateur et fonctionne meme sans l'application. Si Nixyah est installee, vous pouvez aussi essayer :</p>
+                <a href="${appResetUrl}" style="font-size:13px;line-height:1.7;color:#C4522A;word-break:break-word;text-decoration:none;">Ouvrir dans l'application Nixyah</a>
                 <div style="margin-top:24px;padding-top:16px;border-top:1px solid #E5E7EB;">
                   <p style="margin:0;font-size:12px;line-height:1.7;color:#9CA3AF;">Si vous n'etes pas a l'origine de cette demande, ignorez simplement cet email.</p>
                 </div>
@@ -547,6 +649,14 @@ async function assignReferralCode(userId: number, name: string) {
   return referralCode;
 }
 
+function randomPasswordForExternalAuth() {
+  return `clerk:${crypto.randomBytes(24).toString("hex")}!99`;
+}
+
+function normalizeClerkRole(value: unknown): "client" {
+  return "client";
+}
+
 async function createEmailConfirmation(userId: number, email: string, name: string) {
   const confirmToken = crypto.randomBytes(32).toString("hex");
   const confirmTokenHash = hashConfirmationToken(confirmToken);
@@ -745,11 +855,11 @@ router.post("/auth/register/client", async (req, res) => {
     const referralCode = await assignReferralCode(user.id, name);
     user.referralCode = referralCode;
 
-    await createEmailConfirmation(user.id, email, name);
-    res.status(201).json({
-      requiresEmailConfirmation: true,
+      await createEmailConfirmation(user.id, email, name);
+      res.status(201).json({
+        requiresEmailConfirmation: true,
       message: "Compte cree. Confirmez votre adresse email pour vous connecter.",
-      email,
+        email,
       user: toSafeUser(user),
     });
   } catch (err) {
@@ -833,11 +943,11 @@ router.post("/auth/register/chef", async (req, res) => {
 
     const safeChefProfile = buildChefProfile(user, profile);
 
-    await createEmailConfirmation(user.id, email, name);
-    res.status(201).json({
-      requiresEmailConfirmation: true,
+      await createEmailConfirmation(user.id, email, name);
+      res.status(201).json({
+        requiresEmailConfirmation: true,
       message: "Compte cree. Confirmez votre adresse email pour activer votre espace cuisiniere.",
-      email,
+        email,
       user: toSafeUser(user, { chefProfile: safeChefProfile }),
     });
   } catch (err) {
@@ -913,11 +1023,11 @@ router.post("/auth/register/courier", async (req, res) => {
 
     const safeCourierProfile = buildCourierProfile(courierProfile);
 
-    await createEmailConfirmation(user.id, email, name);
-    res.status(201).json({
-      requiresEmailConfirmation: true,
+      await createEmailConfirmation(user.id, email, name);
+      res.status(201).json({
+        requiresEmailConfirmation: true,
       message: "Compte cree. Confirmez votre adresse email pour activer votre espace livreur.",
-      email,
+        email,
       user: toSafeUser(user, { courierProfile: safeCourierProfile }),
     });
   } catch (err) {
@@ -988,11 +1098,11 @@ router.post("/auth/register/merchant", async (req, res) => {
 
     const safeMerchantProfile = buildMerchantProfile(merchantProfile);
 
-    await createEmailConfirmation(user.id, email, name);
-    res.status(201).json({
-      requiresEmailConfirmation: true,
+      await createEmailConfirmation(user.id, email, name);
+      res.status(201).json({
+        requiresEmailConfirmation: true,
       message: "Compte cree. Confirmez votre adresse email pour activer votre espace marchand.",
-      email,
+        email,
       user: toSafeUser(user, { merchantProfile: safeMerchantProfile }),
     });
   } catch (err) {
@@ -1104,6 +1214,106 @@ router.post("/auth/login", authLoginLimiter, async (req, res) => {
   } catch (err) {
     console.error("login error:", err);
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
+  }
+});
+
+router.post("/auth/clerk/exchange", async (req, res) => {
+  try {
+    if (!CLERK_SECRET_KEY) {
+      res.status(500).json({
+        error: "ClerkNotConfigured",
+        message: "CLERK_SECRET_KEY manquant sur le serveur",
+      });
+      return;
+    }
+
+    const clerkToken = typeof req.body?.clerkToken === "string" ? req.body.clerkToken.trim() : "";
+    const profile = typeof req.body?.profile === "object" && req.body?.profile ? req.body.profile : {};
+
+    if (!clerkToken) {
+      res.status(400).json({ error: "BadRequest", message: "clerkToken requis" });
+      return;
+    }
+
+    const payload = await verifyToken(clerkToken, { secretKey: CLERK_SECRET_KEY });
+    const email = normalizeEmail(payload.email as string | undefined);
+    const phone = normalizePhone(typeof profile.phone === "string" ? profile.phone : null);
+    const nameFromProfile = typeof profile.name === "string" ? profile.name.trim() : "";
+    const location = typeof profile.location === "string" && profile.location.trim()
+      ? profile.location.trim()
+      : "Abidjan";
+    const preferences = Array.isArray(profile.preferences)
+      ? profile.preferences.filter((entry: unknown): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+    const referredByUserId = await resolveReferrerUserId(profile.referralCode);
+    const role = normalizeClerkRole(profile.role);
+
+    if (!email) {
+      res.status(400).json({
+        error: "BadRequest",
+        message: "Le compte Clerk doit contenir un email verifie",
+      });
+      return;
+    }
+
+    let [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+
+    if (!user) {
+      const displayName =
+        nameFromProfile ||
+        (typeof payload.given_name === "string" && payload.given_name.trim()) ||
+        (typeof payload.name === "string" && payload.name.trim()) ||
+        email.split("@")[0] ||
+        "Utilisateur";
+
+      const [createdUser] = await db.insert(usersTable).values({
+        name: displayName,
+        email,
+        phone: phone || null,
+        passwordHash: hashPassword(randomPasswordForExternalAuth()),
+        type: role,
+        referredByUserId,
+        location,
+        coverColor: "#C4522A",
+        preferences,
+        emailConfirmed: true,
+        emailConfirmToken: null,
+        emailConfirmExpires: null,
+        failedLoginAttempts: 0,
+        loginLockedAt: null,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      }).returning();
+
+      const referralCode = await assignReferralCode(createdUser.id, createdUser.name);
+      user = { ...createdUser, referralCode };
+    } else {
+      const updates: Record<string, unknown> = {};
+      if (!user.emailConfirmed) updates.emailConfirmed = true;
+      if (!user.phone && phone) updates.phone = phone;
+      if ((!user.location || !user.location.trim()) && location) updates.location = location;
+      if ((!user.name || !user.name.trim()) && nameFromProfile) updates.name = nameFromProfile;
+      if ((!user.preferences || user.preferences.length === 0) && preferences.length > 0) updates.preferences = preferences;
+
+      if (Object.keys(updates).length > 0) {
+        const [updatedUser] = await db.update(usersTable).set(updates).where(eq(usersTable.id, user.id)).returning();
+        if (updatedUser) {
+          user = updatedUser;
+        }
+      }
+    }
+
+    const { chefProfile, courierProfile, merchantProfile } = await loadAuthProfiles(user);
+    const token = signToken({ userId: user.id, type: user.type });
+
+    res.json({
+      token,
+      authMethod: "clerk",
+      user: toSafeUser(user, { chefProfile, courierProfile, merchantProfile }),
+    });
+  } catch (err) {
+    console.error("clerk exchange error:", err);
+    res.status(401).json({ error: "Unauthorized", message: "Session Clerk invalide" });
   }
 });
 
@@ -1730,15 +1940,10 @@ router.patch("/auth/me/courier-dossier", requireAuth, async (req: AuthRequest, r
 
 router.get("/auth/reset-password", resetPasswordLinkLimiter, async (req, res) => {
   const wantsHtml = req.accepts(["html", "json"]) === "html";
-  const successOpenAppUrl = (token: string) => withQuery(joinUrl(MOBILE_APP_URL, "/auth/reset-password"), {
-    token,
-    status: "ready",
-  });
+  const successOpenAppUrl = (token: string) =>
+    buildMobileAppUrl("/auth/reset-password", { token, status: "ready" });
   const errorOpenAppUrl = (message: string) =>
-    withQuery(joinUrl(MOBILE_APP_URL, "/auth/reset-password"), {
-      status: "error",
-      message,
-    });
+    buildMobileAppUrl("/auth/reset-password", { status: "error", message });
 
   try {
     const token = String(req.query.token ?? "");
@@ -1777,11 +1982,9 @@ router.get("/auth/reset-password", resetPasswordLinkLimiter, async (req, res) =>
 
     if (wantsHtml) {
       res.status(200).type("html").send(
-        renderConfirmationPage({
-          title: "Choisissez un nouveau mot de passe",
-          message: "Revenez dans Nixyah pour definir votre nouveau mot de passe et debloquer votre compte.",
-          tone: "success",
-          openAppUrl: successOpenAppUrl(token),
+        renderPasswordResetPage({
+          token,
+          appOpenUrl: successOpenAppUrl(token),
         })
       );
       return;
@@ -1808,15 +2011,12 @@ router.get("/auth/reset-password", resetPasswordLinkLimiter, async (req, res) =>
 // GET /auth/confirm?token=...
 router.get("/auth/confirm", confirmEmailLimiter, async (req, res) => {
   const wantsHtml = req.accepts(["html", "json"]) === "html";
-  const successOpenAppUrl = withQuery(joinUrl(MOBILE_APP_URL, "/auth/confirm"), {
+  const successOpenAppUrl = buildMobileAppUrl("/auth/confirm", {
     status: "success",
     message: "Votre adresse email a ete confirmee avec succes.",
   });
   const errorOpenAppUrl = (message: string) =>
-    withQuery(joinUrl(MOBILE_APP_URL, "/auth/confirm"), {
-      status: "error",
-      message,
-    });
+    buildMobileAppUrl("/auth/confirm", { status: "error", message });
 
   try {
     const token = String(req.query.token ?? "");
