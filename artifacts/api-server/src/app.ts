@@ -75,9 +75,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(wellKnownRouter);
 
-// Apply a stricter limiter for auth routes (prevent brute-force)
-const authLimiter = rateLimit({ windowMs: 60 * 1000, max: 6, standardHeaders: true, legacyHeaders: false, message: { error: "TooManyRequests", message: "Trop de requêtes, réessayez plus tard" } });
-app.use("/api/auth", authLimiter as any);
+// Auth routes use per-endpoint rate limits (login, forgot-password, reset-password, etc.).
+// A global /api/auth cap blocked legitimate recovery flows after a few login attempts.
 
 app.use("/api", router);
 
