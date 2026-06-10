@@ -236,7 +236,7 @@ function renderPasswordResetPage({
                 if (!response.ok) {
                   throw new Error(body && body.message ? body.message : "La reinitialisation a echoue.");
                 }
-                showAlert(body.message || "Mot de passe mis a jour. Vous pouvez vous connecter.", "success");
+                showAlert((body.message || "Mot de passe mis a jour.") + " Ouvrez l'application Nixyah et connectez-vous avec ce nouveau mot de passe.", "success");
                 form.style.display = "none";
               });
             })
@@ -380,7 +380,10 @@ function normalizeEmail(value: unknown): string | null {
 function normalizePhone(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
-  return normalized.length > 0 ? normalized : null;
+  if (!normalized || normalized.includes("@")) {
+    return null;
+  }
+  return normalized;
 }
 
 function hashConfirmationToken(token: string): string {
@@ -1678,17 +1681,30 @@ router.post("/auth/reset-password", resetPasswordLimiter, async (req, res) => {
       return;
     }
 
-    await db
+    const [updatedUser] = await db
       .update(usersTable)
       .set({
         passwordHash: hashPassword(password),
+        loginLockedAt: null,
+        failedLoginAttempts: 0,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+        emailConfirmed: true,
+        emailConfirmToken: null,
+        emailConfirmExpires: null,
       })
-      .where(eq(usersTable.id, user.id));
-    await clearAccountLoginLock(user.id);
+      .where(eq(usersTable.id, user.id))
+      .returning();
+
+    const sessionUser = updatedUser ?? user;
+    const { chefProfile, courierProfile, merchantProfile } = await loadAuthProfiles(sessionUser);
+    const authToken = signToken({ userId: sessionUser.id, type: sessionUser.type });
 
     res.json({
       ok: true,
-      message: "Votre mot de passe a ete reinitialise. Vous pouvez maintenant vous connecter.",
+      message: "Votre mot de passe a ete reinitialise. Connexion en cours...",
+      token: authToken,
+      user: toSafeUser(sessionUser, { chefProfile, courierProfile, merchantProfile }),
     });
   } catch (err) {
     console.error("reset password error", err);

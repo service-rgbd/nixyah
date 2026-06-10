@@ -376,6 +376,7 @@ interface AppContextValue {
   token: string | null;
   isLoadingAuth: boolean;
   login: (emailOrPhone: string, password: string) => Promise<void>;
+  establishAuthSession: (authToken: string, apiUser: unknown) => Promise<void>;
   loginWithPasskey: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   registerClient: (data: RegisterClientData) => Promise<AuthRegistrationResult>;
@@ -1186,6 +1187,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUser(mapApiAuthUser(data.user));
   }, []);
 
+  const establishAuthSession = useCallback(async (authToken: string, apiUser: unknown) => {
+    await AsyncStorage.setItem("nixyah_token", authToken);
+    setToken(authToken);
+    setUser(mapApiAuthUser(apiUser));
+  }, []);
+
   const loginWithPasskey = useCallback(async (email: string) => {
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
@@ -1739,6 +1746,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       token,
       isLoadingAuth,
       login,
+      establishAuthSession,
       loginWithPasskey,
       logout,
       registerClient,
@@ -1775,7 +1783,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchNotifications,
       refreshOrders,
     }),
-    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, loginWithPasskey, logout, registerClient, registerChef, registerCourier, registerPasskey, listPasskeys, deletePasskey, updateCourierVerificationDossier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
+    [chefs, stories, orders, customRequests, chefOrders, chefCustomRequests, chats, notifications, chefStats, chefDishes, favorites, isLoadingChefs, isLoadingChefOrders, isLoadingNotifications, user, token, isLoadingAuth, login, establishAuthSession, loginWithPasskey, logout, registerClient, registerChef, registerCourier, registerPasskey, listPasskeys, deletePasskey, updateCourierVerificationDossier, postStory, addOrder, createOrder, createCustomRequest, toggleFavorite, sendMessage, getChef, updateCurrentUser, refreshChefs, refreshStories, likeStory, addStoryComment, deleteStoryComment, fetchChefStats, fetchChefDishes, updateChefDish, deleteChefDish, fetchChefOrders, fetchCustomRequests, fetchChefCustomRequests, updateChefCustomRequestStatus, updateChefOrderStatus, requestDeliveryForOrder, cancelDeliverySearchForOrder, fetchNotifications, refreshOrders]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

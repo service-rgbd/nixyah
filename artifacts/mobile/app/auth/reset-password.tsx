@@ -13,10 +13,12 @@ import {
 import { apiFetch } from "@/constants/api";
 import Colors from "@/constants/colors";
 import { getPasswordPolicyError, PASSWORD_POLICY_HINT } from "@/constants/password-policy";
+import { useApp } from "@/contexts/AppContext";
 
 const authUsersImage = require("../../assets/images/login-register-users.png");
 
 export default function ResetPasswordScreen() {
+  const { establishAuthSession } = useApp();
   const params = useLocalSearchParams();
   const token = typeof params?.token === "string" ? params.token : "";
   const initialStatus = typeof params?.status === "string" ? params.status : "";
@@ -58,10 +60,17 @@ export default function ResetPasswordScreen() {
 
     setLoading(true);
     try {
-      const response = await apiFetch<{ message?: string }>("/auth/reset-password", {
+      const response = await apiFetch<{ message?: string; token?: string; user?: unknown }>("/auth/reset-password", {
         method: "POST",
         body: JSON.stringify({ token, password }),
       });
+
+      if (typeof response.token === "string" && response.user) {
+        await establishAuthSession(response.token, response.user);
+        router.replace("/(tabs)");
+        return;
+      }
+
       setSuccessMessage(response.message ?? "Votre mot de passe a ete reinitialise.");
       setPassword("");
       setConfirmPassword("");
@@ -120,7 +129,7 @@ export default function ResetPasswordScreen() {
         />
 
         <Text style={styles.helperText}>
-          Apres l'enregistrement, connectez-vous avec ce nouveau mot de passe. {PASSWORD_POLICY_HINT}
+          Apres l'enregistrement, vous serez connecte automatiquement. {PASSWORD_POLICY_HINT}
         </Text>
 
         {successMessage ? (

@@ -77,19 +77,9 @@ export default function LoginScreen() {
       }
 
       if (e instanceof ApiError && e.code === "AccountLocked") {
-        const lockedEmail = typeof e.body?.email === "string"
-          ? e.body.email
-          : emailOrPhone.includes("@")
-            ? emailOrPhone.trim()
-            : undefined;
-        router.replace({
-          pathname: "/auth/forgot-password",
-          params: {
-            ...(lockedEmail ? { email: lockedEmail } : {}),
-            locked: "1",
-            message: e.message ?? "Votre compte est verrouille. Consultez votre messagerie pour reinitialiser votre mot de passe.",
-          },
-        });
+        setError(
+          `${e.message ?? "Votre compte est verrouille."} Utilisez le nouveau mot de passe choisi via l'email, ou demandez un nouveau lien ci-dessous.`,
+        );
         return;
       }
 
