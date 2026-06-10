@@ -142,14 +142,26 @@ function renderConfirmationPage({
 </html>`;
 }
 
+function wantsHtmlAuthResponse(req: { is: (type: string) => string | false | null; headers: { accept?: string } }) {
+  if (req.is("application/x-www-form-urlencoded")) {
+    return true;
+  }
+
+  const accept = req.headers.accept ?? "";
+  return accept.includes("text/html") && !accept.includes("application/json");
+}
+
 function renderPasswordResetPage({
   token,
   appOpenUrl,
+  errorMessage,
 }: {
   token: string;
   appOpenUrl: string;
+  errorMessage?: string;
 }) {
   const postUrl = `${API_BASE_URL}/auth/reset-password`;
+  const safeError = errorMessage ? escapeHtml(errorMessage) : "";
   return `<!doctype html>
 <html lang="fr">
   <head>
@@ -181,24 +193,24 @@ function renderPasswordResetPage({
         <span class="badge">Nixyah</span>
         <h1>Choisissez un nouveau mot de passe</h1>
         <p>Vous pouvez reinitialiser votre mot de passe ici, meme si l'application ne s'ouvre pas depuis l'email.</p>
-        <form id="reset-form">
+        <form id="reset-form" method="post" action="${escapeHtml(postUrl)}">
+          <input type="hidden" name="token" value="${escapeHtml(token)}" />
           <label for="password">Nouveau mot de passe</label>
           <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" />
           <label for="confirm">Confirmer le mot de passe</label>
           <input id="confirm" name="confirm" type="password" autocomplete="new-password" required minlength="8" />
+          <p class="note" style="margin-top: 12px;">8 caracteres minimum, 2 chiffres et 1 caractere special.</p>
           <div class="actions">
             <button class="button button-primary" type="submit">Enregistrer le mot de passe</button>
             <a class="button button-secondary" href="${escapeHtml(appOpenUrl)}">Ouvrir dans l'application</a>
           </div>
         </form>
-        <div id="alert" class="alert" role="status"></div>
+        <div id="alert" class="alert${safeError ? " alert-error" : ""}" role="status"${safeError ? ' style="display:block;"' : ""}>${safeError}</div>
         <p class="note">Le lien « Ouvrir dans l'application » fonctionne si Nixyah est installee sur cet appareil. Sinon, utilisez le formulaire ci-dessus.</p>
       </div>
     </div>
     <script>
       (function () {
-        var token = ${JSON.stringify(token)};
-        var postUrl = ${JSON.stringify(postUrl)};
         var form = document.getElementById("reset-form");
         var alertEl = document.getElementById("alert");
         function showAlert(message, tone) {
@@ -207,42 +219,28 @@ function renderPasswordResetPage({
           alertEl.style.display = "block";
         }
         form.addEventListener("submit", function (event) {
-          event.preventDefault();
           var password = document.getElementById("password").value;
           var confirm = document.getElementById("confirm").value;
           if (password !== confirm) {
+            event.preventDefault();
             showAlert("Les mots de passe ne correspondent pas.", "error");
             return;
           }
           if (password.length < 8) {
+            event.preventDefault();
             showAlert("Le mot de passe doit contenir au moins 8 caracteres.", "error");
             return;
           }
           if ((password.match(/\\d/g) || []).length < 2) {
+            event.preventDefault();
             showAlert("Le mot de passe doit contenir au moins 2 chiffres.", "error");
             return;
           }
           if (!/[^A-Za-z0-9]/.test(password)) {
+            event.preventDefault();
             showAlert("Le mot de passe doit contenir au moins 1 caractere special.", "error");
             return;
           }
-          fetch(postUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: token, password: password }),
-          })
-            .then(function (response) {
-              return response.json().then(function (body) {
-                if (!response.ok) {
-                  throw new Error(body && body.message ? body.message : "La reinitialisation a echoue.");
-                }
-                showAlert((body.message || "Mot de passe mis a jour.") + " Ouvrez l'application Nixyah et connectez-vous avec ce nouveau mot de passe.", "success");
-                form.style.display = "none";
-              });
-            })
-            .catch(function (error) {
-              showAlert(error.message || "La reinitialisation a echoue.", "error");
-            });
         });
       })();
     </script>
@@ -757,6 +755,86 @@ async function clearAccountLoginLock(userId: number) {
       passwordResetExpires: null,
     })
     .where(eq(usersTable.id, userId));
+}
+
+type PasswordResetFailure = {
+  status: number;
+  error: string;
+  message: string;
+  token?: string;
+};
+
+async function performPasswordReset(
+  token: string,
+  password: string,
+  confirmPassword?: string | null,
+) {
+  if (!token || !password) {
+    const failure: PasswordResetFailure = {
+      status: 400,
+      error: "BadRequest",
+      message: "Lien de reinitialisation et mot de passe requis",
+      token,
+    };
+    throw failure;
+  }
+
+  if (confirmPassword && confirmPassword !== password) {
+    const failure: PasswordResetFailure = {
+      status: 400,
+      error: "BadRequest",
+      message: "Les mots de passe ne correspondent pas.",
+      token,
+    };
+    throw failure;
+  }
+
+  const passwordPolicyError = getPasswordPolicyError(password);
+  if (passwordPolicyError) {
+    const failure: PasswordResetFailure = {
+      status: 400,
+      error: "BadRequest",
+      message: passwordPolicyError,
+      token,
+    };
+    throw failure;
+  }
+
+  const user = await findUserByPasswordResetToken(token);
+  if (!user || isPasswordResetExpired(user)) {
+    const failure: PasswordResetFailure = {
+      status: 400,
+      error: "InvalidResetToken",
+      message: "Ce lien de reinitialisation est invalide ou a expire.",
+      token,
+    };
+    throw failure;
+  }
+
+  const [updatedUser] = await db
+    .update(usersTable)
+    .set({
+      passwordHash: hashPassword(password),
+      loginLockedAt: null,
+      failedLoginAttempts: 0,
+      passwordResetToken: null,
+      passwordResetExpires: null,
+      emailConfirmed: true,
+      emailConfirmToken: null,
+      emailConfirmExpires: null,
+    })
+    .where(eq(usersTable.id, user.id))
+    .returning();
+
+  const sessionUser = updatedUser ?? user;
+  const profiles = await loadAuthProfiles(sessionUser);
+  const authToken = signToken({ userId: sessionUser.id, type: sessionUser.type });
+
+  return {
+    sessionUser,
+    authToken,
+    ...profiles,
+  };
 }
 
 async function issuePasswordReset(user: { id: number; email: string | null; name: string }, options?: { lockAccount?: boolean; reason?: "manual" | "lockout" }) {
@@ -1658,56 +1736,81 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
 });
 
 router.post("/auth/reset-password", resetPasswordLimiter, async (req, res) => {
+  const wantsHtml = wantsHtmlAuthResponse(req);
+  const successOpenAppUrl = (token: string) =>
+    buildMobileAppUrl("/auth/reset-password", { token, status: "ready" });
+  const loginOpenAppUrl = buildMobileAppUrl("/auth/login");
+
   try {
     const token = typeof req.body.token === "string" ? req.body.token.trim() : "";
-    const password = normalizePassword(req.body.password);
-    if (!token || !password) {
-      res.status(400).json({ error: "BadRequest", message: "Lien de reinitialisation et mot de passe requis" });
+    const password = normalizePassword(req.body.password) ?? "";
+    const confirmPassword = normalizePassword(req.body.confirm);
+    const result = await performPasswordReset(token, password, confirmPassword);
+
+    if (wantsHtml) {
+      res.status(200).type("html").send(
+        renderConfirmationPage({
+          title: "Mot de passe mis a jour",
+          message: "Votre mot de passe a ete reinitialise. Ouvrez Nixyah et connectez-vous avec votre nouveau mot de passe.",
+          tone: "success",
+          openAppUrl: loginOpenAppUrl,
+        })
+      );
       return;
     }
-
-    const passwordPolicyError = getPasswordPolicyError(password);
-    if (passwordPolicyError) {
-      res.status(400).json({ error: "BadRequest", message: passwordPolicyError });
-      return;
-    }
-
-    const user = await findUserByPasswordResetToken(token);
-    if (!user || isPasswordResetExpired(user)) {
-      res.status(400).json({
-        error: "InvalidResetToken",
-        message: "Ce lien de reinitialisation est invalide ou a expire.",
-      });
-      return;
-    }
-
-    const [updatedUser] = await db
-      .update(usersTable)
-      .set({
-        passwordHash: hashPassword(password),
-        loginLockedAt: null,
-        failedLoginAttempts: 0,
-        passwordResetToken: null,
-        passwordResetExpires: null,
-        emailConfirmed: true,
-        emailConfirmToken: null,
-        emailConfirmExpires: null,
-      })
-      .where(eq(usersTable.id, user.id))
-      .returning();
-
-    const sessionUser = updatedUser ?? user;
-    const { chefProfile, courierProfile, merchantProfile } = await loadAuthProfiles(sessionUser);
-    const authToken = signToken({ userId: sessionUser.id, type: sessionUser.type });
 
     res.json({
       ok: true,
       message: "Votre mot de passe a ete reinitialise. Connexion en cours...",
-      token: authToken,
-      user: toSafeUser(sessionUser, { chefProfile, courierProfile, merchantProfile }),
+      token: result.authToken,
+      user: toSafeUser(result.sessionUser, {
+        chefProfile: result.chefProfile,
+        courierProfile: result.courierProfile,
+        merchantProfile: result.merchantProfile,
+      }),
     });
   } catch (err) {
+    const failure = err as PasswordResetFailure;
+    if (failure?.status && failure?.message) {
+      if (wantsHtml && failure.token && failure.error !== "InvalidResetToken") {
+        res.status(failure.status).type("html").send(
+          renderPasswordResetPage({
+            token: failure.token,
+            appOpenUrl: successOpenAppUrl(failure.token),
+            errorMessage: failure.message,
+          })
+        );
+        return;
+      }
+
+      if (wantsHtml) {
+        res.status(failure.status).type("html").send(
+          renderConfirmationPage({
+            title: "Reinitialisation impossible",
+            message: failure.message,
+            tone: "error",
+            openAppUrl: loginOpenAppUrl,
+          })
+        );
+        return;
+      }
+
+      res.status(failure.status).json({ error: failure.error, message: failure.message });
+      return;
+    }
+
     console.error("reset password error", err);
+    if (wantsHtml) {
+      res.status(500).type("html").send(
+        renderConfirmationPage({
+          title: "Reinitialisation impossible",
+          message: "Une erreur est survenue pendant la reinitialisation. Reessayez depuis votre email.",
+          tone: "error",
+          openAppUrl: loginOpenAppUrl,
+        })
+      );
+      return;
+    }
     res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
   }
 });
@@ -1964,14 +2067,23 @@ router.get("/auth/reset-password", resetPasswordLinkLimiter, async (req, res) =>
 
   try {
     const token = String(req.query.token ?? "");
+    const hasPasswordFields =
+      typeof req.query.password === "string" || typeof req.query.confirm === "string";
+
     if (!token) {
       if (wantsHtml) {
         res.status(400).type("html").send(
           renderConfirmationPage({
             title: "Lien invalide",
-            message: "Le lien de reinitialisation est incomplet.",
+            message: hasPasswordFields
+              ? "Le formulaire n'a pas pu etre envoye correctement. Rouvrez le dernier lien recu par email, puis appuyez sur Enregistrer le mot de passe."
+              : "Le lien de reinitialisation est incomplet.",
             tone: "error",
-            openAppUrl: errorOpenAppUrl("Le lien de reinitialisation est incomplet."),
+            openAppUrl: errorOpenAppUrl(
+              hasPasswordFields
+                ? "Le formulaire n'a pas pu etre envoye correctement. Rouvrez le lien depuis votre email."
+                : "Le lien de reinitialisation est incomplet.",
+            ),
           })
         );
         return;
