@@ -120,7 +120,7 @@ export default function ResetPasswordScreen() {
         />
 
         <Text style={styles.helperText}>
-          Le compte restera verrouille tant que ce nouveau mot de passe n'aura pas ete enregistre.
+          Apres l'enregistrement, connectez-vous avec ce nouveau mot de passe. {PASSWORD_POLICY_HINT}
         </Text>
 
         {successMessage ? (

@@ -214,6 +214,18 @@ function renderPasswordResetPage({
             showAlert("Les mots de passe ne correspondent pas.", "error");
             return;
           }
+          if (password.length < 8) {
+            showAlert("Le mot de passe doit contenir au moins 8 caracteres.", "error");
+            return;
+          }
+          if ((password.match(/\\d/g) || []).length < 2) {
+            showAlert("Le mot de passe doit contenir au moins 2 chiffres.", "error");
+            return;
+          }
+          if (!/[^A-Za-z0-9]/.test(password)) {
+            showAlert("Le mot de passe doit contenir au moins 1 caractere special.", "error");
+            return;
+          }
           fetch(postUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -732,6 +744,18 @@ async function findUserByPasswordResetToken(token: string) {
   return user ?? null;
 }
 
+async function clearAccountLoginLock(userId: number) {
+  await db
+    .update(usersTable)
+    .set({
+      loginLockedAt: null,
+      failedLoginAttempts: 0,
+      passwordResetToken: null,
+      passwordResetExpires: null,
+    })
+    .where(eq(usersTable.id, userId));
+}
+
 async function issuePasswordReset(user: { id: number; email: string | null; name: string }, options?: { lockAccount?: boolean; reason?: "manual" | "lockout" }) {
   if (!user.email) {
     return false;
@@ -1144,7 +1168,9 @@ router.post("/auth/login", authLoginLimiter, async (req, res) => {
     }
 
     const accountLocked = Boolean(user.loginLockedAt);
-    if (accountLocked) {
+    const passwordMatches = verifyPassword(password, user.passwordHash);
+
+    if (accountLocked && !passwordMatches) {
       if (!user.passwordResetToken || isPasswordResetExpired(user)) {
         await issuePasswordReset(user, { lockAccount: true, reason: "lockout" });
       }
@@ -1157,7 +1183,7 @@ router.post("/auth/login", authLoginLimiter, async (req, res) => {
       return;
     }
 
-    if (!verifyPassword(password, user.passwordHash)) {
+    if (!passwordMatches) {
       const failedLoginAttempts = (user.failedLoginAttempts ?? 0) + 1;
       const shouldLockAccount = failedLoginAttempts >= LOGIN_LOCK_THRESHOLD;
 
@@ -1191,8 +1217,8 @@ router.post("/auth/login", authLoginLimiter, async (req, res) => {
       return;
     }
 
-    if (user.failedLoginAttempts > 0) {
-      await db.update(usersTable).set({ failedLoginAttempts: 0 }).where(eq(usersTable.id, user.id));
+    if (accountLocked || user.failedLoginAttempts > 0 || user.passwordResetToken) {
+      await clearAccountLoginLock(user.id);
     }
 
     if (user.emailConfirmed === false) {
@@ -1446,15 +1472,6 @@ router.post("/auth/passkey/login/options", passkeyLoginOptionsLimiter as any, as
       return;
     }
 
-    if (user.loginLockedAt) {
-      res.status(423).json({
-        error: "AccountLocked",
-        message: "Votre compte est verrouille. Un lien de reinitialisation a ete envoye a votre messagerie.",
-        email: user.email,
-      });
-      return;
-    }
-
     const credentials = await db
       .select()
       .from(passkeyCredentialsTable)
@@ -1513,19 +1530,6 @@ router.post("/auth/passkey/login/verify", passkeyLoginVerifyLimiter as any, asyn
       return;
     }
 
-    if (user.loginLockedAt) {
-      if (!user.passwordResetToken || isPasswordResetExpired(user)) {
-        await issuePasswordReset(user, { lockAccount: true, reason: "lockout" });
-      }
-
-      res.status(423).json({
-        error: "AccountLocked",
-        message: "Votre compte est verrouille. Un lien de reinitialisation a ete envoye a votre messagerie.",
-        email: user.email,
-      });
-      return;
-    }
-
     const credentialId = typeof response.id === "string" ? response.id : "";
     const [storedCredential] = await db
       .select()
@@ -1566,8 +1570,8 @@ router.post("/auth/passkey/login/verify", passkeyLoginVerifyLimiter as any, asyn
       lastUsedAt: new Date(),
     }).where(eq(passkeyCredentialsTable.id, storedCredential.id));
 
-    if (user.failedLoginAttempts > 0) {
-      await db.update(usersTable).set({ failedLoginAttempts: 0 }).where(eq(usersTable.id, user.id));
+    if (user.loginLockedAt || user.failedLoginAttempts > 0 || user.passwordResetToken) {
+      await clearAccountLoginLock(user.id);
     }
 
     const { chefProfile, courierProfile, merchantProfile } = await loadAuthProfiles(user);
@@ -1678,12 +1682,9 @@ router.post("/auth/reset-password", resetPasswordLimiter, async (req, res) => {
       .update(usersTable)
       .set({
         passwordHash: hashPassword(password),
-        failedLoginAttempts: 0,
-        loginLockedAt: null,
-        passwordResetToken: null,
-        passwordResetExpires: null,
       })
       .where(eq(usersTable.id, user.id));
+    await clearAccountLoginLock(user.id);
 
     res.json({
       ok: true,
