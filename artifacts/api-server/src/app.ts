@@ -12,11 +12,30 @@ const isProduction = process.env.NODE_ENV === "production";
 // Trust the first proxy hop in production so express-rate-limit can derive client IPs safely.
 app.set("trust proxy", isProduction ? 1 : false);
 
+function getApiPublicOrigin(): string | null {
+  const candidates = [process.env.API_PUBLIC_URL, process.env.EXPO_PUBLIC_API_URL];
+  for (const raw of candidates) {
+    if (!raw?.trim()) {
+      continue;
+    }
+
+    try {
+      const normalized = /^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`;
+      return new URL(normalized).origin;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 function getAllowedOrigins(): string[] {
   const configuredOrigins = [
     process.env.FRONTEND_URL,
     process.env.EXPO_PUBLIC_APP_URL,
     process.env.EXPO_PUBLIC_WEB_URL,
+    getApiPublicOrigin(),
     ...(process.env.CORS_ORIGINS?.split(",") ?? []),
   ]
     .map((origin) => origin?.trim())
@@ -61,7 +80,7 @@ app.use(
         return;
       }
 
-      callback(new Error("Origin not allowed by CORS"));
+      callback(null, false);
     },
     credentials: true,
   }),

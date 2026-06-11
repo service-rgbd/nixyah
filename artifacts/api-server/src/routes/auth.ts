@@ -768,6 +768,7 @@ async function performPasswordReset(
   token: string,
   password: string,
   confirmPassword?: string | null,
+  options?: { createSession?: boolean },
 ) {
   if (!token || !password) {
     const failure: PasswordResetFailure = {
@@ -827,6 +828,17 @@ async function performPasswordReset(
     .returning();
 
   const sessionUser = updatedUser ?? user;
+
+  if (!options?.createSession) {
+    return {
+      sessionUser,
+      authToken: null,
+      chefProfile: null,
+      courierProfile: null,
+      merchantProfile: null,
+    };
+  }
+
   const profiles = await loadAuthProfiles(sessionUser);
   const authToken = signToken({ userId: sessionUser.id, type: sessionUser.type });
 
@@ -1745,7 +1757,9 @@ router.post("/auth/reset-password", resetPasswordLimiter, async (req, res) => {
     const token = typeof req.body.token === "string" ? req.body.token.trim() : "";
     const password = normalizePassword(req.body.password) ?? "";
     const confirmPassword = normalizePassword(req.body.confirm);
-    const result = await performPasswordReset(token, password, confirmPassword);
+    const result = await performPasswordReset(token, password, confirmPassword, {
+      createSession: !wantsHtml,
+    });
 
     if (wantsHtml) {
       res.status(200).type("html").send(
@@ -1756,6 +1770,11 @@ router.post("/auth/reset-password", resetPasswordLimiter, async (req, res) => {
           openAppUrl: loginOpenAppUrl,
         })
       );
+      return;
+    }
+
+    if (!result.authToken) {
+      res.status(500).json({ error: "InternalError", message: "Erreur serveur" });
       return;
     }
 
